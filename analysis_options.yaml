@@ -1,4 +1,0 @@
-analyzer:
-  exclude:
-    - accepted/future-releases/spread-collections/examples/**
-    - specification/**
