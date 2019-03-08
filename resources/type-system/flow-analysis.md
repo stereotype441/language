@@ -15,7 +15,46 @@ reachability analysis.
 
 ## Motivation
 
-TODO
+The Dart language spec requires type promotion analysis to determine when
+a local variable is known to have a more specific type than its declared type.
+This is currently performed by the front end and the analyzer which perform additional
+"type propagation" as outlined in the [Enhanced Type Promotion](
+https://github.com/dart-lang/language/blob/master/working/enhanced-type-promotion/feature-specification.md)
+proposal (see [tracking issue](https://github.com/dart-lang/language/issues/81)). We believe
+additional enhancement is necessary beyond this proposal to support NNBD (“non-nullability by default”).
+
+The language spec also requires a small amount of reachability analysis,
+to ensure control flow does not reach the end of a switch case.
+To support NNBD a more complete form of reachability analysis is necessary to detect
+when control flow “falls through” to the end of a function body and an implicit `return null;`,
+which would be an error in a function with a non-nullable return type.
+
+TODO: Links to proposals or issues requesting additional reachability analysis?
+
+Finally, to support NNBD, we believe definite assignment analysis should be added to the spec,
+so that a user is not required to initialize non-nullable local variables if it can be proven
+that they will be assigned a non-null value before being read.
+There are currently discussions underway about exactly how definite assignment should be specified,
+and there is a prototype implementation in the analyzer codebase which is not yet enabled.
+
+I believe that all three kinds of analysis can be specified (and implemented) using a common framework,
+and that by doing so, we can make all three of them more sophisticated without a great deal of extra effort.
+This document outlines the formulation I have in mind, and illustrates the benefits through some examples.
+The design is inspired by the Wikipedia article on definite assignment analysis, and shares many of its concepts
+with the prototype implementation of definite assignment analysis in the analyzer, as well as the implementation
+of type promotion in the front end.  It also takes many ideas from prior work by Johnni Winther in Java,
+and it is similar to analysis that is currently done by the dart2js back-end.
+
+TODO: Is the above paragraph an "I" or "We" ?
+
+This proposal comes in two possible variants: a single pass variant, which can be computed in a single pass
+over the source code without backtracking*, and a more accurate fixed point variant, which produces
+a more accurate result at the expense of having to iterate until a fixed point is reached.
+The fixed point variant is described first, followed by the modifications that need to be made
+for the single pass variant.
+
+*A small amount of information would need to be gathered beforehand, namely which variables are potentially
+assigned in certain scopes; hopefully it is possible to gather this information during earlier analysis phases.
 
 ## Terminology and Notation
 
