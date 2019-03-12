@@ -417,24 +417,26 @@ If `N` is an expression, and the above rules specify the value to be assigned to
     }
   ```
 
-  Due to the unconditional throw at (S1), `after(S1)` will be considered unreachable,
-  so both branches of the if statement at (S2) will be considered unreachable.
+  Due to the unconditional throw at (S1), `after(S1)` would be considered unreachable,
+  so both branches of the if statement at (S2) would be considered unreachable.
   Consequently, when the states associated with the two branches are joined,
   there will be no way to tell that the promotion of `o` to `int` should be kept,
   so the type promotion model will be `o` → `Object`.
 
   This creates a conundrum: do we report errors in unreachable code?
-  If we do, then we will flag (S3) as an error, likely causing user frustration.
-  If we don’t, then we will fail to notice the misspelling at (S4),
+  If we do, then we would flag (S3) as an error, likely causing user frustration.
+  If we don’t, then we would fail to notice the misspelling at (S4),
   again likely causing frustration.
 
-  We can solve this by extending reachability analysis as follows.
+  We solve this by extending reachability analysis as follows.
   On entry to a branching construct such as an `if` statement or a loop,
   we provisionally reset reachability analysis to `true`
   (i.e., we provisionally assume that the code is reachable).
   On exit, we correct the provisional assumption by anding in the actual reachability
   of the branching construct.
   So for instance, the reachability formulas for an `if` statement become:
+
+TODO fold this into the algorithm section
 
   - `before(C)` ← 𝐓
   - `before(S1)` ← `true(C)`
