@@ -422,10 +422,9 @@ https://docs.google.com/document/d/11Xs0b4bzH6DwDlcJMUcbx4BpvEKGz8MVuJWEfo_mirE/
   "Switch" in the spec), or do we replace these requirements with a requirement
   based on the new reachability analysis?  Replace them.  Rationale: this should
   reduce user surprise by avoiding two different notions of reachability in the
-  spec.  No existing code should be broken by this change.
-
-- Do we include [improved switch flow analysis](https://github.com/dart-lang/sdk/issues/35390)?
-  Yes, this should be fixed as part of implementing this analysis.
+  spec.  No existing code should be broken by this change, and in the process
+  we should be able to address [improved switch flow analysis](
+  https://github.com/dart-lang/sdk/issues/35390).
 
 - Do we include the extension "more accurate handling of throws"?  No.
   Rationale: it's not clear that there's a significant benefit, and it makes it
