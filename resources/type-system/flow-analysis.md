@@ -216,6 +216,143 @@ constructor, or field declaration to be analyzed.
 
 To visit a node `N`, we pattern match according to the following rules:
 
+#### Expressions
+
+- **True literal**: If `N` is the literal `true`, then:
+
+  - Let `true(N) = before(N)`.
+  
+  - Let `false(N) = EMPTY`.
+
+- **False literal**: If `N` is the literal `false`, then:
+
+  - Let `true(N) = EMPTY`.
+  
+  - Let `false(N) = before(N)`.
+
+- **Shortcut and**: If `N` is a shortcut "and" expresion of the form `E1 && E2`,
+  then:
+  
+  - Let `before(E1) = before(N)`.
+  
+  - Visit `E1` to determine `true(E1)` and `false(E1)`.
+  
+  - Let `before(E2) = true(E1)`.
+  
+  - Visit `E2` to determine `true(E2)` and `false(E2)`.
+  
+  - Let `true(N) = true(E2)`.
+  
+  - Let `false(N) = join(false(E1), false(E2))`.
+
+- **Shortcut or**: If `N` is a shortcut "or" expression of the form `E1 || E2`,
+  then:
+  
+  - Let `before(E1) = before(N)`.
+  
+  - Visit `E1` to determine `true(E1)` and `false(E1)`.
+  
+  - Let `before(E2) = false(E1)`.
+  
+  - Visit `E2` to determine `true(E2)` and `false(E2)`.
+  
+  - Let `false(N) = false(E2)`.
+  
+  - Let `true(N) = join(true(E1), true(E2))`.
+
+- **If-null**: If `N` is an if-null expression of the form `E1 ?? E2`, then:
+
+  - Let `before(E1) = before(N)`.
+  
+  - Visit `E1` to determine `null(E1)` and `notNull(E1)`.
+  
+  - Let `before(E2) = null(E1)`.
+  
+  - Visit `E2` to determine `null(E2)` and `notNull(E2)`.
+  
+  - Let `null(N) = null(E2)`.
+  
+  - Let `notNull(N) = join(notNull(E1), notNull(E2))`.
+
+- **Binary operator**: All binary operators other than `&&`, `||`, and `??` are
+  handled as calls to the appropriate `operator` method.
+
+- **Conditional expression**: If `N` is a conditional expression of the form `E1
+  ? E2 : E3`, then:
+  
+  - Let `before(E1) = before(N)`.
+  
+  - Visit `E1` to determine `true(E1)`.
+  
+  - Let `before(E2) = true(E1)`.
+  
+  - Visit `E2` to determine `after(E2)`, `true(E2)`, `false(E2)`, `null(E2)`,
+    and `notNull(E2)`.
+  
+  - Let `before(E3) = false(E1)`.
+  
+  - Visit `E3` to determine `after(E3)`, `true(E3)`, `false(E3)`, `null(E3)`,
+    and `notNull(E3)`.
+  
+  - Let `after(N) = join(after(E2), after(E3))`.
+  
+  - Let `true(N) = join(true(E2), true(E3))`.
+  
+  - Let `false(N) = join(false(E2), false(E3))`.
+  
+  - Let `null(N) = join(null(E2), null(E3))`.
+  
+  - Let `notNull(N) = join(notNull(E2), notNull(E3))`.
+  
+TODO: behavior of true, false, notNull, and null if not specified above.
+
+If `N` is an expression, and the above rules specify the values to be assigned
+to `true(N)` and `false(N)`, but do not specify values for `null(N)`,
+`notNull(N)`, or `after(N)`, then they are assigned as follows:
+
+- `null(N) = EMPTY`.
+
+- `notNull(N) = join(true(N), false(N))`.
+
+- `after(N) = notNull(N)`.
+
+If `N` is an expression, and the above rules specify the value to be assigned to
+`after(N)`, but do not specify values for `true(N)`, `false(N)`, `null(N)`, or
+`notNull(N)`, then they are all assigned the same value as `after(N)`.
+
+#### Statements
+
+- TODO: assignment
+
+- **Break statement**: If `N` is a statement of the form `break [L];`, then:
+
+  - Let `S` be the statement targeted by the `break`.  If `L` is not present,
+    this is the innermost `do`, `for`, `switch`, or `while` statement.
+    Otherwise it is the `do`, `for`, `switch`, or `while` statement with a label
+    matching `L`.
+  
+  - Update `break(S) = join(break(S), before(N))`.
+  
+  - Let `after(N) = exit(before(N))`.
+  
+- **Continue statement**: If `N` is a statement of the form `continue [L];` then:
+
+  - Let `S` be the statement targeted by the `continue`.  If `L` is not present,
+    this is the innermost `do`, `for`, or `while` statement.  Otherwise it is
+    the `do`, `for`, or `while` statement with a label matching `L`, or the
+    `switch` statement containing a switch case with a label matching `L`.
+    
+  - Update `continue(S) = join(continue(S), before(N))`.
+  
+  - Let `after(N) = exit(before(N))`.
+
+- **Do statement**: If `N` is a "do" statement of the form `do S while (E);`,
+  then:
+  
+  - TODO: work on proofs
+
+#### Functions
+
 - **Top level function or method**: If `N` is a top level function or method of
   the form `[R] name([T1] P1, [T2] P2, ... [Tn] Pn) B`, then:
   
@@ -251,139 +388,6 @@ To visit a node `N`, we pattern match according to the following rules:
     two types.
 
 - TODO: redirecting factory and generative constructors.
-
-- TODO: assignment
-
-- **Shortcut and**: If `N` is a shortcut "and" expresion of the form `E1 && E2`,
-  then:
-  
-  - Let `before(E1) = before(N)`.
-  
-  - Visit `E1` to determine `true(E1)` and `false(E1)`.
-  
-  - Let `before(E2) = true(E1)`.
-  
-  - Visit `E2` to determine `true(E2)` and `false(E2)`.
-  
-  - Let `true(N) = true(E2)`.
-  
-  - Let `false(N) = join(false(E1), false(E2))`.
-  
-- **Shortcut or**: If `N` is a shortcut "or" expression of the form `E1 || E2`,
-  then:
-  
-  - Let `before(E1) = before(N)`.
-  
-  - Visit `E1` to determine `true(E1)` and `false(E1)`.
-  
-  - Let `before(E2) = false(E1)`.
-  
-  - Visit `E2` to determine `true(E2)` and `false(E2)`.
-  
-  - Let `false(N) = false(E2)`.
-  
-  - Let `true(N) = join(true(E1), true(E2))`.
-  
-- **If-null**: If `N` is an if-null expression of the form `E1 ?? E2`, then:
-
-  - Let `before(E1) = before(N)`.
-  
-  - Visit `E1` to determine `null(E1)` and `notNull(E1)`.
-  
-  - Let `before(E2) = null(E1)`.
-  
-  - Visit `E2` to determine `null(E2)` and `notNull(E2)`.
-  
-  - Let `null(N) = null(E2)`.
-  
-  - Let `notNull(N) = join(notNull(E1), notNull(E2))`.
-  
-- **Binary operator**: All binary operators other than `&&`, `||`, and `??` are
-  handled as calls to the appropriate `operator` method.
-  
-- **True literal**: If `N` is the literal `true`, then:
-
-  - Let `true(N) = before(N)`.
-  
-  - Let `false(N) = EMPTY`.
-  
-- **False literal**: If `N` is the literal `false`, then:
-
-  - Let `true(N) = EMPTY`.
-  
-  - Let `false(N) = before(N)`.
-  
-- **Break statement**: If `N` is a statement of the form `break [L];`, then:
-
-  - Let `S` be the statement targeted by the `break`.  If `L` is not present,
-    this is the innermost `do`, `for`, `switch`, or `while` statement.
-    Otherwise it is the `do`, `for`, `switch`, or `while` statement with a label
-    matching `L`.
-  
-  - Update `break(S) = join(break(S), before(N))`.
-  
-  - Let `after(N) = exit(before(N))`.
-  
-- **Continue statement**: If `N` is a statement of the form `continue [L];` then:
-
-  - Let `S` be the statement targeted by the `continue`.  If `L` is not present,
-    this is the innermost `do`, `for`, or `while` statement.  Otherwise it is
-    the `do`, `for`, or `while` statement with a label matching `L`, or the
-    `switch` statement containing a switch case with a label matching `L`.
-    
-  - Update `continue(S) = join(continue(S), before(N))`.
-  
-  - Let `after(N) = exit(before(N))`.
-  
-- **Conditional expression**: If `N` is a conditional expression of the form `E1
-  ? E2 : E3`, then:
-  
-  - Let `before(E1) = before(N)`.
-  
-  - Visit `E1` to determine `true(E1)`.
-  
-  - Let `before(E2) = true(E1)`.
-  
-  - Visit `E2` to determine `after(E2)`, `true(E2)`, `false(E2)`, `null(E2)`,
-    and `notNull(E2)`.
-  
-  - Let `before(E3) = false(E1)`.
-  
-  - Visit `E3` to determine `after(E3)`, `true(E3)`, `false(E3)`, `null(E3)`,
-    and `notNull(E3)`.
-  
-  - Let `after(N) = join(after(E2), after(E3))`.
-  
-  - Let `true(N) = join(true(E2), true(E3))`.
-  
-  - Let `false(N) = join(false(E2), false(E3))`.
-  
-  - Let `null(N) = join(null(E2), null(E3))`.
-  
-  - Let `notNull(N) = join(notNull(E2), notNull(E3))`.
-  
-- **Do statement**: If `N` is a "do" statement of the form `do S while (E);`,
-  then:
-  
-  - TODO: work on proofs
-  
-TODO: I AM HERE
-
-TODO: behavior of true, false, notNull, and null if not specified above.
-
-If `N` is an expression, and the above rules specify the values to be assigned
-to `true(N)` and `false(N)`, but do not specify values for `null(N)`,
-`notNull(N)`, or `after(N)`, then they are assigned as follows:
-
-- `null(N) = EMPTY`.
-
-- `notNull(N) = join(true(N), false(N))`.
-
-- `after(N) = notNull(N)`.
-
-If `N` is an expression, and the above rules specify the value to be assigned to
-`after(N)`, but do not specify values for `true(N)`, `false(N)`, `null(N)`, or
-`notNull(N)`, then they are all assigned the same value as `after(N)`.
 
 ## Alternatives considered
 
