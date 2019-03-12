@@ -207,7 +207,11 @@ occur during parsing.
 
 ### First pass
 
-TODO
+A small amount of information needs to be gathered beforehand, namely which variables
+are potentially assigned in certain scopes; hopefully it is possible to gather this
+information during earlier analysis phases.
+
+TODO: List information needed by next pass
 
 ### Flow model pass: algorithm
 
