@@ -22,12 +22,43 @@ including but not limited to the [Enhanced Type Promotion](
 https://github.com/dart-lang/language/blob/master/working/enhanced-type-promotion/feature-specification.md)
 proposal (see [tracking issue](https://github.com/dart-lang/language/issues/81)).
 
+For example, we should be able to handle these situations:
+
+```dart
+int stringLength1(String? stringOrNull) {
+  return stringOrNull.length; // error stringOrNull may be null
+}
+
+int stringLength2(String? stringOrNull) {
+  if (stringOrNull != null) return stringOrNull.length; // ok
+  return 0;
+}
+```
+
 The language spec also requires a small amount of reachability analysis,
 to ensure control flow does not reach the end of a switch case.
 To support NNBD a more complete form of reachability analysis is necessary to detect
 when control flow “falls through” to the end of a function body and an implicit `return null;`,
 which would be an error in a function with a non-nullable return type.
-See [Define 'statically known to not complete normally'](https://github.com/dart-lang/language/issues/139).
+This would include but not be limited to the existing
+[Define 'statically known to not complete normally'](https://github.com/dart-lang/language/issues/139)
+proposal.
+
+For example, we should correctly detect this error situation:
+
+```dart
+int stringLength3(String? stringOrNull) {
+  if (stringOrNull != null) return stringOrNull.length;
+} // error implied null return value
+
+int stringLength4(String? stringOrNull) {
+  if (stringOrNull != null) {
+    return stringOrNull.length;
+  } else {
+    return 0;
+  }
+} // ok!
+```
 
 Finally, to support NNBD, we believe definite assignment analysis should be added to the spec,
 so that a user is not required to initialize non-nullable local variables if it can be proven
@@ -36,6 +67,28 @@ There are currently discussions underway about exactly how definite assignment s
 and there is a [prototype implementation](
 https://github.com/dart-lang/sdk/blob/master/pkg/analyzer/lib/src/dart/resolver/definite_assignment.dart)
 in the analyzer codebase which is not yet enabled.
+
+With all the above, we should properly analyze these functions:
+
+```dart
+int stringLength5(String? stringOrNull) {
+  var string;
+  if (stringOrNull != null) {
+    string = stringOrNull;
+  }
+  return string.length; // error string may be null
+}
+
+int stringLength6(String? stringOrNull) {
+  var string;
+  if (stringOrNull != null) {
+    string = stringOrNull;
+  } else {
+    string = '';
+  }
+  return string.length; // ok
+}
+```
 
 We believe that all three kinds of analysis can be specified (and implemented) using a common framework,
 and that by doing so, we can make all three of them more sophisticated without a great deal of extra effort.
