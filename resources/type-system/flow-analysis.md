@@ -178,15 +178,25 @@ regardless of their static types.
 
 We also make use of the following auxiliary functions:
 
-TODO
+- `join(M1, M2)`, where `M1` and `M2` are control flow paths, represents the union
+  of the *flow model* after `M1` and after `M2`, and is presumed to satisfy a these properties:
 
-## Auxiliaries
+  - Commutativity: join(M1, M2) = join(M2, M1)
 
-TODO: define EMPTY
+  - Associativity: join(join(M1, M2), M3) = join(M1, join(M2, M3))
 
-TODO: define join
+  For brevity, we will sometimes extend `join` to more than two arguments in the obvious way.
+  For example, `join(M1, M2, M3)` represents `join(join(M1, M2), M3)`, and `join(S)`, where S
+  is a set of models, denotes the result of folding all models in S together using `join`.
 
-TODO: define exit
+- `EMPTY` represents the model ∅ (the empty model) such that join(M, ∅) = M.<br/>
+  ∅ can be thought of as corresponding to an empty set of program states.
+
+- `exit(N)`, where `N` is a statement, represents the state associated with any unreachable code
+  that follows an unconditional jump such as `break` or `return`.
+  It would be sound to define exit(M) = ∅ for all models, but we can perform better analysis
+  resulting in better feedback for the user if we use the formulation described
+  in the **Extended Reachability** section below.
 
 ## Details
 
@@ -326,7 +336,7 @@ If `N` is an expression, and the above rules specify the value to be assigned to
 
 #### Statements
 
-- TODO: assignment
+- TODO: assignment, return, 
 
 - **Break statement**: If `N` is a statement of the form `break [L];`, then:
 
