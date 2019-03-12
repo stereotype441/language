@@ -133,7 +133,7 @@ flow analysis about the state of a variable at a given point in the source code:
   the given point in the source code, which could potentially write to the
   variable.
 
-A *flow model*, denoted `FlowModel(reachabile, variableModels)`, represents what
+A *flow model*, denoted `FlowModel(reachable, variableModels)`, represents what
 is statically known to flow analysis about the state of the program at a given
 point in the source code:
 
@@ -409,15 +409,19 @@ https://docs.google.com/document/d/11Xs0b4bzH6DwDlcJMUcbx4BpvEKGz8MVuJWEfo_mirE/
   this is required to ensure that the new algorithm produces results that are
   strictly better than the old algorithm.
 
-- Do we include the extension "complete switch"?  Yes.  Rationale: this is a
+- Do we include the extension "complete switch" as described in [issue 35716](
+  https://github.com/dart-lang/sdk/issues/35716)?  Yes.  Rationale: this is a
   simple improvement with obvious benefits for non-nullability.
 
-- Do we update the keep the existing requirements for switch cases to end in
+- Do we keep the existing requirements for switch cases to end in
   `break`, `continue`, `rethrow`, or `return` statements (see the section
   "Switch" in the spec), or do we replace these requirements with a requirement
   based on the new reachability analysis?  Replace them.  Rationale: this should
   reduce user surprise by avoiding two different notions of reachability in the
   spec.  No existing code should be broken by this change.
+
+- Do we include [improved switch flow analysis](https://github.com/dart-lang/sdk/issues/35390)?
+  Yes, this should be fixed as part of implementing this analysis.
 
 - Do we include the extension "more accurate handling of throws"?  No.
   Rationale: it's not clear that there's a significant benefit, and it makes it
