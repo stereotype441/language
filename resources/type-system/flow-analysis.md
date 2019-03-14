@@ -178,15 +178,25 @@ regardless of their static types.
 
 We also make use of the following auxiliary functions:
 
-TODO
+- `join(M1, M2)`, where `M1` and `M2` are control flow paths, represents the union
+  of the *flow model* after `M1` and after `M2`, and is presumed to satisfy a these properties:
 
-## Auxiliaries
+  - Commutativity: join(M1, M2) = join(M2, M1)
 
-TODO: define EMPTY
+  - Associativity: join(join(M1, M2), M3) = join(M1, join(M2, M3))
 
-TODO: define join
+  For brevity, we will sometimes extend `join` to more than two arguments in the obvious way.
+  For example, `join(M1, M2, M3)` represents `join(join(M1, M2), M3)`, and `join(S)`, where S
+  is a set of models, denotes the result of folding all models in S together using `join`.
 
-TODO: define exit
+- `EMPTY` represents the model ∅ (the empty model) such that join(M, ∅) = M.<br/>
+  ∅ can be thought of as corresponding to an empty set of program states.
+
+- `exit(N)`, where `N` is a statement, represents the state associated with any unreachable code
+  that follows an unconditional jump such as `break` or `return`.
+  It would be sound to define exit(M) = ∅ for all models, but we can perform better analysis
+  resulting in better feedback for the user if we use the formulation described
+  in the **Extended Reachability** section below.
 
 ## Details
 
@@ -326,7 +336,7 @@ If `N` is an expression, and the above rules specify the value to be assigned to
 
 #### Statements
 
-- TODO: assignment
+- TODO: assignment, return, 
 
 - **Break statement**: If `N` is a statement of the form `break [L];`, then:
 
@@ -393,6 +403,64 @@ If `N` is an expression, and the above rules specify the value to be assigned to
 
 - TODO: redirecting factory and generative constructors.
 
+### Extended Reachability
+
+  As mentioned earlier, it would be sound to define exit(M) = ∅ for all models, but
+  doing so leads to less than optimal user feedback. Consider, for example, the following code:
+
+  ```dart
+    void f(Object o) {
+      throw ...; // Temporary hack (S1)
+      if (o is! int) return; // (S2)
+      print(o.isEven); // (S3)
+      print(o.hashCodee); // (S4)
+    }
+  ```
+
+  Due to the unconditional throw at (S1), `after(S1)` would be considered unreachable,
+  so both branches of the if statement at (S2) would be considered unreachable.
+  Consequently, when the states associated with the two branches are joined,
+  there will be no way to tell that the promotion of `o` to `int` should be kept,
+  so the type promotion model will be `o` → `Object`.
+
+  This creates a conundrum: do we report errors in unreachable code?
+  If we do, then we would flag (S3) as an error, likely causing user frustration.
+  If we don’t, then we would fail to notice the misspelling at (S4),
+  again likely causing frustration.
+
+  We solve this by extending reachability analysis as follows.
+  On entry to a branching construct such as an `if` statement or a loop,
+  we provisionally reset reachability analysis to `true`
+  (i.e., we provisionally assume that the code is reachable).
+  On exit, we correct the provisional assumption by anding in the actual reachability
+  of the branching construct.
+  So for instance, the reachability formulas for an `if` statement become:
+
+TODO fold this into the algorithm section
+
+  - `before(C)` ← 𝐓
+  - `before(S1)` ← `true(C)`
+  - `before(S2)` ← `falseC)`
+  - `after(IF)` ← `join(after(S1), after(S2)` ∧ `before(IF)`
+
+  And the reachability formulas for `E1 && E2` become:
+
+  - `before(E1)` ← 𝐓
+  - `before(E2)` ← `true(E1)`
+  - `true(&&)` ← `true(E2)` ∧ `before(&&)`
+  - `false(&&)` ← `join(false(E1), false(E2))` ∧ `before(&&)`
+  - `after(&&)` ← `join(true(&&), false(&&))`
+
+  This modification is only performed for reachability analysis; the other analyses are unchanged.
+  However since the join operations for the other analyses make use of reachability analysis
+  to decide which branches to discard, this has the effect of allowing the other analyses
+  to produce intuitive results when analyzing unreachable code.
+
+  This analysis is sound because its only effect is to change the analysis of code
+  that is truly unreachable.  Any model whatsoever is sound for unreachable code,
+  because the true set of program states for unreachable code is the empty set;
+  therefore any model is a valid conservative approximation of the true set of program states.
+
 ## Alternatives considered
 
 TODO: rewrite so that we actually describe the choices rather than just
@@ -422,10 +490,9 @@ https://docs.google.com/document/d/11Xs0b4bzH6DwDlcJMUcbx4BpvEKGz8MVuJWEfo_mirE/
   "Switch" in the spec), or do we replace these requirements with a requirement
   based on the new reachability analysis?  Replace them.  Rationale: this should
   reduce user surprise by avoiding two different notions of reachability in the
-  spec.  No existing code should be broken by this change.
-
-- Do we include [improved switch flow analysis](https://github.com/dart-lang/sdk/issues/35390)?
-  Yes, this should be fixed as part of implementing this analysis.
+  spec.  No existing code should be broken by this change, and in the process
+  we should be able to address [improved switch flow analysis](
+  https://github.com/dart-lang/sdk/issues/35390).
 
 - Do we include the extension "more accurate handling of throws"?  No.
   Rationale: it's not clear that there's a significant benefit, and it makes it
