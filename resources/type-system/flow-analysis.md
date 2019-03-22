@@ -72,15 +72,15 @@ With all the above, we should properly analyze these functions:
 
 ```dart
 int stringLength5(String? stringOrNull) {
-  var string;
+  String string;
   if (stringOrNull != null) {
     string = stringOrNull;
   }
-  return string.length; // error string may be null
+  return string.length; // error string may not have been assigned
 }
 
 int stringLength6(String? stringOrNull) {
-  var string;
+  String string;
   if (stringOrNull != null) {
     string = stringOrNull;
   } else {
