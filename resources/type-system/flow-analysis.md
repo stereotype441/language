@@ -250,9 +250,10 @@ We also make use of the following auxiliary functions:
 - `merge(M1, M2)`, where `M1` and `M2` are flow models is the inverse of `split`
   and represents the result of joining two flow models at the merge of two
   control flow paths.  If `M1 = FlowModel(r1, VI1)` and `M2 = FlowModel(r2,
-  VI2)` where `pop(r1) = pop(r2) = r0` then:
-  - if `top(r1)` is true and `top(r2)` is false, then `M3` is `FlowModel(pop(r1), VI1)`.
-  - if `top(r1)` is false and `top(r2)` is true, then `M3` is `FlowModel(pop(r2), VI2)`.
+  VI2)` where `pop(r1) = pop(r2) = r0` then `merge(M1, M2)` is defined to be
+  `M3` where:
+  - if `top(r1)` is true and `top(r2)` is false, then `M3` is `FlowModel(r0, VI1)`.
+  - if `top(r1)` is false and `top(r2)` is true, then `M3` is `FlowModel(r0, VI2)`.
   - otherwise `M3` is `join(unsplit(M1), unsplit(M2))`
 
 - `join(M1, M2)`, where `M1` and `M2` are flow models, represents the union of
@@ -260,7 +261,7 @@ We also make use of the following auxiliary functions:
 
   - We define `join(M1, M2)` to be `M3 = FlowModel(r3, VI3)` where:
     - `M1 = FlowModel(r1, VI1)`
-    - `M2 = FlowModel(r2, VI2))`
+    - `M2 = FlowModel(r2, VI2)`
     - `pop(r1) = pop(r2) = r0` for some `r0`
     - `r3` is `push(r0, top(r1) || top(r2))`
     - `VI3` is the map which maps each variable `v` in the domain of `VI1` and
@@ -291,7 +292,8 @@ We also make use of the following auxiliary functions:
      from the try block in any subsequent code (since if any subsequent code is
      executed, the try block must have completed normally).  We only choose to
      do so if the last entry is more precise.  (TODO: is this the right thing to
-     do here?).
+     do here?).  TODO(paulberry): should we be using first entries rather than
+     last entries?
    - `s3 = s2`
      - The set of types of interest is the set of types of interest in the
        finally block.
@@ -323,7 +325,8 @@ We also make use of the following auxiliary functions:
     - `r3` is `push(r0, top(rb) && top(rf))`
     - `b` is true if `v` is in `N` and otherwise false
     - `VI3` is the map which maps each variable `v` in the domain of `VIB` and
-      `VIF` to `restrictV(VIB(v), VIF(v), b)`.
+      `VIF` to `restrictV(VIB(v), VIF(v), b)`.  TODO(paulberry): does "and"
+      refer to the union or the intersection of the domains of `VIB` and `VIF`?
 
 - `unreachable(M)` represents the model corresponding to a program location
   which is unreachable, but is otherwise modeled by flow model `M = FlowModel(r,
@@ -387,21 +390,23 @@ Definitions:
 
 - `assign(x, E, M)` where `x` is a local variable, `E` is an expression of
   inferred type `T`, and `M = FlowModel(r, VI)` is the flow model for `E` is
-  defined to be `FlowModel(r, VI[x -> VM])` where:
+  defined to be `FlowModel(r, VI[x -> VM'])` where:
     - `VI(x) = VariableModel(declared, promoted, tested, assigned, unassigned, captured)`
     - if `captured` is true then:
-      - `VM = VariableModel(declared, promoted, tested, true, false, captured)`.
+      - `VM' = VariableModel(declared, promoted, tested, true, false, captured)`.
     - otherwise if `x` is promotable via initialization given `VM` then
-      - `VM = VariableModel(declared, [T], tested, true, false, captured)`.
+      - `VM' = VariableModel(declared, [T], tested, true, false, captured)`.
     - otherwise if `x` is promotable via assignment of `E` given `VM`
-      - `VM = VariableModel(declared, T::promoted, tested, true, false, captured)`.
+      - `VM' = VariableModel(declared, T::promoted, tested, true, false, captured)`.
     - otherwise if `x` is demotable via assignment of `E` given `VM`
-      - `VM = VariableModel(declared, demoted, tested, true, false, captured)`.
+      - `VM' = VariableModel(declared, demoted, tested, true, false, captured)`.
       - where `previous` is the suffix of `promoted` starting with the first type
         `S` such that `T <: S`, and:
         - if `S`is nullable and if `T <: Q` where `Q` is **NonNull(`S`)** then
           `demoted` is `Q::previous`
         - otherwise `demoted` is `previous`
+    - otherwise, ??? (TODO(paulberry): what to do here?  Do we know it's an
+      illegal assignment or something?)
 
 - `promote(E, T, M)` where `E` is an expression, `T` is a type which it may be
   promoted to, and `M = FlowModel(r, VI)` is the flow model in which to promote,
