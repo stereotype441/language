@@ -262,6 +262,15 @@ We also make use of the following auxiliary functions:
   model from `M` into a single boolean which conservatively summarizes the
   reachability information present in `M`.
 
+- `unsplitTo(M1, M2)`, where `M1` and `M2` are flow models, represents the
+  result of applying `unsplit` to `M1` as many times as necessary so that its
+  reachability stack is one level deeper than that of `M2`.  It is defined as
+  `M3`, where:
+  - let `M1 = FlowModel(r1, VI1)`.
+  - let `M2 = FlowModel(r2, VI2)`.
+  - if `pop(r1) = r2` then `M3 = M1`.
+  - otherwise `M3 = unsplitTo(unsplit(M1), M2)`.
+
 - `merge(M1, M2)`, where `M1` and `M2` are flow models is the inverse of `split`
   and represents the result of joining two flow models at the merge of two
   control flow paths.  If `M1 = FlowModel(r1, VI1)` and `M2 = FlowModel(r2,
@@ -608,9 +617,9 @@ TODO: This isn't really right, `E1` isn't really an expression here.
 
 - **Conditional expression**: If `N` is a conditional expression of the form `E1
   ? E2 : E3`, then:
-  - Let `before(E1) = before(N)`.
-  - Let `before(E2) = split(true(E1))`.
-  - Let `before(E3) = split(false(E1))`.
+  - Let `before(E1) = split(before(N))`.
+  - Let `before(E2) = true(E1)`.
+  - Let `before(E3) = false(E1)`.
   - Let `after(N) = merge(after(E2), after(E3))`.
   - Let `true(N) = merge(true(E2), true(E3))`.
   - Let `false(N) = merge(false(E2), false(E3))`.
@@ -674,7 +683,7 @@ TODO: Add missing expressions, handle cascades and left-hand sides accurately
     Otherwise it is the `do`, `for`, `switch`, or `while` statement with a label
     matching `L`.
 
-  - Update `break(S) = join(break(S), before(N))`.
+  - Update `break(S) = join(break(S), unsplitTo(before(N), before(S)))`.
 
   - Let `after(N) = unreachable(before(N))`.
 
@@ -685,7 +694,7 @@ TODO: Add missing expressions, handle cascades and left-hand sides accurately
     the `do`, `for`, or `while` statement with a label matching `L`, or the
     `switch` statement containing a switch case with a label matching `L`.
 
-  - Update `continue(S) = join(continue(S), before(N))`.
+  - Update `continue(S) = join(continue(S), unsplitTo(before(N), before(S)))`.
 
   - Let `after(N) = unreachable(before(N))`.
 
@@ -695,9 +704,9 @@ TODO: Add missing expressions, handle cascades and left-hand sides accurately
 
 - **Conditional statement**: If `N` is a conditional statement of the form `if
   (E) S1 else S2` then:
-  - Let `before(E) = before(N)`.
-  - Let `before(S1) = split(true(E))`.
-  - Let `before(S2) = split(false(E))`.
+  - Let `before(E) = split(before(N))`.
+  - Let `before(S1) = true(E)`.
+  - Let `before(S2) = false(E)`.
   - Let `after(N) = merge(after(S1), after(S2))`.
 
 - **while statement**: If `N` is a while statement of the form `while
