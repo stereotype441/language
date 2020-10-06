@@ -167,13 +167,8 @@ point in the source code.
   the top of the stack) encodes whether the `i-1`th enclosing control flow split
   is reachable from the `ith` enclosing control flow split (or when `i` is 0,
   whether the current program point is reachable from the enclosing control flow
-  split).  So if the bottom element of `reachable` is `false`, then the current
-  program point is definitively known by flow analysis to be unreachable from
-  the first enclosing control flow split.  If it is `true`, then the analysis
-  cannot eliminate the possibility that the given point may be reached by some
-  path.  Each other element of the stack models the same property, starting from
-  some control flow split between the start of the program and the current node,
-  and treating the entry to the program as the initial control flow split.  The
+  split).  The bottom element of the stack encodes whether the outermost
+  enclosing control flow split is reachable from the start of the function.  The
   true reachability of the current program point then is the conjunction of the
   elements of the `reachable` stack, since each element of the stack models the
   reachability of one control flow split from its enclosing control flow split.
