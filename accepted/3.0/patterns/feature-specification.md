@@ -2158,16 +2158,37 @@ If `p` with required type `T` is in an irrefutable context:
 It is a compile-time error if the type of an expression in a guard clause is not
 assignable to `bool`.
 
-The static type of a switch expression is the least upper bound of the static
-types of all of the case expressions.  If a switch expression has no cases, its
-static type is `Never`.
+The static type of a switch expression `E` of the form `switch (e0) { p1 => e1,
+p2 => e2, ... pn => en }` with context type `K` is computed as follows:
 
-*A switch expression with no cases is usually not useful; in fact it is almost
+- The scrutinee (`e0`) is first analyzed with context type `_`.
+
+- If the switch expression has no cases, its static type is `Never`.*
+
+- Otherwise, for each case `pi => ei`, let `Ti` be the type of `ei` inferred
+  with context type `K`.
+
+- Let `T` be the least upper bound of the static types of all the case
+  expressions.
+
+- Let `S` be the greatest closure of `K`.
+
+- If `T <: S`, then the type of `E` is `T`.
+
+- Otherwise, if `Ti <: S` for all `i`, then the type of `E` is `S`.
+
+- Otherwise, the type of `E` is `T`.
+
+_Note that these rules are modeled after the rules for the static analysis of
+conditional expressions. They ensure that if all the case expressions satisfy
+the context, then the switch expression will also satisfy the context._
+
+_*A switch expression with no cases is usually not useful; in fact it is almost
 always an error because it is not exhaustive. However, it can be useful if a
 user is beginning to sketch out code to work with a `sealed` class, and that
 class does not yet have any subclasses. In this situation, the user may begin
 writing placeholder code that consumes values of that `sealed` type, for
-example:*
+example:_
 
 ```dart
 int doSomethingWithSealedClass(MySealedClass s) => switch (s) {};
