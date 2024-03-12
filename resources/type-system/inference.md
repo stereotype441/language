@@ -969,21 +969,516 @@ with respect to `L` under constraints `C0`
   - If for `i` in `0...m`, `Mi` is a subtype match for `Ni` with respect to `L`
   under constraints `Ci`.
 
+## Local type inference procedure
 
-<!--
+Within a method body or top-level initializing expression, the type inferred for
+a local variable, closure parameter, or type argument may depend on:
 
+- The types inferred for local variables appearing earlier in control flow.
 
-# MATERIAL BELOW HERE HAS NOT BEEN UPDATED #
+- Type promotions determined by the [flow analysis][] of statements and
+  expressions appearing earlier in control flow.
 
+- Types that appear in syntactic elements that enclose the local variable,
+  closure parameter, or type argument, or that were applied to those syntactic
+  elements by top level inference.
 
-## Expression inference
+[flow anaylsis]: https://github.com/dart-lang/language/blob/main/resources/type-system/flow-analysis.md
 
-Expression inference uses information about what constraints are imposed on the
-expression by the context in which the expression occurs.  An expression may
-occur in a context which provides no typing expectation, in which case there is
-no contextual information.  Otherwise, the contextual information takes the form
-of a type schema which describes the structure of the type to which the
-expression is required to conform by its context of occurrence.
+For this reason, local type inference is described procedurally, using a
+recursive algorithm. Each recursion step is applied to a single syntactic
+element (statement, expression, or collection element), and is known as
+_inferring_ that structure. The text below describes the precise set of steps
+required to infer each syntactic structure, based on its form, including the
+order of recursive applications of local type inference.
+
+### Expression type inference
+
+The recursion step for local type inference of an expression takes, as input,
+the context of the expression (typically denoted `K`), and produces two outputs:
+
+- A new expression, in which all local variables and closure parameters are
+  typed, and no type arguments are missing.
+
+- The static type of the expression.
+
+_It is tempting to think of an expression's context as the type that the
+expression must have in order to avoid a compile-time error. In many cases, if
+an expression's static type fails to satisfy its context, a compile-time error
+**will** result. However, there are several situations in which it won't:_
+
+- _In an assignment expression whose left hand side refers to a local variable,
+  if the variable has undergone type promotion at the time of the assignment,
+  the promoted type of the variable is used as the context of the assignment
+  expression's right hand side. If the right hand side of the assignment
+  expression fails to satisfy its context, there is no error; the assignment
+  simply causes the variable to be demoted back to its declared type, or to a
+  previously promoted type._
+
+- _If an if-null expression `e1 ?? e2` occurs in context `_`, then the static
+  type of `e1` is used as the context for `e2`. If `e2` fails to satisfy its
+  context, there is no error._
+
+- _Sometimes, if an expression fails to satisfy its context, the compiler will
+  insert a coercion (such as a dynamic downcast)._
+
+#### Null
+
+To infer a null literal `e` of the form `null` in context `K`:
+
+- Let `m` be a constant reference to the single inhabitant of the `Null` type.
+
+- The result of inference is the expression `m`, with static type `Null`.
+
+#### Numbers
+
+##### Integer Literals
+
+To infer an integer literal `e` in context `K`:
+
+- Let `i` be the numeric value of `e`.
+
+- Let `S` be the greatest closure of `K`.
+
+- Define `R` as follows:
+
+  - If `int <: S`, then let `R` be `int`.
+  
+  - Otherwise, if `double <: S`, then let `R` be `double`.
+
+  - Otherwise, let `R` be `int`.
+
+- Define `m` as follows:
+
+  - If `R` is `int`, then:
+
+    - If `e` is a hexadecimal integer literal, `2^63 <= i < 2^64`, and the `int`
+      class is implemented as signed 64-bit two’s complement integers, then let
+      `m` be a constant reference to an instance of `int` with value `i -
+      2^64`. _In other words, a hexadecimal value such as `0x800000000000000`,
+      which is too large to be represented as a signed 64-bit integer, but not
+      too large to be represented by an unsigned 64-bit integer, simply
+      "overflows" to the negative integer with an equivalent bit
+      representation. This only happens if the implementation represents
+      integers as signed 64-bit values._
+
+    - Otherwise, if `i` cannot be represented exactly by an instance of `int`,
+      then it is a compile-time error. TODO(paulberry): the front end doesn't do
+      this; instead `R` is `int`.
+
+    - Otherwise, let `m` be a constant reference to an instance of `int` with
+      value `i`.
+
+  - Otherwise, if `R` is `double`, then:
+
+    - If `i` cannot be represented exactly by an instance of `double`, then it
+      is a compile-time error.
+
+    - Otherwise, let `m` be a constant reference to an instance of `double` with
+      value `i`.
+
+- Then the result of inferring `e` is `m`, with static type `R`.
+
+##### Double Literals
+
+To infer a double literal `e` in context `K`:
+
+- Let `d` be the numeric value of `e`.
+
+- Let `m` be a constant reference to an instance of `double` with value `d`.
+
+- The result of inferring `e` is `m`, with static type `double`.
+
+#### Boolean Literals
+
+To infer a boolean literal `e` of the form `true` or `false`, in context `K`:
+
+- Let `b` be the boolean value of `e`.
+
+- Let `m` be a constant reference to an instance of `bool` with value `b`.
+
+- The result of inferring `e` is `m`, with static type `bool`.
+
+#### String Literals
+
+A string literal consists of a sequence of characters, where between each pair
+of adjacent characters a string interpolation may optionally appear. String
+interpolatoins can take one of three forms:
+
+- `$id`, where `id` is an identifier.
+
+- `$this`.
+
+- `${e}`, where `e` is some expression.
+
+To infer a string literal `e` in context `K`:
+
+- Define `m` as follows:
+
+  - If `e` contains no string interpolations, then let `m` be a constant
+    reference to an instance of `String` whose value is the sequence of
+    characters in `e`.
+
+  - Otherwise:
+
+    - Consider, in order, each string interpolation `i` that appears in `e`.
+
+      - Define `ei` as follows:
+  
+        - If `i` is of the form `$id`, where `id` is an identifier, then let
+          `ei` be `id`.
+    
+        - Otherwise, if `i` is of the form `$this`, then let `ei` be `this`.
+
+        - Otherwise, `i` must be of the form `${ei'}`. Let `ei` be `ei'`.
+
+      - Infer `ei` in context `_`, producing `mi` with static type `Ti`.
+
+      - Let `mi'` be an invocation of the `toString` method on `mi`, with no
+        arguments. _It is guaranteed that `mi'` will evaluate to a `String`,
+        because the `Object` and `Null` classes define `toString` to have a
+        return type of `String`._
+
+    - Let `m` be a built-in operation that concatenates all of the characters in
+      `e`, interspersed with the strings produced by each `mi'`.
+
+- Then the result of inferring `e` is `m`, with static type `String`.
+
+#### Symbol Literals
+
+To infer a symbol literal `e` in context `K`:
+
+- Let `m` be `e`.
+
+- The resulting expression is `m`, with static type `Symbol`.
+
+#### Collection Literals
+
+TODO(paulberry)
+
+#### Throw Expressions
+
+To infer a throw expression `e` of the form `throw e1`, in context `K`:
+
+- Infer `e1` in context `_`, producing `m1` with static type `T1`.
+
+- The resulting expression is `throw m1`, with static type `Never`.
+
+#### Function Expressions
+
+TODO(paulberry)
+
+#### This
+
+To infer an expression `e` of the form `this`, in context `K`:
+
+- Define `R` as follows:
+
+  - If `e` occurs in a static context (a factory constructor, a static method or
+    variable initializer, or in the initializing expression of a non-late
+    instance variable), then it is a compile-time error.
+
+  - Otherwise, if `e` is enclosed in a class, enum, mixin, or extension type,
+    then let `R` be its interface.
+
+  - Otherwise, if `e` is enclosed in an extension declaration, then let `R` be
+    the extension's `on` type.
+
+  - Otherwise, it is a compile-time error.
+
+- The resulting expression is `this`, with static type `R`.
+
+#### Instance Creation
+
+TODO(paulberry)
+
+#### Function Invocation
+
+TODO(paulberry)
+
+#### Function Closurization
+
+_A function closurization is informally known as a "tear off"._
+
+TODO(paulberry)
+
+#### Generic Function Instantiation
+
+TODO(paulberry)
+
+#### Top Level Getter Invocation
+
+A top level getter invocation is an expression of the form `id`, where `id` is
+an identifier that resolves to a top level getter.
+
+To infer a top level getter invocation `e` that resolves to a top level getter
+`g`, in context `K`:
+
+- Let `R` be the return type of `g` TODO(paulberry)
+
+- The result of inference is the expression `e`, with static type `
+
+#### Cascades
+
+To infer a cascade expression `e` of the form `e1..e2` in context `K`:
+
+- Infer `e1` in context `K`, producing `m1` with static type `T1`.
+
+- Infer `e2` in context `_`, producing `m2` with static type `T2`.
+
+- The resulting expression is `m1..m2`, with static type `T1`.
+
+#### Assignment
+
+An assignment `e` may take any of the following forms:
+
+- An ordinary assignment, `e1 = e2`.
+
+- An if-null assignment, `e1 ??= e2`.
+
+- A compound assignment, `e1 op= e2`, where `op` is one of the of the following:
+  `*`, `/`, `~/`, `%`, `+`, `-`, `<<`, `>>>`, `>>`, `&`, `^`, or `|`.
+
+To infer an assignment `e` of one of these forms, in context `K`:
+
+- Infer `e1` in context `_` with deferred null shorting (**TODO(paulberry):
+  define**), producing `m1`, with static type `Tr`, and guard `mg`. _(`Tr` is
+  known as the "read type" of `e1`.)_
+
+- Let `Tw` be the write type of `e1`, defined as follows:
+
+  - If `e1` refers to a local variable, `Tw` is the declared (unpromoted) type
+    of the variable.
+
+  - Otherwise, `Tw` is the type schema that the setter associated with `e1`
+    imposes on its single argument (or, if `e1` is an index expression, the type
+    schema that the associated `[]=` operator imposes on its second argument).
+
+- Let `Tp` be the promoted write type of `e1`, defined as follows:
+
+  - If `e1` refers to a local variable, `Tp` is `Tr` (the promoted type of the
+    variable).
+
+  - Otherwise, `Tp` is `Tw`.
+
+- If `e` is a compound assignment:
+
+  - Let `K2` be the type schema that the operator `op` (as defined in the
+    interface of `Tread`) imposes on its single arguments, and let `Tc` be the
+    operator's return type.
+
+  - Infer `e2` in context `K2`, producing `m2` with static type `T2`.
+
+  - Coerce `m2`, with static type `T2`, to context `K2`, producing `m2'` with
+    static type `T2'`. **TODO(paulberry): specify this**
+
+  - Let `mc` be the expression `m1 op m2'`.
+
+  - Coerce `mc`, with static type `Tc`, to context `Tw`, producing `mc'` with
+    static type `Tc'`.
+
+  - Let `m` be the expression `e1 = mc'`, where it is understood that any
+    subexpressions shared by `e1` and `mc'` should only be evaluated once.
+
+  - Let `R` be `Tc'`.
+
+- Otherwise, if `e` is an if-null assignment:
+
+  - Let `Tr'` be `NonNull(Tr)`. _This is the type read from `e1`, in the event
+    that the assignment does not occur._
+
+  - Infer `e2` in context `Tp`, producing `m2` with static type `T2`.
+  
+  - Coerce `m2`, with static type `T2`, to context `Tw`, producing `m2'` with
+    static type `T2'`. _`T2'` is the type that will be written to `e1`, in the
+    event that the assignment **does** occur._
+
+  - Let `T` be **UP**(`Tr'`, `T2'`).
+  
+  - Let `S` be the greatest closure of `K`.
+
+  - Let `m` be the expression `m1 ?? (e1 = m2)`, where it is understood that any
+    subexpressions shared by `e1` and `m1` should only be evaluated once.
+
+  - Define `R` as follows:
+
+    - If `T <: S`, then let `R` be `T`.
+
+    - Otherwise, if `Tr' <: S` and `T2' <: S`, then let `R` be `S`.
+
+    - Otherwise, let `R` be `T`.
+
+- Otherwise (`e` is an ordinary assignment):
+
+  - Infer `e2` in context `Tp`, producing `m2` with static type `T2`.
+  
+  - Coerce `m2`, with static type `T2`, to context `Tw`, producing `m2'` with
+    static type `T2'`.
+
+  - Let `m` be the expression `m1 = e2`.
+  
+  - Let `R` be `T2'`.
+
+- If `mg` is empty, then the result of inferring `e` is `m`, with static type
+  `R`.
+
+- Otherwise, the result of inferring `e` is `mg ? m : null`, with static type
+  `R?`.
+
+#### Conditional Expressions
+
+To infer a conditional expression `e` of the form `e1 ? e2 : e3` in context `K`:
+
+- Infer `e1` in context `bool`, producing `m1`, with static type `T1`.
+
+- Coerce `m1`, with static type `T1`, to context `bool`, producing `m1'` with
+  static type `T1'`.
+
+- Infer `e2` in context `K`, producing `m2`, with static type `T2`.
+
+- Infer `e3` in context `K`, producing `m3`, with static type `T3`.
+
+- Let `T` be **UP**(`T2`, `T3`).
+  
+- Let `S` be the greatest closure of `K`.
+
+- Let `m` be the expression `m1' ? m2 : m3`.
+
+- Define `R` as follows:
+
+  - If `T <: S`, then let `R` be `T`.
+
+  - Otherwise, if `T2 <: S` and `T3 <: S`, then let `R` be `S`.
+
+  - Otherwise, let `R` be `T`.
+
+- Then the result of inferring `e` is `m`, with static type `R`.
+
+#### If-null Expressions
+
+_Note: the front end does not yet completely adhere to this spec; see
+https://github.com/dart-lang/language/issues/3650._
+
+To infer an if-null expression `e` of the form `e1 ?? e2`, in context `K`:
+
+- Infer `e1` in context `K?`, producing `m1`, with static type `T1`.
+
+- Let `T1'` be **NonNull**(`T1`). _This is the type of the result of evaluting
+  `e1`, in the event that evaluation of `e2` does not occur._
+
+- Define `J` as follows:
+
+  - If `K` is `_` or `dynamic`, let `J` be `T1`.
+  
+  - Otherwise, let `J` be `K`.
+
+- Infer `e2` in context `J`, producing `m2`, with static type `T2`. _This is the
+  type of the result of evaluating `e2`, in the event that evaluation of `e2`
+  **does** occur._
+
+- Let `T` be **UP**(`T1'`, `T2`).
+  
+- Let `S` be the greatest closure of `K`.
+
+- Let `m` be the expression `m1 ?? m2`.
+
+- Define `R` as follows:
+
+  - If `T <: S`, then let `R` be `T`.
+
+  - Otherwise, if `T1' <: S` and `T2 <: S`, then let `R` be `S`.
+
+  - Otherwise, let `R` be `T`.
+
+- Then the result of inferring `e` is `m`, with static type `R`.
+
+#### Unary Expressions
+
+##### Unary Minus
+
+To infer a unary expression `e` of the form `-e1`, in context `K`:
+
+- If `e1` is an integer literal, then:
+
+  - Let `i` be the numeric value of `e1`.
+
+  - Let `S` be the greatest closure of `K`.
+
+  - Define `R` as follows:
+
+    - If `int <: S`, then let `R` be `int`.
+  
+    - Otherwise, if `double <: S`, then let `R` be `double`.
+
+    - Otherwise, let `R` be `int`.
+
+  - Define `m` as follows:
+
+    - If `R` is `int`, then:
+
+      - If `i` is zero, and the `int` class can represent a negative zero value,
+        then let `m` be a constant reference to an instance of `int` whose value
+        is negative zero.
+
+      - Otherwise, if `-i` cannot be represented exactly by an instance of
+        `int`, then it is a compile-time error.
+
+      - Otherwise, let `m` be a constant reference to an instance of `int` with
+        value `-i`.
+
+    - Otherwise, if `R` is `double`, then:
+
+      - If `i` is `0`, then let `m` be a constant reference to an instance of
+        `double` whose value is negative zero.
+
+      - If `-i` cannot be represented exactly by an instance of `double`, then it
+        is a compile-time error.
+
+      - Otherwise, let `m` be a constant reference to an instance of `double`
+        with value `-i`.
+
+  - Then the result of inferring `e` is `m`, with static type `R`. _In effect,
+    an integer literal preceded by `-` is treated as an integer literal with a
+    negative value, rather than an invocation of the `unary-` operator._
+
+- Otherwise, TODO(paulberry).
+
+#### Await Expressions
+
+_Note: the analyzer does not yet completely adhere to this spec; see
+https://github.com/dart-lang/language/issues/3648._
+
+_Note: the front end does not yet completely adhere to this spec; see
+https://github.com/dart-lang/language/issues/3649._
+
+_Note: there is a propsal to improve this; see
+https://github.com/dart-lang/language/issues/3648._
+
+To infer an await expression `await e1` in context `K`:
+
+- Define `J` as follows:
+
+  - If `K` is `dynamic`, then `J` is `FutureOr<_>`.
+
+  - Otherwise, `J` is `FutureOr<K>`.
+
+- Infer `e1` in context `J`, producing `m1`, with static type `T1`.
+
+- Let `R` be `flatten(T1)`.
+
+- The resulting expression is `await m1`, with static type `R`.
+
+#### Type Cast
+
+To infer a type cast expression `e1 as T` in context `K`:
+
+- Infer `e1` in context `_`, producing `m1` with static type `T1`.
+
+- The resulting expression is `m1 as T`, with static type `T`.
+
+### Lvalue inference
+
+<!-- THIS MATERIAL HAS NOT BEEN UPDATED
 
 The primary function of expression inference is to determine the parameter and
 return types of closure literals which are not explicitly annotated, and to fill
@@ -993,7 +1488,7 @@ literals.
 ### Expectation contexts
 
 A typing expectation context (written using the meta-variables `J` or `K`) is
-a type schema `P`, or an empty context `_`.
+a type schema `P`.
 
 ### Constraint set resolution
 
@@ -1080,35 +1575,12 @@ it iterates through the bounds in order (`Bi[R0/T0, ..., ?/Ti, ..., ?/Tn]`).  Is
 there a better formulation of this that is symmetric but still allows some
 propagation?
 
+-->
+
 ### Inference rules
 
-- The expression `e as T` is inferred as `m as T` of type `T` in context `K`:
-  - If `e` is inferred as `m` in an empty context
-- The expression `x = e` is inferred as `x = m` of type `T` in context `K`:
-  - If `e` is inferred as `m` of type `T` in context `M` where `x` has type `M`.
-- The expression `x ??= e` is inferred as `x ??= m` of type `UP(T, M)` in
-  context `K`:
-  - If `e` is inferred as `m` of type `T` in context `M` where `x` has type `M`.
-- The expression `await e` is inferred as `await m` of type `T` in context `K`:
-  - If `e` is inferred as `m` of type `T` in context `J` where:
-    - `J` is `FutureOr<K>` if `K` is not `_`, and is `_` otherwise
-- The expression `e0 ?? e1` is inferred as `m0 ?? m1` of type `T` in
-  context `K`:
-  - If `e0` is inferred as `m0` of type `T0` in context `K`
-  - And `e1` is inferred as `m1` of type `T1` in context `J`
-  - Where `J` is `T0` if `K` is `_` and otherwise `K`
-  - Where `T` is the greatest closure of `K` with respect to `?` if `K` is not
-    `_` and otherwise `UP(T0, T1)`
-- The expression `e0..e1` is inferred as `m0..m1` of type `T` in context `K`
-  - If `e0` is inferred as `m0` of type `T` in context `K`
-  - And `e1` is inferred as `m1` of type `P` in context `_`
-- The expression `e0 ? e1 : e2` is inferred as `m0 ? m1 : m2` of type `T` in
-  context `K`
-  - If `e0` is inferred as `m0` of any type in context `bool`
-  - And `e1` is inferred as `m1` of type `T0` in context `K`
-  - And `e2` is inferred as `m2` of type `T1` in context `K`
-  - Where `T` is the greatest closure of `K` with respect to `?` if `K` is not
-    `_` and otherwise `UP(T0, T1)`
+Expression inference occurs 
+
 - TODO(leafp): Generalize the following closure cases to the full function
   signature.
   - In general, if the function signature is compatible with the context type,
