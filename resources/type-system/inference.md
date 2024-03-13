@@ -999,7 +999,7 @@ a local variable, closure parameter, or type argument may depend on:
 
 For this reason, local type inference is described procedurally, using a
 recursive algorithm. Each recursion step is applied to a single syntactic
-element (argumentPart, statement, expression, or collection element), and is
+element (_argumentPart_, statement, expression, or collection element), and is
 known as _inferring_ that structure. Each recursion step produces, as output, a
 compilation artifact, designated `m`, abstractly representing the code produced
 by the compiler for that syntactic element. Many recursion steps accept
@@ -1021,10 +1021,56 @@ TODO(paulberry): describe in more detail
 
 - The compilation artifact associated with an _argumentPart_ (known as an
   _argument part artifact_) also contains a return type `R`. This is typically
-  written by appending the suffix `:: R` to the syntax for
-  _argumentPart_. _Examples of argument part artifacts are `() :: int`,
-  `<bool>(1 :: int, 'x' :: String) :: double`, and `(foo: null :: Null) ::
+  written by appending the suffix `::> R` to the syntax for
+  _argumentPart_. _Examples of argument part artifacts are `() ::> int`,
+  `<bool>(1 :: int, 'x' :: String) ::> double`, and `(foo: null :: Null) ::>
   void`._
+
+- The compilation artifact `(let bs in m) :: T` is an expression artifact
+  representing a "let" expression. It functions as follows:
+  
+  - `bs` is a possibly empty sequence of bindings, where each binding takes one
+    of the following forms:
+    
+    - A simple binding: `id_i = m_i :: T_i`, where `id_i` is an identifier and
+      `m_i` is an expression artifact.
+    
+    - A guarded binding: `id_i = m_i :: T_i if (guard_i)`, where `id_i` is an
+      identifier and `m_i` and `guard_i` are expression artifacts.
+
+  - Evaluation of this expression artifact performs the following steps:
+  
+    - For each binding i:
+    
+      - `m_i` is evaluated, and the resulting value is bound to `id_i` in all
+        the remaining subexpressions of this "let" expression.
+
+      - If the binding is a guarded binding, then `guard_i` is evaluated; if it
+        evaluates to `false`, then evaluation of the "let" expression terminates
+        early, producing the value `null`.
+
+    - `m` is evaluated, and the resulting value is the value produced by the
+      "let" expression.
+
+- The compilation artifact `(letArgs id = args in m) :: T`, where `args` is an
+  _argument part artifact_, is an expression artifact that allows application of
+  `args` to be deferred. Evaluation of this expression artifact performs the
+  following steps:
+  
+  - All the expression artifacts within `args` are evaluated (in the order in
+    which they appear), and bound to fresh variables.
+
+  - `m` is evaluated. Anywhere `id` appears in `m`, it is substituted with an _argument part artifact_ containing:
+  
+    - The same type arguments as `args`,
+    
+    - The same name identifiers as `args`,
+    
+    - And for each expression artifact in `args`, an expression artifact that
+      evaluates to the value of the variable that was bound when `args` was
+      evaluated.
+
+TODO(paulberry): maybe some of this stuff can be eliminated
 
 - `instanceGet(m :: T, id)` represents an invocation of the getter named `id` on
   the target `m`. It is guaranteed by soundness that the evaluation result of
@@ -1033,7 +1079,7 @@ TODO(paulberry): describe in more detail
 - `extensionGet(m :: T, E.id)` represents an invocation of the getter named `id`
   in the extension `E`, where `this` is bound to the target `m`. It is
   guaranteed by soundness that the extension `E` contains a getter named `id`.
-
+  
 - `dynamicMethodCall(m :: T, id, args)` represents a dynamic invocation of the
   method named `id` on the target `m`, applying _argumentPart_ `args`. At
   runtime, the evaluation result of `m` might turn out not to have a method
@@ -1070,13 +1116,21 @@ TODO(paulberry): describe in more detail
   args)`, but this would not be accurate; the former evaluates `args` before
   invoking `T.id`; the latter invokes `T.id` before evaluating `args`._
 
-- `concat(strings)` represents a built-in operation that performs string
+- `concat(components)` represents a built-in operation that performs string
   concatenation; `strings` is a sequence of literal characters or expression
-  artifacts whose static type is a subtype of `String`.
+  artifacts whose static type is a subtype of `String`. If `components` does not
+  contain any string interpolations, then the result is a canonicalized
+  constant.
 
 - `symbol(e)` represents a constant reference to an instance of `Symbol`, where
   `e` conforms to the Dart syntax for a symbol literal.
+  
+- `int(i)` represents a constant reference to an instance of `int`, whose value
+  is the integer `i`.
 
+- `double(n)` represents a constant reference to an instance of `double`, whose
+  value is the number `n`.
+  
 ### Argument Part Inference
 
 An _argumentPart_, as specified in the Dart grammar, consists of zero or more
@@ -1118,42 +1172,88 @@ artifact based on an input of the form `(m0 :: T0).id args` and an input context
 To apply method dispatch inference to the input `(m0 :: T0).id args`, in context
 `K`:
 
-- If `T0` is [dynamic bounded](#Dynamic-Boundedness), then the result of method
-  dispatch inference is `dynamicMethodCall(m0 :: T0, id, args) :: dynamic`.
+- Define `F` as follows:
 
-- Otherwise, if the interface of `T0` contains a member `m` named `id` with
-  static type `F`, then:
+  - If `T0` is [dynamic bounded](#Dynamic-Boundedness), then `F` is `dynamic`.
 
-  - Infer `args` in context `K` with type `F`, producing `args' :: R`.
+  - Otherwise, if the interface of `T0` contains a member named `id`, then `F`
+    is the type of that member (either explicitly declared, or inferred via
+    top-level inference).
 
-  - If `m` is a method, then the result of method dispatch inference is
-    `instanceMethodCall(m0 :: T0, id, args')`.
+  - Otherwise, if extension resolution of `id` on `T0` produces a member named
+    `id`, then `F` is the type of that member (either explicitly declared, or
+    inferred via top-level inference).
 
-  - Otherwise, `m` must be a getter, in which case the result of method dispatch
-    inference is `instanceGetterCall(m0 :: T0, id, args')`.
+  - Otherwise, it is a compile-time error.
+
+- Infer `args` in context `K` with type `F`, producing `args' :: R`.
+
+- Then the result of method dispatch is `(m0 :: T0).id args' :: R`.
+
+### Deferred Null Shorting
+
+TODO(paulberry)
+
+### L-value Inference
+
+A step that is re-used multiple times in the definition of local type inference
+is _l-value inference_. L-value inference acts on a single input expression, and
+produces the following outputs:
+
+- A sequence of `bindings` suitable for a let expression.
+
+- An expression artifact `m_read :: T_read`. `m_read` is known as the L-value's
+  _read expression_, and `T_read` is known as the L-value's _read type_.
+
+- An expression artifact `m_write :: void Function(T_write)`. `m_write` is known
+  as the L-value's _write expression_, and `T_write` is known as the L-value's
+  _write type_.
+
+- A context `K`, known as the L-value's _write context_.
+
+L-value inference is only defined for expression types that may appear on the
+left hand side of an assignment, or as the target of `--` or `++`.
+
+L-value inference of an expression `e` is defined as follows:
+
+- If `e` is a reference to a local variable `v`, with declared type `T_d` and promoted type `T_p`, then:
+
+  - `bindings` is an empty sequence.
   
-    - TODO(paulberry): the front end doesn't exactly follow this spec; it allows
-      `F` to be a callable class, in which case insertion of implicit `.call`
-      can happen to arbitrary depth. Possibly related:
-      https://github.com/dart-lang/language/issues/3482.
-
-- Otherwise, if there is an extension `E` in scope that applies to `T0` and
-  contains a member `m` named `id` with static type `F`, then:
+  - The read expression is `v :: T_p`.
   
-  - Infer `args` in context `K` with type `F`, producing `args' :: R`.
-
-  - If `m` is a method, then the result of method dispatch inference is
-    `extensionMethodCall(m0 :: T0, id, args')`.
-
-  - Otherwise, `m` must be a getter, in which case the result of method dispatch
-    inference is `extensionGetterCall(m0 :: T0, id, args')`.
+  - The write expression is `(v') { v = v'; } :: void Function(T_d)`, where `v'`
+    is a fresh variable.
   
-    - TODO(paulberry): I assume the front end has a similar issue here; this
-      needs confirmation.
+  - The write context is `T_p`.
 
-- Otherwise, it is a compile-time error.
+- If `e` is a property access expression of the form `e1.id` or `e1?.id`, then:
 
-### Expression type inference
+  - Infer `e1` in context `_` with deferred null shorting, producing
+    `(bindings', m1 :: T1)`.
+
+  - Let `v` be a fresh variable.
+  
+  - Define `binding` as follows:
+  
+    - If `e` takes the form `e1.id`, then `binding` is the simple binding `v =
+      m1 :: T1`.
+    
+    - Otherwise, `binding` is the guarded binding `v = m1 :: T1 if (v != null)`.
+
+  - The read expression is TODO(paulberry)
+
+#### L-value Inference for a Local Variable
+
+
+
+several outputs based on a single input expression `e`.  produces an expression
+artifact based on an input of the form `(m0 :: T0).id args` and an input context
+`K`, where:
+
+
+
+### Expression Type Inference
 
 The recursion step for local type inference of an expression takes one
 additional input: an inference context `K`. Its output is an _expression
@@ -1183,9 +1283,9 @@ an expression's static type fails to satisfy its context, a compile-time error
 
 To infer a null literal `e` of the form `null` in context `K`:
 
-- Let `m` be a constant reference to the single inhabitant of the `Null` type.
+- Let `m` be an expression artifact that evaluates to the `null` value.
 
-- The result of inference is the expression artifact `m :: Null`.
+- The result of inference is `m :: Null`.
 
 #### Numbers
 
@@ -1202,43 +1302,44 @@ To infer an integer literal `e` in context `K`:
   - Define `m` as follows:
 
     - If `e` is a hexadecimal integer literal, `2^63 <= i < 2^64`, and the `int`
-      class is implemented as signed 64-bit two’s complement integers, then let
-      `m` be a constant reference to an instance of `int` with value `i -
-      2^64`. _In other words, a hexadecimal value such as `0x800000000000000`,
-      which is too large to be represented as a signed 64-bit integer, but not
-      too large to be represented by an unsigned 64-bit integer, simply
-      "overflows" to the negative integer with an equivalent bit
+      class is implemented as signed 64-bit two’s complement integers, `m` is an
+      expression artifact that evaluates to an instance of `int` with numeric
+      value `i - 2^64`. _In other words, a hexadecimal value such as
+      `0x800000000000000`, which is too large to be represented as a signed
+      64-bit integer, but not too large to be represented by an unsigned 64-bit
+      integer, simply "overflows" to the negative integer with an equivalent bit
       representation. This only happens if the implementation represents
       integers as signed 64-bit values._
 
     - Otherwise, if `i` cannot be represented exactly by an instance of `int`,
-      then it is a compile-time error. TODO(paulberry): the front end doesn't do
-      this; instead `R` is `int`.
+      then it is a compile-time error.
 
-    - Otherwise, let `m` be a constant reference to an instance of `int` with
-      value `i`.
+    - Otherwise, `m` is an expression artifact that evaluates to an instance of
+      `int` with numeric value `i`.
 
   - Then the result of inferring `e` is `m :: int`.
 
 - Otherwise:
 
-  - Define `m` as follows:
-
-    - If `i` cannot be represented exactly by an instance of `double`, then it
-      is a compile-time error.
-
-    - Otherwise, let `m` be a constant reference to an instance of `double` with
-      value `i`.
-
-  - Then the result of inferring `e` is `m :: double`.
+  - If `i` cannot be represented exactly by an instance of `double`, then it is
+    a compile-time error. TODO(paulberry): the front end doesn't do this;
+    instead it falls back on an integer representation.
+    
+  - Otherwise:
+  
+    - Let `m` be an expression artifact that evaluates to an instance of
+      `double` with numeric value `i`.
+    
+    - Then, the result of inferring `e` is `m :: double`.
 
 ##### Double Literals
 
 To infer a double literal `e` in context `K`:
 
-- Let `d` be the numeric value of `e`.
+- Let `n` be the numeric value of `e`.
 
-- Let `m` be a constant reference to an instance of `double` with value `d`.
+- Let `m` be an expression artifact that evaluates to an instance of `double`
+  with numeric value `n`.
 
 - The result of inferring `e` is `m :: double`.
 
@@ -1248,7 +1349,8 @@ To infer a boolean literal `e` of the form `true` or `false`, in context `K`:
 
 - Let `b` be the boolean value of `e`.
 
-- Let `m` be a constant reference to an instance of `bool` with value `b`.
+- Let `m` be an expression artifact that evaluates to the instance of `bool`
+  with boolean value `b`.
 
 - The result of inferring `e` is `m :: bool`.
 
@@ -1266,42 +1368,31 @@ of three forms:
 
 To infer a string literal `e` in context `K`:
 
-- Define `m` as follows:
-
-  - If `e` contains no string interpolations, then:
-  
-    - `m` is a constant reference to an instance of `String` whose value is the
-      sequence of characters in `e`.
+- For each component `c_i` in the string interpolation, define `m_i` as follows:
+    
+  - If `c_i` is a literal character, then `m_i` is an expression artifact that
+    evaluates to a string containing the single character `c_i`.
 
   - Otherwise:
-
-    - For each component `c_i` in the string interpolation, define `c_i'` as follows:
-    
-      - If `c_i` is a literal character, then `c_i'` is `c_i`.
-
-      - Otherwise:
       
-        - Define `e_i` as follows:
+    - Define `e_i` as follows:
   
-          - If `i` is of the form `$id`, where `id` is an identifier, then `e_i`
-            is `id`.
+      - If `c_i` is of the form `$id`, where `id` is an identifier, then `e_i` is
+        `id`.
     
-          - Otherwise, if `i` is of the form `$this`, then `e_i` is `this`.
+      - Otherwise, if `c_i` is of the form `$this`, then `e_i` is `this`.
 
-          - Otherwise, `i` must be of the form `${e_i'}`. Then `e_i` is `e_i'`.
+      - Otherwise, `c_i` must be of the form `${e_i'}`. Then `e_i` is `e_i'`.
 
-        - Infer `e_i` in context `_`, producing `m_i :: T_i`.
+    - Infer `e_i` in context `_`, producing `m_i' :: T_i'`.
       
-        - Perform method dispatch inference on `(m_i :: T_i).toString()` in
-          context `_`, producing `m_i' :: T_i'`. _It is guaranteed by soundness
-          that `T_i' <: String`, because the `Object` and `Null` classes define
-          `toString` to have a return type of `String`._
-        
-        - Then `c_i'` is `m_i'`.
+    - Perform method dispatch inference on `(m_i' :: T_i').toString()` in
+      context `_`, producing `m_i :: T_i`. _It is guaranteed by soundness that
+      `T_i <: String`, because the `Object` and `Null` classes define `toString`
+      to have a return type of `String`._
 
-    - Let `strings` be the sequence of all of these `c_i'`s.
-    
-    - Then `m` is `concat(strings)`.
+- Let `m` be an expression artifact that evaluates all the `m_i`s and
+  concatenates the results into a single instance of `String`.
 
 - Then the result of inferring `e` is `m :: String`.
 
@@ -1309,7 +1400,10 @@ To infer a string literal `e` in context `K`:
 
 To infer a symbol literal `e` in context `K`:
 
-- The result of inferring `e` is `symbol(e) :: Symbol`.
+- Let `m` be an expression artifact that evaluates to an instance of `Symbol`
+  whose value corresponds to the syntax of `e`.
+
+- The result of inferring `e` is `m :: Symbol`.
 
 #### Collection Literals
 
@@ -1319,9 +1413,9 @@ TODO(paulberry)
 
 To infer a throw expression `e` of the form `throw e1`, in context `K`:
 
-- Infer `e1` in context `_`, producing `m1` with static type `T1`.
+- Infer `e1` in context `_`, producing `m1 :: T1`.
 
-- The resulting expression is `throw m1`, with static type `Never`.
+- The result of inferring `e` is `throw m1 :: Never`.
 
 #### Function Expressions
 
@@ -1345,7 +1439,7 @@ To infer an expression `e` of the form `this`, in context `K`:
 
   - Otherwise, it is a compile-time error.
 
-- The resulting expression is `this`, with static type `R`.
+- The resulting expression is `this :: R`.
 
 #### Instance Creation
 
@@ -1370,13 +1464,14 @@ TODO(paulberry)
 A top level getter invocation is an expression of the form `id`, where `id` is
 an identifier that resolves to a top level getter.
 
-To infer a top level getter invocation `e` that resolves to a top level getter
-`g`, in context `K`:
+To infer a top level getter invocation `e`, in context `K`:
+
+- Let `g` be the top level getter that `e` resolves to.
 
 - Let `R` be the return type of `g` (either explicitly declared, or inferred via
   top-level inference).
 
-- The result of inference is the expression `e`, with static type `R`.
+- The result of inference is `e :: R`.
 
 #### Member Invocation
 
