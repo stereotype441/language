@@ -988,9 +988,48 @@ a local variable, closure parameter, or type argument may depend on:
 For this reason, local type inference is described procedurally, using a
 recursive algorithm. Each recursion step is applied to a single syntactic
 element (statement, expression, or collection element), and is known as
-_inferring_ that structure. The text below describes the precise set of steps
-required to infer each syntactic structure, based on its form, including the
-order of recursive applications of local type inference.
+_inferring_ that structure. Each recursion step produces, as output, a
+compilation artifact, designated `m`, abstractly representing the code produced
+by the compiler for that syntactic element. Some recursion steps accept
+additional inputs (inference contexts) and/or produce additional outputs (static
+types).
+
+The text below describes the precise set of steps required to infer each
+syntactic structure, based on its form, including the order of recursive
+applications of local type inference.
+
+### Static Invocation Inference
+
+A large component of the procedure for local type inference involves application
+of the following algorithm, known as the "static invocation inference"
+algorithm. Static invocation inference takes the following inputs:
+
+- An inference context `K`.
+
+- A type `F`, which is either a function type or the type `dynamic`.
+
+- A sequence of `n` types `T_i` (`n` may be zero).
+
+- A sequence of `m` expressions `e_i`, and associated optional names `n_i` (`m`
+  may be zero).
+
+- A combinator `C`, which takes as input a list of types and a list of
+  compilation artifacts, and produces a compilation artifact as output. _This
+  can be thought of as a function that executes at compile time, combining
+  together the sequences of instructions representing small parts of the program
+  into larger sequences of instructions. In practice, it's not necessary for the
+  compiler to operate by combining compilation artifacts in this way; it's
+  merely a convenient form in which to specify the compiler's behavior._
+
+It produces, as output:
+
+- A compilation output, `m`.
+
+- A static type, `T`.
+
+The algorithm is as follows:
+
+- Downwards inference. TODO(paulberry)
 
 ### Expression type inference
 
@@ -1021,6 +1060,16 @@ an expression's static type fails to satisfy its context, a compile-time error
 
 - _Sometimes, if an expression fails to satisfy its context, the compiler will
   insert a coercion (such as a dynamic downcast)._
+
+#### Static Type Inference
+
+Most of type inference is defined in terms of a single "static invocation type
+inference" algorithm, defined here. Static invocation type inference takes the
+following inputs:
+
+- A function type `F`.
+
+- A 
 
 #### Null
 
@@ -1214,9 +1263,14 @@ an identifier that resolves to a top level getter.
 To infer a top level getter invocation `e` that resolves to a top level getter
 `g`, in context `K`:
 
-- Let `R` be the return type of `g` TODO(paulberry)
+- Let `R` be the return type of `g` (either explicitly declared, or inferred via
+  top-level inference).
 
-- The result of inference is the expression `e`, with static type `
+- The result of inference is the expression `e`, with static type `R`.
+
+#### Member Invocation
+
+TODO(paulberry)
 
 #### Cascades
 
@@ -1227,6 +1281,14 @@ To infer a cascade expression `e` of the form `e1..e2` in context `K`:
 - Infer `e2` in context `_`, producing `m2` with static type `T2`.
 
 - The resulting expression is `m1..m2`, with static type `T1`.
+
+#### Superinvocations
+
+TODO(paulberry)
+
+#### Property Extractions
+
+TODO(paulberry): how does this differ from a function closurization?
 
 #### Assignment
 
@@ -1250,9 +1312,9 @@ To infer an assignment `e` of one of these forms, in context `K`:
   - If `e1` refers to a local variable, `Tw` is the declared (unpromoted) type
     of the variable.
 
-  - Otherwise, `Tw` is the type schema that the setter associated with `e1`
-    imposes on its single argument (or, if `e1` is an index expression, the type
-    schema that the associated `[]=` operator imposes on its second argument).
+  - Otherwise, `Tw` is the static type of the single argument of the setter
+    associated with `e1` (or, if `e1` is an index expression, the static type of
+    the second argument of the appropriate declaration of `operator []=`).
 
 - Let `Tp` be the promoted write type of `e1`, defined as follows:
 
@@ -1263,9 +1325,8 @@ To infer an assignment `e` of one of these forms, in context `K`:
 
 - If `e` is a compound assignment:
 
-  - Let `K2` be the type schema that the operator `op` (as defined in the
-    interface of `Tread`) imposes on its single arguments, and let `Tc` be the
-    operator's return type.
+  - Let `K2` be the static type of the single argument of `Tread.operator op`,
+    and let `Tc` be the operator's return type.
 
   - Infer `e2` in context `K2`, producing `m2` with static type `T2`.
 
@@ -1392,13 +1453,77 @@ To infer an if-null expression `e` of the form `e1 ?? e2`, in context `K`:
 
 - Then the result of inferring `e` is `m`, with static type `R`.
 
-#### Unary Expressions
+#### Logical Boolean Expressions
 
-##### Unary Minus
+A logical boolean expression takes the form `e1 op e2`, where `op` is either
+`||` or `&&`.
 
-To infer a unary expression `e` of the form `-e1`, in context `K`:
+To infer a logical boolean expression `e`, of the form `e1 op e2`, in context `K`:
 
-- If `e1` is an integer literal, then:
+- Infer `e1` in context `bool`, producing `m1`, with static type `T1`.
+
+- Coerce `m1`, with static type `T1'`, to context `bool`, producing `m1'` with
+  static type `T1'`.
+
+- Infer `e2` in context `bool`, producing `m2`, with static type `T2`.
+
+- Coerce `m2`, with static type `T2'`, to context `bool`, producing `m2'` with
+  static type `T2'`.
+
+- Then the result of inferring `e` is `m1' op m2'`, with static type `bool`.
+
+#### Equality Expressions
+
+An equality expression takes the form `e1 op e2`, where `op` is either `==` or
+`!=`.
+
+To infer an equality expression `e`, of the form `e1 op e2`, in context `K`:
+
+- Infer `e1` in context `_`, producing `m1`, with static type `T1`.
+
+- Let `J` be the static type of the single argument of `T1.operator==`.
+
+- Infer `e2` in context `_`, producing `m2`, with static type `T2`.
+
+- Coerce `m2`, with static type `T2`, to context `J`, producing `m2'` with
+  static type `T2'`.
+
+- Then the result of inferring `e` is `m1 op m2'`, with static type `bool`.
+
+#### User-definable Binary Expression
+
+A user-definable binary expression takes the form `e1 op e2`, where `op` is one
+of `>=`, `>`, `<=`, `<`, `|`, `^`, `&`, `<<`, `>>>`, `>>`, `+`, `-`, `*`, `/`,
+`%`, or `~/`.
+
+To infer a user-definable binary expression `e`, of the form `e1 op e2`, in
+context `K`:
+
+- Infer `e1` in context `_`, producing `m1`, with static type `T1`.
+
+- Define `J` and `R` as follows:
+
+  - If the interface of `T1` contains an operator named `op`, `J` is the static
+    type of the operator's single argument, and `R` is its return type.
+
+  - Otherwise, it is a compile-time error.
+
+- Infer `e2` in context `_`, producing `m2`, with static type `T2`.
+
+- Coerce `m2`, with static type `T2`, to context `J`, producing `m2'` with
+  static type `T2'`.
+
+- Then the result of inferring `e` is `m1 op m2'`, with static type `R`.
+
+#### User-definable Unary Expressions
+
+A user-definable unary expression takes the form `op e1`, where `op` is one of
+`-`, `~`.
+
+To infer a user-definable unary expression `e` of the form `op e1`, in context
+`K`:
+
+- If `e1` is an integer literal and `op` is `-`, then:
 
   - Let `i` be the numeric value of `e1`.
 
@@ -1441,7 +1566,11 @@ To infer a unary expression `e` of the form `-e1`, in context `K`:
     an integer literal preceded by `-` is treated as an integer literal with a
     negative value, rather than an invocation of the `unary-` operator._
 
-- Otherwise, TODO(paulberry).
+- Otherwise:
+
+  - Infer `e1` in context `_`, producing `m1`, with static type `T1`.
+
+  - 
 
 #### Await Expressions
 
