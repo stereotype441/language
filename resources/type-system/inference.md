@@ -969,6 +969,18 @@ with respect to `L` under constraints `C0`
   - If for `i` in `0...m`, `Mi` is a subtype match for `Ni` with respect to `L`
   under constraints `Ci`.
 
+### Dynamic Boundedness
+
+TODO(paulberry): where should this section go?
+
+A type `T` is considered to be _dynamic bounded_ if one of the following is true:
+
+- `T` is `dynamic`.
+
+- `T` is a type variable `X` whose bound is dynamic bounded.
+
+- `T` is a promoted type variable `X & U`, where `U` is dynamic bounded.
+
 ## Local type inference procedure
 
 Within a method body or top-level initializing expression, the type inferred for
@@ -987,59 +999,165 @@ a local variable, closure parameter, or type argument may depend on:
 
 For this reason, local type inference is described procedurally, using a
 recursive algorithm. Each recursion step is applied to a single syntactic
-element (statement, expression, or collection element), and is known as
-_inferring_ that structure. Each recursion step produces, as output, a
+element (argumentPart, statement, expression, or collection element), and is
+known as _inferring_ that structure. Each recursion step produces, as output, a
 compilation artifact, designated `m`, abstractly representing the code produced
-by the compiler for that syntactic element. Some recursion steps accept
-additional inputs (inference contexts) and/or produce additional outputs (static
-types).
+by the compiler for that syntactic element. Many recursion steps accept
+additional inputs.
 
-The text below describes the precise set of steps required to infer each
-syntactic structure, based on its form, including the order of recursive
-applications of local type inference.
+### Compilation Artifacts
 
-### Static Invocation Inference
+In this document, compilation artifacts are described using a syntax that is
+similar to the standard syntax of Dart programs, but with the following
+differences:
 
-A large component of the procedure for local type inference involves application
-of the following algorithm, known as the "static invocation inference"
-algorithm. Static invocation inference takes the following inputs:
+TODO(paulberry): describe in more detail
+
+- The compilation artifact associated with an expression (known as an
+  _expression artifact_) also contains a static type `T`. This is typically
+  written by appending the suffix `:: T` to the syntax for expressions. _(For
+  example, the compilation artifact associated with the boolean literal `true`
+  is `true :: bool`.)_
+
+- The compilation artifact associated with an _argumentPart_ (known as an
+  _argument part artifact_) also contains a return type `R`. This is typically
+  written by appending the suffix `:: R` to the syntax for
+  _argumentPart_. _Examples of argument part artifacts are `() :: int`,
+  `<bool>(1 :: int, 'x' :: String) :: double`, and `(foo: null :: Null) ::
+  void`._
+
+- `instanceGet(m :: T, id)` represents an invocation of the getter named `id` on
+  the target `m`. It is guaranteed by soundness that the evaluation result of
+  `m` will have a getter named `id` in its interface.
+
+- `extensionGet(m :: T, E.id)` represents an invocation of the getter named `id`
+  in the extension `E`, where `this` is bound to the target `m`. It is
+  guaranteed by soundness that the extension `E` contains a getter named `id`.
+
+- `dynamicMethodCall(m :: T, id, args)` represents a dynamic invocation of the
+  method named `id` on the target `m`, applying _argumentPart_ `args`. At
+  runtime, the evaluation result of `m` might turn out not to have a method
+  named `id` in its interface, or it might have a method that isn't compatible
+  with `args`, in which case an exception will be thrown.
+
+- `instanceMethodCall(m :: T, id, args)` represents an invocation of the method
+  named `id` on the target `m`, applying _argumentPart_ `args`. It is guaranteed
+  by soundness that the evaluation result of `m` will have a method named `id`
+  in its interface, which is compatible with `args`.
+
+- `instanceGetterCall(m :: T, id, args)` represents an invocation of the getter
+  named `id` on the target `m`, followed by an execution of the resulting
+  object's `call` method, supplying _argumentPart_ `args`. It is guaranteed by
+  soundness that the evaluation result of `m` will have a getter named `id` in
+  its interface, whose return type is compatible with `args`. _Note that it's
+  tempting to desugar `instanceGetterCall(m :: T, id, args)` into
+  `instanceMethodCall(instanceGet(m :: T, id), call, args)`, but this would not
+  be accurate; the former evaluates `args` before invoking `T.id`; the latter
+  invokes `T.id` before evaluating `args`._
+
+- `extensionMethodCall(E, m :: T, E.id, args)` represents an invocation of the
+  method named `id` in the extension `E`, where `this` is bound to the target
+  `m`, applying _argumentPart_ `args`. It is guaranteed by soundness that the
+  extension `E` contains a method named `id`, which is compatible with `args`.
+
+- `extensionGetterCall(m :: T, E.id, args)` represents an invocation of the
+  getter named `id` in the extension `E`, where `this` is bound to the target
+  `m`, followed by an execution of the resulting object's `call` method,
+  supplying _argumentPart_ `args`. It is guaranteed by soundness that the
+  extension `E` contains a getter named `id`, whose return type is compatible
+  with `args`. _Note that it's tempting to desugar `extensionGetterCall(m :: T,
+  E.id, args)` into `extensionMethodCall(extensionGet(m :: T, E.id), call,
+  args)`, but this would not be accurate; the former evaluates `args` before
+  invoking `T.id`; the latter invokes `T.id` before evaluating `args`._
+
+- `concat(strings)` represents a built-in operation that performs string
+  concatenation; `strings` is a sequence of literal characters or expression
+  artifacts whose static type is a subtype of `String`.
+
+- `symbol(e)` represents a constant reference to an instance of `Symbol`, where
+  `e` conforms to the Dart syntax for a symbol literal.
+
+### Argument Part Inference
+
+An _argumentPart_, as specified in the Dart grammar, consists of zero or more
+type arguments and zero or more expression arguments; each expression argument
+can optionally have an associated name identifier.
+
+_Examples of argument parts include `()`, `<bool>(1, 'x')`, and `(foo: null)`._
+
+The recursion step for inferring an _argumentPart_ takes two additional inputs:
 
 - An inference context `K`.
 
-- A type `F`, which is either a function type or the type `dynamic`.
+- A type `F`.
 
-- A sequence of `n` types `T_i` (`n` may be zero).
+The output of static invocation inference is an _argument part artifact_.
 
-- A sequence of `m` expressions `e_i`, and associated optional names `n_i` (`m`
-  may be zero).
+TODO(paulberry): add a description of the algorithm here (refer to the
+[horizontal inference spec][]). Note that it should be a compile-time error if:
 
-- A combinator `C`, which takes as input a list of types and a list of
-  compilation artifacts, and produces a compilation artifact as output. _This
-  can be thought of as a function that executes at compile time, combining
-  together the sequences of instructions representing small parts of the program
-  into larger sequences of instructions. In practice, it's not necessary for the
-  compiler to operate by combining compilation artifacts in this way; it's
-  merely a convenient form in which to specify the compiler's behavior._
+- `F` is not `dynamic` or a function type.
 
-It produces, as output:
+- `F` is a function type and there is a type mismatch to the _argumentPart_.
 
-- A compilation output, `m`.
+[horizontal inference spec]: https://github.com/dart-lang/language/tree/main/accepted/2.18/horizontal-inference/feature-specification.md
 
-- A static type, `T`.
+### Method Dispatch Inference
 
-The algorithm is as follows:
+A step that is re-used multiple times in the definition of local type inference
+is _method dispatch inference_. Method dispatch inference produces an expression
+artifact based on an input of the form `(m0 :: T0).id args` and an input context
+`K`, where:
 
-- Downwards inference. TODO(paulberry)
+- `m0 :: T0` is an expression artifact, known as the _target_ of the invocation.
+
+- `id` is an identifier, known as the _method name_.
+
+- `args` is an _argumentPart_.
+
+To apply method dispatch inference to the input `(m0 :: T0).id args`, in context
+`K`:
+
+- If `T0` is [dynamic bounded](#Dynamic-Boundedness), then the result of method
+  dispatch inference is `dynamicMethodCall(m0 :: T0, id, args) :: dynamic`.
+
+- Otherwise, if the interface of `T0` contains a member `m` named `id` with
+  static type `F`, then:
+
+  - Infer `args` in context `K` with type `F`, producing `args' :: R`.
+
+  - If `m` is a method, then the result of method dispatch inference is
+    `instanceMethodCall(m0 :: T0, id, args')`.
+
+  - Otherwise, `m` must be a getter, in which case the result of method dispatch
+    inference is `instanceGetterCall(m0 :: T0, id, args')`.
+  
+    - TODO(paulberry): the front end doesn't exactly follow this spec; it allows
+      `F` to be a callable class, in which case insertion of implicit `.call`
+      can happen to arbitrary depth. Possibly related:
+      https://github.com/dart-lang/language/issues/3482.
+
+- Otherwise, if there is an extension `E` in scope that applies to `T0` and
+  contains a member `m` named `id` with static type `F`, then:
+  
+  - Infer `args` in context `K` with type `F`, producing `args' :: R`.
+
+  - If `m` is a method, then the result of method dispatch inference is
+    `extensionMethodCall(m0 :: T0, id, args')`.
+
+  - Otherwise, `m` must be a getter, in which case the result of method dispatch
+    inference is `extensionGetterCall(m0 :: T0, id, args')`.
+  
+    - TODO(paulberry): I assume the front end has a similar issue here; this
+      needs confirmation.
+
+- Otherwise, it is a compile-time error.
 
 ### Expression type inference
 
-The recursion step for local type inference of an expression takes, as input,
-the context of the expression (typically denoted `K`), and produces two outputs:
-
-- A new expression, in which all local variables and closure parameters are
-  typed, and no type arguments are missing.
-
-- The static type of the expression.
+The recursion step for local type inference of an expression takes one
+additional input: an inference context `K`. Its output is an _expression
+artifact_.
 
 _It is tempting to think of an expression's context as the type that the
 expression must have in order to avoid a compile-time error. In many cases, if
@@ -1061,23 +1179,13 @@ an expression's static type fails to satisfy its context, a compile-time error
 - _Sometimes, if an expression fails to satisfy its context, the compiler will
   insert a coercion (such as a dynamic downcast)._
 
-#### Static Type Inference
-
-Most of type inference is defined in terms of a single "static invocation type
-inference" algorithm, defined here. Static invocation type inference takes the
-following inputs:
-
-- A function type `F`.
-
-- A 
-
 #### Null
 
 To infer a null literal `e` of the form `null` in context `K`:
 
 - Let `m` be a constant reference to the single inhabitant of the `Null` type.
 
-- The result of inference is the expression `m`, with static type `Null`.
+- The result of inference is the expression artifact `m :: Null`.
 
 #### Numbers
 
@@ -1089,17 +1197,9 @@ To infer an integer literal `e` in context `K`:
 
 - Let `S` be the greatest closure of `K`.
 
-- Define `R` as follows:
+- If `int <: S` or `double <!: S`, then:
 
-  - If `int <: S`, then let `R` be `int`.
-  
-  - Otherwise, if `double <: S`, then let `R` be `double`.
-
-  - Otherwise, let `R` be `int`.
-
-- Define `m` as follows:
-
-  - If `R` is `int`, then:
+  - Define `m` as follows:
 
     - If `e` is a hexadecimal integer literal, `2^63 <= i < 2^64`, and the `int`
       class is implemented as signed 64-bit two’s complement integers, then let
@@ -1118,7 +1218,11 @@ To infer an integer literal `e` in context `K`:
     - Otherwise, let `m` be a constant reference to an instance of `int` with
       value `i`.
 
-  - Otherwise, if `R` is `double`, then:
+  - Then the result of inferring `e` is `m :: int`.
+
+- Otherwise:
+
+  - Define `m` as follows:
 
     - If `i` cannot be represented exactly by an instance of `double`, then it
       is a compile-time error.
@@ -1126,7 +1230,7 @@ To infer an integer literal `e` in context `K`:
     - Otherwise, let `m` be a constant reference to an instance of `double` with
       value `i`.
 
-- Then the result of inferring `e` is `m`, with static type `R`.
+  - Then the result of inferring `e` is `m :: double`.
 
 ##### Double Literals
 
@@ -1136,7 +1240,7 @@ To infer a double literal `e` in context `K`:
 
 - Let `m` be a constant reference to an instance of `double` with value `d`.
 
-- The result of inferring `e` is `m`, with static type `double`.
+- The result of inferring `e` is `m :: double`.
 
 #### Boolean Literals
 
@@ -1146,13 +1250,13 @@ To infer a boolean literal `e` of the form `true` or `false`, in context `K`:
 
 - Let `m` be a constant reference to an instance of `bool` with value `b`.
 
-- The result of inferring `e` is `m`, with static type `bool`.
+- The result of inferring `e` is `m :: bool`.
 
 #### String Literals
 
-A string literal consists of a sequence of characters, where between each pair
-of adjacent characters a string interpolation may optionally appear. String
-interpolatoins can take one of three forms:
+A string literal consists of a sequence of components, each of which is either a
+literal character or a string interpolation. String interpolation can take one
+of three forms:
 
 - `$id`, where `id` is an identifier.
 
@@ -1164,42 +1268,48 @@ To infer a string literal `e` in context `K`:
 
 - Define `m` as follows:
 
-  - If `e` contains no string interpolations, then let `m` be a constant
-    reference to an instance of `String` whose value is the sequence of
-    characters in `e`.
+  - If `e` contains no string interpolations, then:
+  
+    - `m` is a constant reference to an instance of `String` whose value is the
+      sequence of characters in `e`.
 
   - Otherwise:
 
-    - Consider, in order, each string interpolation `i` that appears in `e`.
-
-      - Define `ei` as follows:
-  
-        - If `i` is of the form `$id`, where `id` is an identifier, then let
-          `ei` be `id`.
+    - For each component `c_i` in the string interpolation, define `c_i'` as follows:
     
-        - Otherwise, if `i` is of the form `$this`, then let `ei` be `this`.
+      - If `c_i` is a literal character, then `c_i'` is `c_i`.
 
-        - Otherwise, `i` must be of the form `${ei'}`. Let `ei` be `ei'`.
+      - Otherwise:
+      
+        - Define `e_i` as follows:
+  
+          - If `i` is of the form `$id`, where `id` is an identifier, then `e_i`
+            is `id`.
+    
+          - Otherwise, if `i` is of the form `$this`, then `e_i` is `this`.
 
-      - Infer `ei` in context `_`, producing `mi` with static type `Ti`.
+          - Otherwise, `i` must be of the form `${e_i'}`. Then `e_i` is `e_i'`.
 
-      - Let `mi'` be an invocation of the `toString` method on `mi`, with no
-        arguments. _It is guaranteed that `mi'` will evaluate to a `String`,
-        because the `Object` and `Null` classes define `toString` to have a
-        return type of `String`._
+        - Infer `e_i` in context `_`, producing `m_i :: T_i`.
+      
+        - Perform method dispatch inference on `(m_i :: T_i).toString()` in
+          context `_`, producing `m_i' :: T_i'`. _It is guaranteed by soundness
+          that `T_i' <: String`, because the `Object` and `Null` classes define
+          `toString` to have a return type of `String`._
+        
+        - Then `c_i'` is `m_i'`.
 
-    - Let `m` be a built-in operation that concatenates all of the characters in
-      `e`, interspersed with the strings produced by each `mi'`.
+    - Let `strings` be the sequence of all of these `c_i'`s.
+    
+    - Then `m` is `concat(strings)`.
 
-- Then the result of inferring `e` is `m`, with static type `String`.
+- Then the result of inferring `e` is `m :: String`.
 
 #### Symbol Literals
 
 To infer a symbol literal `e` in context `K`:
 
-- Let `m` be `e`.
-
-- The resulting expression is `m`, with static type `Symbol`.
+- The result of inferring `e` is `symbol(e) :: Symbol`.
 
 #### Collection Literals
 
