@@ -22,6 +22,10 @@ TODO(paulberry): maybe talk about why it's important to specify type inference
 as a series of procedural steps because of the state implicitly tracked by flow
 analysis.
 
+TODO(paulberry): talk about how we're going to assume soundness in this spec.
+
+TODO(paulberry): is `<:!` OK?
+
 # Expressions
 
 Type inference of an expression always takes place with respect to a type schema
@@ -55,8 +59,8 @@ Type inference of an integer literal `l`, in context `K`, proceeds as follows:
     `double`, whose runtime behavior is to evaluate to an instance of `double`
     representing the value `i`.
 
-  - If `i` cannot be represented _precisely_ by an instance of `double`, then it
-    is a compile-time error. TODO(paulberry): does the analyzer actually
+  - If `i` cannot be represented _precisely_ by an instance of `double`, then
+    there is a compile-time error. TODO(paulberry): does the analyzer actually
     implement this behavior?
 
 - Otherwise, if `l` is a hexadecimal integer literal, 2<sup>63</sup> ≤ `i` <
@@ -74,9 +78,9 @@ Type inference of an integer literal `l`, in context `K`, proceeds as follows:
     `int`, whose runtime behavior is to evaluate to an instance of `int`
     representing the value `i`.
 
-  - If `i` cannot be represented _precisely_ by an instance of `int`, then it is
-    a compile-time error. TODO(paulberry): does the analyzer actually implement
-    this behavior?
+  - If `i` cannot be represented _precisely_ by an instance of `int`, then there
+    is a compile-time error. TODO(paulberry): does the analyzer actually
+    implement this behavior?
 
 TODO(paulberry): the CFE's `InferenceVisitorImpl.visitIntLiteral` method doesn't
 implement int-to-double logic. What's up with that?
@@ -96,18 +100,37 @@ Type inference of a string literal `s`, in context `K`, proceeds as follows:
 
 - For each _stringInterpolation_ `s_i` inside `s`, in source order:
 
-  - If `s_i` takes the form '`${`' `e` '`}`', then let `m_i` be the result of
-    performing type inference on `e`, in context `_`.
+  - Define `m_i` as follows:
+  
+    - If `s_i` takes the form '`${`' `e` '`}`':
 
-  - If `s_i` takes the form '`$e`', where `e` is either `this` or an identifier
-    that doesn't begin with `$`, then let `m_i` be the result of performing type
-    inference on `e`, in context `_`.
+      - Let `m_i` be the result of performing type inference on `e`, in context `_`.
+
+    - Otherwise, `s_i` takes the form '`$e`', where `e` is either `this` or an
+      identifier that doesn't begin with `$`, so:
+    
+      - Let `m_i` be the result of performing type inference on `e`, in context
+        `_`.
+
+  - Let `T_i` be the static type of `m_i`.
+
+  - If `T_i :<! Object` and `T_i` is not `dynamic`, then there is a compile time
+    error.
 
 - The result of type inference is a compilation artifact `m` with static type
-  `String`, whose runtime behavior is to execute the compilation artifacts `m_i`
-  (in source order), and then to concatenate the resulting strings together
-  (along with any non-interpolation characters in `s`) to produce an instance of
-  `String`.
+  `String`, whose runtime behavior is as follows:
+  
+  - For each `i`, in order:
+  
+    - Execute compilation artifact `m_i`, and let `o_i` be the resulting value.
+    
+    - Invoke the `toString` method on `o_i`, with no arguments, and let `r_i` be
+      the return value. _(Note that since both `Object.toString` and
+      `Null.toString` are declared with a return type of `String`, it follows
+      from soundness that `r_i` will have a runtime type of `String`)._
+
+  - Concatenate together the `r_i` strings (interspersing with any
+    non-interpolation characters in `s`) to produce an instance of `String`.
 
 ## Symbol literal
 
@@ -124,6 +147,29 @@ TODO(paulberry): reconcile with spec
 ### Set or map literal
 
 ## Throw
+
+Type inference of a throw expression `throw e_1`, in context `K`, proceeds as
+follows:
+
+- Let `m_1` be the result of performing type inference on `e_1`, in context `_`.
+
+- Let `T_1` be the static type of `m_1`. If `T_1` is not `dynamic`, and `T_1 <:!
+  Object`, then there is a compile-time error.
+
+  - TODO(paulberry): would it be better to spec this in terms of a coercion? CFE
+    creates an `AsExpression` so it would make sense.
+
+- The result of type inference is a compilation artifact `m` with static type
+  `Never`, whose runtime behavior is as follows:
+
+  - Execute the compilation artifact `m_1`, and let `o_1` be the resulting
+    value.
+
+  - If `o_1` is the _null object_, throw an unspecified
+    exception. (TODO(paulberry): in practice it's `_TypeError`. Maybe this is
+    specified in the null safety spec?)
+
+  - Throw `o_1`.
 
 ## Function expressions
 
