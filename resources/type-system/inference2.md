@@ -26,13 +26,21 @@ TODO(paulberry): talk about how we're going to assume soundness in this spec.
 
 TODO(paulberry): is `<:!` OK?
 
-# Expressions
+# Expression type inference
+
+Expression type inference is the sequence of steps performed by the compiler to
+interpret the meaning of an expression in the source code. The specific steps
+depend on the form of the expression, and are explained below, for each kind of
+expression.
 
 Type inference of an expression always takes place with respect to a type schema
 known as the expression's "context". TODO(paulberry): examples?
 
 Type inference of an expression produces a compilation artifact and a static
 type.
+
+TODO(paulberry): explain my convention of talking about the static type as
+belonging to the compilation artifact.
 
 TODO(paulberry): explain how it's not necessary for the static type of an
 expression to conform to its context.
@@ -140,24 +148,24 @@ appropriate instance of `Symbol`.
 
 ## Collection literals
 
-TODO(paulberry): reconcile with spec
+TODO(paulberry): write this.
 
 ### List literal
 
+TODO(paulberry): write this.
+
 ### Set or map literal
+
+TODO(paulberry): write this.
 
 ## Throw
 
 Type inference of a throw expression `throw e_1`, in context `K`, proceeds as
 follows:
 
-- Let `m_1` be the result of performing type inference on `e_1`, in context `_`.
-
-- Let `T_1` be the static type of `m_1`. If `T_1` is not `dynamic`, and `T_1 <:!
-  Object`, then there is a compile-time error.
-
-  - TODO(paulberry): would it be better to spec this in terms of a coercion? CFE
-    creates an `AsExpression` so it would make sense.
+- Let `m_1` be the result of performing type inference on `e_1`, in context `_`,
+  and then coercing the result to type `Object`. (TODO(paulberry): add a link to
+  the "coercions" section below).
 
 - The result of type inference is a compilation artifact with static type
   `Never`, whose runtime behavior is as follows:
@@ -172,6 +180,8 @@ follows:
   - Throw `o_1`.
 
 ## Function expressions
+
+TODO(paulberry): write this.
 
 ## This
 
@@ -194,17 +204,19 @@ Type inference of the expression `this`, in context `K`, proceeds as follows:
 
 ## Instance creation
 
+TODO(paulberry): write this.
+
 ## Function invocation
 
-TODO(paulberry): what goes here?
+TODO(paulberry): write this.
 
 ## Function closurization
 
-TODO(paulberry): what goes here?
+TODO(paulberry): write this.
 
 ## Generic function instantiation
 
-TODO(paulberry): what goes here? Anything?
+TODO(paulberry): write this.
 
 ## Lookup
 
@@ -220,7 +232,11 @@ TODO(paulberry): what goes here? Anything?
 
 ### Index expression
 
+TODO(paulberry): write this.
+
 ## Method invocation
+
+TODO(paulberry): write this.
 
 ### Cascade expression
 
@@ -232,9 +248,15 @@ TODO(paulberry): reconcile with spec
 
 ### Property access
 
+TODO(paulberry): write this.
+
 ## Assignment
 
+TODO(paulberry): write this.
+
 ## Conditional
+
+TODO(paulberry): write this.
 
 ## If-null expressions
 
@@ -258,9 +280,13 @@ TODO(paulberry): make sure all analyzer behaviors are covered either here or in
 
 ## Unary expressions
 
+TODO(paulberry): write this.
+
 See "prefix expression" in the analyzer
 
 ## Await expressions
+
+TODO(paulberry): write this.
 
 ## Postfix expressions
 
@@ -280,17 +306,19 @@ TODO(paulberry): what goes here? anything?
 
 ## Type test
 
+TODO(paulberry): write this.
+
 ## Type cast
 
-==== ABOVE FOLLOWS SPEC
+TODO(paulberry): write this.
 
 ## Augmented expression
 
-TODO(paulberry): postpone working on this?
+TODO(paulberry): write this.
 
 ## Augmented invocation
 
-TODO(paulberry): postpone working on this?
+TODO(paulberry): write this.
 
 ## Constructor reference
 
@@ -311,11 +339,15 @@ null shorting. Where should we talk about it?
 
 ## Pattern assignment
 
+TODO(paulberry): write this.
+
 ## Prefixed identifier
 
 TODO(paulberry): split out cases to match spec
 
 ## Record literal
+
+TODO(paulberry): write this.
 
 ## Rethrow expression
 
@@ -331,7 +363,23 @@ TODO(paulberry): rework to match spec
 
 ## Switch expression
 
+TODO(paulberry): write this.
+
 ## Type literal
+
+TODO(paulberry): write this.
+
+# Coercions
+
+TODO(paulberry): write this.
+
+Coercions can add:
+
+- An implicit type cast from `dynamic` to some other type
+
+- An implicit `.call` insertion
+
+- An implicit generic function instantiation
 
 # Other things
 
