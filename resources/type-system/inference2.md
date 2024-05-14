@@ -39,9 +39,9 @@ expression to conform to its context.
 
 ## Null
 
-Type inference of a null literal (`null`), in context `K`, produces a
-compilation artifact `m` with static type `Null`, whose runtime behavior is to
-evaluate to the _null object_.
+Type inference of the literal `null`, in context `K`, produces a compilation
+artifact with static type `Null`, whose runtime behavior is to evaluate to the
+_null object_.
 
 ## Numbers
 
@@ -55,7 +55,7 @@ Type inference of an integer literal `l`, in context `K`, proceeds as follows:
   for strong mode when performing these assignability checks; what is the effect
   of this?)
 
-  - The result of type inference is a compilation artifact `m` with static type
+  - The result of type inference is a compilation artifact with static type
     `double`, whose runtime behavior is to evaluate to an instance of `double`
     representing the value `i`.
 
@@ -67,14 +67,14 @@ Type inference of an integer literal `l`, in context `K`, proceeds as follows:
   2<sup>64</sup>, and the `int` class is represented as signed 64-bit two's
   complement integers:
 
-  - The result of type inference is a compilation artifact `m` with static type
+  - The result of type inference is a compilation artifact with static type
     `int`, whose runtime behavior is to evaluate to an instance of `int`
     representing the value `i` - 2<sup>64</sup>. TODO(paulberry): does the CFE
     actually implement this behavior?
 
 - Otherwise:
 
-  - The result of type inference is a compilation artifact `m` with static type
+  - The result of type inference is a compilation artifact with static type
     `int`, whose runtime behavior is to evaluate to an instance of `int`
     representing the value `i`.
 
@@ -91,8 +91,8 @@ minus.
 ## Booleans
 
 Type inference of a boolean literal (`true` or `false`), in context `K`,
-produces a compilation artifact `m` with static type `bool`, whose runtime
-behavior is to evaluate to the object _true_ or _false_ (as appropriate).
+produces a compilation artifact with static type `bool`, whose runtime behavior
+is to evaluate to the object _true_ or _false_ (as appropriate).
 
 ## Strings
 
@@ -117,7 +117,7 @@ Type inference of a string literal `s`, in context `K`, proceeds as follows:
   - If `T_i :<! Object` and `T_i` is not `dynamic`, then there is a compile time
     error.
 
-- The result of type inference is a compilation artifact `m` with static type
+- The result of type inference is a compilation artifact with static type
   `String`, whose runtime behavior is as follows:
   
   - For each `i`, in order:
@@ -135,8 +135,8 @@ Type inference of a string literal `s`, in context `K`, proceeds as follows:
 ## Symbol literal
 
 Type inference of a symbol literal, in context `K`, produces a compilation
-artifact `m` with static type `Symbol`, whose runtime behavior is to evaluate to
-an appropriate instance of `Symbol`.
+artifact with static type `Symbol`, whose runtime behavior is to evaluate to an
+appropriate instance of `Symbol`.
 
 ## Collection literals
 
@@ -159,7 +159,7 @@ follows:
   - TODO(paulberry): would it be better to spec this in terms of a coercion? CFE
     creates an `AsExpression` so it would make sense.
 
-- The result of type inference is a compilation artifact `m` with static type
+- The result of type inference is a compilation artifact with static type
   `Never`, whose runtime behavior is as follows:
 
   - Execute the compilation artifact `m_1`, and let `o_1` be the resulting
@@ -174,6 +174,23 @@ follows:
 ## Function expressions
 
 ## This
+
+Type inference of the expression `this`, in context `K`, proceeds as follows:
+
+- Let `T` be the interface type of the immediately enclosing class, enum, mixin,
+  or extension type, or the "on" type of the immediately enclosing extension.
+  
+- If there is no immediately enclosing class, enum, mixin, extension type, or
+  extension, then there is a compile-time error.
+
+- If the expression `this` appears inside a factory constructor, a constructor's
+  initializer list, a static method or variable initializer, or in the
+  initializing expression of a non-late instance variable, then there is a
+  compile-time error.
+
+- The result of type inference is a compilation artifact with static type `T`,
+  whose runtime behavior is to evaluate to the target of the current instance
+  member invocation.
 
 ## Instance creation
 
