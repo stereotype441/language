@@ -1152,12 +1152,9 @@ as follows:
 
 - Let `i` be the numeric value of `l`.
 
-- If the type `double` is assignable to `K`, and the type `int` is _not_
-  assignable to `K`, then: (TODO(paulberry): assignability is only well defined
-  between types; `K` is a type _schema_) (TODO(paulberry): the analyzer accounts
-  for strong mode when performing these assignability checks; what is the effect
-  of this?) (TODO(paulberry): account for the analyzer's treating `dynamic` and
-  `_` as equivalent contexts)
+- Let `S` be the greatest closure of `K`.
+
+- If `double` is a subtype of `S` and `int` is _not_ a subtype of `S`, then:
 
   - Let `T` be the type `double`, and let `m` be an expression artifact whose
     runtime behavior is to complete with a value that is an instance of `double`
@@ -1281,11 +1278,11 @@ follows:
 
   - Execute the expression artifact `m_1`, and let `o_1` be the resulting value.
 
-  - If `o_1` is the _null object_, throw an unspecified
-    exception. (TODO(paulberry): in practice it's `_TypeError`. Maybe this is
-    specified in the null safety spec?)
+  - If `o_1` is the _null object_, then `m` completes with an
+    exception. (TODO(paulberry): which exception? In practice it's
+    `_TypeError`. Maybe this is specified in the null safety spec?)
 
-  - `m` completes with the exception `o_1`.
+  - Otherwise, `m` completes with the exception `o_1`.
 
 _Expression soundness follows from the fact that `m` does not complete with a
 value._
