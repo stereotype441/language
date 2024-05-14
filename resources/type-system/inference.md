@@ -1393,15 +1393,16 @@ static type `bool`, where `m` is determined as follows:
 
 - Let `m` be an expression artifact whose runtime behavior is as follows:
 
-  - Execute expression artifact `m_1`, and let `o_1` be the resulting value. By
-    expression soundness, `o_1` will be an instance of the type `bool`.
+  - Execute expression artifact `m_1`, and let `o_1` be the resulting value. _By
+    expression soundness, `o_1` will be an instance of the type `bool`._
 
   - If the expression is a logical "and" expression and `o_1` is `false`, or the
     expression is a logical "or" expression and `o_1` is `true`, then `m`
     completes with the value `o_1`. _Expression soundness follows trivially._
 
   - Otherwise, execute the expression artifact `m_2`, and let `o_2` be the
-    resulting value. By expression soundness, `o_2` will be an instance of the type `bool`.
+    resulting value. _By expression soundness, `o_2` will be an instance of the
+    type `bool`._
     
   - Then, `m` completes with the value `o_2`. _Expression soundness follows
     trivially._
