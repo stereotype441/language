@@ -33,11 +33,10 @@ interpret the meaning of an expression in the source code. The specific steps
 depend on the form of the expression, and are explained below, for each kind of
 expression.
 
-Type inference of an expression always takes place with respect to a type schema
-known as the expression's "context". TODO(paulberry): examples?
+Expression type inference always takes place with respect to a type schema known
+as the expression's "context". TODO(paulberry): examples?
 
-Type inference of an expression produces a compilation artifact and a static
-type.
+Expression type inference produces a compilation artifact and a static type.
 
 TODO(paulberry): explain my convention of talking about the static type as
 belonging to the compilation artifact.
@@ -47,13 +46,15 @@ expression to conform to its context.
 
 ## Null
 
-Type inference of the literal `null`, in context `K`, produces a compilation
-artifact with static type `Null`, whose runtime behavior is to evaluate to the
-_null object_.
+Expression type inference of the literal `null` produces a compilation artifact
+with static type `Null`, whose runtime behavior is to evaluate to the _null
+object_.
 
 ## Numbers
 
-Type inference of an integer literal `l`, in context `K`, proceeds as follows:
+Expression type inference of an integer literal `l`, in context `K`, produces a
+compilation artifact `m` with static type `T`, where `m` and `T` are determined
+as follows:
 
 - Let `i` be the numeric value of `l`.
 
@@ -63,9 +64,9 @@ Type inference of an integer literal `l`, in context `K`, proceeds as follows:
   for strong mode when performing these assignability checks; what is the effect
   of this?)
 
-  - The result of type inference is a compilation artifact with static type
-    `double`, whose runtime behavior is to evaluate to an instance of `double`
-    representing the value `i`.
+  - Let `T` be the type `double`, and let `m` be a compilation artifact whose
+    runtime behavior is to evaluate to an instance of `double` representing the
+    value `i`.
 
   - If `i` cannot be represented _precisely_ by an instance of `double`, then
     there is a compile-time error. TODO(paulberry): does the analyzer actually
@@ -75,16 +76,16 @@ Type inference of an integer literal `l`, in context `K`, proceeds as follows:
   2<sup>64</sup>, and the `int` class is represented as signed 64-bit two's
   complement integers:
 
-  - The result of type inference is a compilation artifact with static type
-    `int`, whose runtime behavior is to evaluate to an instance of `int`
-    representing the value `i` - 2<sup>64</sup>. TODO(paulberry): does the CFE
-    actually implement this behavior?
+  - Let `T` be the type `int`, and let `m` be a compilation artifact whose
+    runtime behavior is to evaluate to an instance of `int` representing the
+    value `i` - 2<sup>64</sup>. TODO(paulberry): does the CFE actually implement
+    this behavior?
 
 - Otherwise:
 
-  - The result of type inference is a compilation artifact with static type
-    `int`, whose runtime behavior is to evaluate to an instance of `int`
-    representing the value `i`.
+  - Let `T` be the type `int`, and let `m` be a compilation artifact whose
+    runtime behavior is to evaluate to an instance of `int` representing the
+    value `i`.
 
   - If `i` cannot be represented _precisely_ by an instance of `int`, then there
     is a compile-time error. TODO(paulberry): does the analyzer actually
@@ -98,13 +99,14 @@ minus.
 
 ## Booleans
 
-Type inference of a boolean literal (`true` or `false`), in context `K`,
-produces a compilation artifact with static type `bool`, whose runtime behavior
-is to evaluate to the object _true_ or _false_ (as appropriate).
+Expression type inference of a boolean literal (`true` or `false`) produces a
+compilation artifact with static type `bool`, whose runtime behavior is to
+evaluate to the object _true_ or _false_ (as appropriate).
 
 ## Strings
 
-Type inference of a string literal `s`, in context `K`, proceeds as follows:
+Expression type inference of a string literal `s` produces a compilation
+artifact `m` with static type `String`, where `m` is determined as follows:
 
 - For each _stringInterpolation_ `s_i` inside `s`, in source order:
 
@@ -112,21 +114,21 @@ Type inference of a string literal `s`, in context `K`, proceeds as follows:
   
     - If `s_i` takes the form '`${`' `e` '`}`':
 
-      - Let `m_i` be the result of performing type inference on `e`, in context `_`.
+      - Let `m_i` be the result of performing expression type inference on `e`,
+        in context `_`.
 
     - Otherwise, `s_i` takes the form '`$e`', where `e` is either `this` or an
       identifier that doesn't begin with `$`, so:
     
-      - Let `m_i` be the result of performing type inference on `e`, in context
-        `_`.
+      - Let `m_i` be the result of performing expression type inference on `e`,
+        in context `_`.
 
   - Let `T_i` be the static type of `m_i`.
 
   - If `T_i :<! Object` and `T_i` is not `dynamic`, then there is a compile time
     error.
 
-- The result of type inference is a compilation artifact with static type
-  `String`, whose runtime behavior is as follows:
+- Let `m` be a compilation artifact whose runtime behavior is as follows:
   
   - For each `i`, in order:
   
@@ -142,9 +144,11 @@ Type inference of a string literal `s`, in context `K`, proceeds as follows:
 
 ## Symbol literal
 
-Type inference of a symbol literal, in context `K`, produces a compilation
-artifact with static type `Symbol`, whose runtime behavior is to evaluate to an
-appropriate instance of `Symbol`.
+Expression type inference of a symbol literal `#s` (where `s` may be an
+identifier, a sequence of identifiers separated by `.`, an operator, or `void`)
+produces a compilation artifact with static type `Symbol`, whose runtime
+behavior is to evaluate to an instance of `Symbol` representing the tokens in
+`s`.
 
 ## Collection literals
 
@@ -160,15 +164,15 @@ TODO(paulberry): write this.
 
 ## Throw
 
-Type inference of a throw expression `throw e_1`, in context `K`, proceeds as
+Expression type inference of a throw expression `throw e_1` produces a
+compilation artifact `m` with static type `Never`, where `m` is determined as
 follows:
 
-- Let `m_1` be the result of performing type inference on `e_1`, in context `_`,
-  and then coercing the result to type `Object`. (TODO(paulberry): add a link to
-  the "coercions" section below).
+- Let `m_1` be the result of performing expression type inference on `e_1`, in
+  context `_`, and then coercing the result to type `Object`. (TODO(paulberry):
+  add a link to the "coercions" section below).
 
-- The result of type inference is a compilation artifact with static type
-  `Never`, whose runtime behavior is as follows:
+- Let `m` be a compilation artifact whose runtime behavior is as follows:
 
   - Execute the compilation artifact `m_1`, and let `o_1` be the resulting
     value.
@@ -185,7 +189,8 @@ TODO(paulberry): write this.
 
 ## This
 
-Type inference of the expression `this`, in context `K`, proceeds as follows:
+Expression type inference of the expression `this` produces a compilation
+artifact `m` with static type `T`, where `m` and `T` are determined as follows:
 
 - Let `T` be the interface type of the immediately enclosing class, enum, mixin,
   or extension type, or the "on" type of the immediately enclosing extension.
@@ -198,9 +203,8 @@ Type inference of the expression `this`, in context `K`, proceeds as follows:
   initializing expression of a non-late instance variable, then there is a
   compile-time error.
 
-- The result of type inference is a compilation artifact with static type `T`,
-  whose runtime behavior is to evaluate to the target of the current instance
-  member invocation.
+- Let `m` be a compilation artifact whose runtime behavior is to evaluate to the
+  target of the current instance member invocation.
 
 ## Instance creation
 
@@ -264,17 +268,17 @@ TODO(paulberry): split from binary expressions
 
 ## Logical boolean expressions
 
-Type inference of a logical "and" expression (`e_1 && e_2`) or a logical "or"
-expression (`e_1 || e_2`), in context `K`, proceeds as follows:
+Expression type inference of a logical "and" expression (`e_1 && e_2`) or a
+logical "or" expression (`e_1 || e_2`) produces a compilation artifact `m` with
+static type `bool`, where `m` is determined as follows:
 
-- Let `m_1` be the result of performing type inference on `e_1`, in context
-  `bool`, and then coercing the result to type `bool`.
+- Let `m_1` be the result of performing expression type inference on `e_1`, in
+  context `bool`, and then coercing the result to type `bool`.
 
-- Let `m_2` be the result of performing type inference on `e_2`, in context
-  `bool`, and then coercring the result to type `bool`.
+- Let `m_2` be the result of performing expression type inference on `e_2`, in
+  context `bool`, and then coercring the result to type `bool`.
 
-- The result of type inference is a compilation artifact `m` with static type
-  `bool`, whose runtime behavior is as follows:
+- Let `m` be a compilation artifact whose runtime behavior is as follows:
 
   - Execute compilation artifact `m_1`, and let `o_1` be the resulting value.
 
@@ -307,6 +311,8 @@ TODO(paulberry): write this.
 See "prefix expression" in the analyzer
 
 ## Await expressions
+
+
 
 TODO(paulberry): write this.
 
