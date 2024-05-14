@@ -10,8 +10,37 @@ compiled output (referred to as "compilation artifacts"). The precise form of
 compilation artifacts is not dictated by the specification; instead they are
 specified in terms of their runtime behavior.
 
+When executed, a compilation artifact may behave in one of three ways: it may
+complete normally, complete with an exception, or fail to complete at all
+(e.g. due to an infinite loop, or an asynchronous suspension that never
+completes).
+
+If a compilation artifact associated with an expression completes normally,
+there will be an associated value (and the compilation artifact is said to
+_complete with_ the value). Type inference associates each such compilation
+artifact with a _static type_, and guarantees that _if_ the compilation artifact
+completes normally, the associated value will be an instance of the static
+type. This guarantee is known as _expression soundness_.
+
+_Elsewhere in the spec, we speak of an expression having a static type, but in
+the presence of coercions, this can sometimes be confusing, since a given
+expression might be associated with more than one compilation artifact. For
+example in the code `dynamic d = ...; int i = d;`, the expression `d` is
+associated with two compilation artifacts: one which is the result of reading
+the value of the variable `d`, and one which is the result of casting that value
+to the type `int`. The former artifact has static type `dynamic`; the latter has
+static type `int`. Since this document details precisely when and how coercions
+occur, and makes arguments about soundness of expressions that might involve
+coercions, it is useful to be precise by associating static types with the
+compilation artifacts._
+
 TODO(paulberry): maybe talk about how when we specify compilation artifacts in
-terms of their runtime behavior, we gloss over exception semantics.
+terms of a sequence of steps, it is implied that unless otherwise specified, if
+any step in the sequence completes with an exception, then the rest of the
+sequence is skipped, and the entire sequence completes with the same
+exception. Similarly, if any step in the sequence fails to complete at all, then
+the remaining steps are not executed, and the entire sequence fails to complete
+at all.
 
 TODO(paulberry): maybe talk about the fact that errors are specified in this
 doc, and that if at least one error is detected, the only normative behavior is
@@ -22,9 +51,94 @@ TODO(paulberry): maybe talk about why it's important to specify type inference
 as a series of procedural steps because of the state implicitly tracked by flow
 analysis.
 
-TODO(paulberry): talk about how we're going to assume soundness in this spec.
+## Other soundness guarantees
 
-TODO(paulberry): is `<:!` OK?
+There are several other soundness guarantees beyond the _expression soundness_
+guarantee described above.
+
+It is guaranteed that if a method, function, or constructor having return type
+`T` is invoked, and the method completes with a value `v`, then `v` will be an
+instance of `T` (with appropriate type substitutions, in the case of a generic
+method). This guarantee is known as _return value soundness_.
+
+TODO(paulberry): define a complementary notion of _argument soundness_, and
+argue for why it holds in the text below.
+
+It is guaranteed that if a method having static type `T` is torn off, then the
+resulting value will be an instance of `T`. This guarantee is known as _tear-off
+soundness_.
+
+It is guaranteed that if a future is an instance of the type `Future<T>`, and it
+completes with a value `v`, then `v` will be an instance of `T`. This guarantee
+is known as _future soundness_.
+
+# Coercions
+
+Coercion is a type inference step that transforms a compilation artifact `m'`,
+and a desired static type `T`, into a compilation artifact `m` whose static
+type is `T`.
+
+_Coercions are used in most situations where the existing spec calls for an
+assignability check._
+
+Coercion of a compilation artifact `m'` to type `T` produces a compilation
+artifact `m` with static type `T`, where `m` is determined as follows:
+
+- Let `T'` be the static type of `m'`.
+
+- Define `m` as follows:
+
+  - If `T' <: T`, then let `m` be a compilation artifact whose runtime behavior
+    is as follows:
+
+    - Execute compilation artifact `m'`, and let `o` be the resulting value. _By
+      execution soundness, `o` will be an instance of the type `T'`._
+
+    - `m` completes with the value `o`. _Expression soundenss follows from the
+      fact that since `T' <: T`, `o` must also be an instance of the type `T`._
+
+  - Otherwise, if `T'` is `dynamic`, then let `m` be a compilation artifact
+    whose runtime behavior is as follows:
+
+    - Execute compilation artifact `m'`, and let `o` be the resulting value. _By
+      execution soundness, `o` will be an instance of the type `T'`._
+  
+    - If `o` is an instance of the type `T`, `m` completes with the value
+      `o`. _Expression soundness follows trivially._
+    
+    - Otherwise, `m` completes with an exception (TODO(paulberry): which
+      exception?). _Expression soundness follows trivially._
+    
+  - Otherwise, if `T'` is an interface type that contains a method called `call`
+    with type `U`, and `U <: T`, then let `m` be a compilation artifact
+    whose runtime behavior is as follows:
+
+    - Execute compilation artifact `m'`, and let `o` be the resulting value. _By
+      execution soundness, `o` will be an instance of the type `T'`._
+
+    - Let `o'` be the result of tearing off the `call` method of `o`. _This is
+      guaranteed to succeed since `o` is an instance of `T'`, and it is
+      guaranteed by tear-off soundness that `o'` will be an instance of `U`._
+    
+    - `m` completes with the value `o'`. _Expression soundness follows from the
+      fact that `o'` is an instance of `U` and `U <: T`._
+
+  - TODO(paulberry): add more cases to handle implicit instantiation of generic
+    function types, and `call` tearoff with implicit instantiation.
+
+  - Otherwise, there is a compile-time error.
+
+## Shorthand for coercions
+
+In the text that follows, we will sometimes say something like "let `m` be the
+result of performing expression type inference on `e`, in context `K`, and then
+coercing the result to type `T`." This is shorthand for the following sequence
+of steps:
+
+- Let `m'` be the result of performing expression type inference on `e`, in
+  context `K`.
+
+- Let `m` be the result of performing coercion of `m'` to type `T`.
 
 # Expression type inference
 
@@ -36,10 +150,9 @@ expression.
 Expression type inference always takes place with respect to a type schema known
 as the expression's "context". TODO(paulberry): examples?
 
-Expression type inference produces a compilation artifact and a static type.
-
-TODO(paulberry): explain my convention of talking about the static type as
-belonging to the compilation artifact.
+The rules below include informal sketches of a proof that each expression type
+satisfies expression soundness. These are non-normative, so they are typeset in
+_italics_.
 
 TODO(paulberry): explain how it's not necessary for the static type of an
 expression to conform to its context.
@@ -47,8 +160,11 @@ expression to conform to its context.
 ## Null
 
 Expression type inference of the literal `null` produces a compilation artifact
-with static type `Null`, whose runtime behavior is to evaluate to the _null
-object_.
+with static type `Null`, whose runtime behavior is to complete with a value of
+the _null object_.
+
+_Expression soundness follows from the fact that the _null object_ is an
+instance of the type `Null`._
 
 ## Numbers
 
@@ -62,11 +178,12 @@ as follows:
   assignable to `K`, then: (TODO(paulberry): assignability is only well defined
   between types; `K` is a type _schema_) (TODO(paulberry): the analyzer accounts
   for strong mode when performing these assignability checks; what is the effect
-  of this?)
+  of this?) (TODO(paulberry): account for the analyzer's treating `dynamic` and
+  `_` as equivalent contexts)
 
   - Let `T` be the type `double`, and let `m` be a compilation artifact whose
-    runtime behavior is to evaluate to an instance of `double` representing the
-    value `i`.
+    runtime behavior is to complete with a value that is an instance of `double`
+    representing `i`. _Execution soundness follows trivially._
 
   - If `i` cannot be represented _precisely_ by an instance of `double`, then
     there is a compile-time error. TODO(paulberry): does the analyzer actually
@@ -77,15 +194,17 @@ as follows:
   complement integers:
 
   - Let `T` be the type `int`, and let `m` be a compilation artifact whose
-    runtime behavior is to evaluate to an instance of `int` representing the
-    value `i` - 2<sup>64</sup>. TODO(paulberry): does the CFE actually implement
-    this behavior?
+    runtime behavior is to complete with a value that is an instance of `int`
+    representing `i` - 2<sup>64</sup>. TODO(paulberry): does the CFE actually
+    implement this behavior?
+    
+  - _Execution soundness follows trivially._
 
 - Otherwise:
 
   - Let `T` be the type `int`, and let `m` be a compilation artifact whose
-    runtime behavior is to evaluate to an instance of `int` representing the
-    value `i`.
+    runtime behavior is to complete with a value that is an instance of `int`
+    representing `i`. _Execution soundness follows trivially._
 
   - If `i` cannot be represented _precisely_ by an instance of `int`, then there
     is a compile-time error. TODO(paulberry): does the analyzer actually
@@ -101,7 +220,10 @@ minus.
 
 Expression type inference of a boolean literal (`true` or `false`) produces a
 compilation artifact with static type `bool`, whose runtime behavior is to
-evaluate to the object _true_ or _false_ (as appropriate).
+complete with the value _true_ or _false_ (respectively).
+
+_Expression soundness follows from the fact that the objects true and false are
+both instances of the type `bool`._
 
 ## Strings
 
@@ -135,20 +257,26 @@ artifact `m` with static type `String`, where `m` is determined as follows:
     - Execute compilation artifact `m_i`, and let `o_i` be the resulting value.
     
     - Invoke the `toString` method on `o_i`, with no arguments, and let `r_i` be
-      the return value. _(Note that since both `Object.toString` and
+      the return value. _Note that since both `Object.toString` and
       `Null.toString` are declared with a return type of `String`, it follows
-      from soundness that `r_i` will have a runtime type of `String`)._
+      from return value soundness that `r_i` will have a runtime type of
+      `String`)._
 
   - Concatenate together the `r_i` strings (interspersing with any
-    non-interpolation characters in `s`) to produce an instance of `String`.
+    non-interpolation characters in `s`) to produce `r`, an instance of
+    `String`.
+
+  - `m` completes with the value `r`. _Expression soundness follows trivially._
 
 ## Symbol literal
 
 Expression type inference of a symbol literal `#s` (where `s` may be an
 identifier, a sequence of identifiers separated by `.`, an operator, or `void`)
 produces a compilation artifact with static type `Symbol`, whose runtime
-behavior is to evaluate to an instance of `Symbol` representing the tokens in
-`s`.
+behavior is to complete with a value that is an instance of `Symbol`,
+representing the tokens in `s`.
+
+_Expression soundness follows trivially._
 
 ## Collection literals
 
@@ -169,8 +297,7 @@ compilation artifact `m` with static type `Never`, where `m` is determined as
 follows:
 
 - Let `m_1` be the result of performing expression type inference on `e_1`, in
-  context `_`, and then coercing the result to type `Object`. (TODO(paulberry):
-  add a link to the "coercions" section below).
+  context `_`, and then coercing the result to type `Object`.
 
 - Let `m` be a compilation artifact whose runtime behavior is as follows:
 
@@ -181,7 +308,10 @@ follows:
     exception. (TODO(paulberry): in practice it's `_TypeError`. Maybe this is
     specified in the null safety spec?)
 
-  - Throw `o_1`.
+  - `m` completes with the exception `o_1`.
+
+_Expression soundness follows from the fact that `m` does not complete with a
+value._
 
 ## Function expressions
 
@@ -203,8 +333,14 @@ artifact `m` with static type `T`, where `m` and `T` are determined as follows:
   initializing expression of a non-late instance variable, then there is a
   compile-time error.
 
-- Let `m` be a compilation artifact whose runtime behavior is to evaluate to the
-  target of the current instance member invocation.
+- Let `m` be a compilation artifact whose runtime behavior is to complete with a
+  value that is the target of the current instance member invocation.
+
+_Expression soundness follows from the fact that within a class, enum, mixin, or
+extension type having interface type `T`, the target of any instance member
+invocation is always an instance of `T`, and within an extension, the target of
+any instance member invocation is always an instance of the extension's "on"
+type._
 
 ## Instance creation
 
@@ -280,15 +416,18 @@ static type `bool`, where `m` is determined as follows:
 
 - Let `m` be a compilation artifact whose runtime behavior is as follows:
 
-  - Execute compilation artifact `m_1`, and let `o_1` be the resulting value.
+  - Execute compilation artifact `m_1`, and let `o_1` be the resulting value. By
+    expression soundness, `o_1` will be an instance of the type `bool`.
 
   - If the expression is a logical "and" expression and `o_1` is `false`, or the
     expression is a logical "or" expression and `o_1` is `true`, then `m`
-    produces the value `o_1`. _(In this situation, the logical boolean
-    expression is said to "short cut", since it does not execute `m_2`.)_
+    completes with the value `o_1`. _Expression soundness follows trivially._
 
   - Otherwise, execute the compilation artifact `m_2`, and let `o_2` be the
-    resulting value. Then, `m` produces the value `o_2`.
+    resulting value. By expression soundness, `o_2` will be an instance of the type `bool`.
+    
+  - Then, `m` completes with the value `o_2`. _Expression soundness follows
+    trivially._
 
 ## Equality
 
@@ -312,9 +451,63 @@ See "prefix expression" in the analyzer
 
 ## Await expressions
 
+Expression type inference of an await expression `await e_1`, in context `K`,
+produces a compilation artifact `m` with static type `T`, where `m` and `T` are
+determined as follows:
 
+- Define `K_1` as follows:
 
-TODO(paulberry): write this.
+  - If `K` is `FutureOr<S>` or `FutureOr<S>?` for some type schema `S`, then let
+    `K_1` be `K`.
+
+  - Otherwise, if `K` is `dynamic`, then let `K_1` be `FutureOr<_>`.
+  
+  - Otherwise, let `K_1` be `FutureOr<K>`.
+
+- Let `m_1` be the result of performing expression type inference on `e_1`, in
+  context `K_1`.
+
+- Let `T_1` be the static type of `m_1`.
+
+- Let `T` be `flatten(T_1)`.
+
+- Let `m` be a compilation artifact whose runtime behavior is as follows:
+
+  - Execute compilation artifact `m_1`, and let `o_1` be the resulting value. _By
+    expression soundness, `o_1` will be an instance of the type `T_1`._
+
+  - Define `o_2` as follows:
+  
+    - If `o_1` is a subtype of `Future<T>`, then let `o_2` be `o_1`.
+    
+    - Otherwise, let `o_2` be the result of creating a new object using the
+      constructor `Future<T>.value()` with `o_1` as its
+      argument.
+    
+      - TODO(paulberry): How do we ensure soundness in the call to
+        `Future<T>.value()`? It seems like `o_1` must be an instance of the type
+        `T`, where `T` is `flatten(T_1)`. But what we have is that `o_1` is an
+        instance of `T_1`.
+    
+    - _By expression soundness, `o_2` must be an instance of `Future<T>`._
+  
+  - Pause the stream associated with the innermost enclosing asynchronous
+    **for** loop, if any.
+
+  - Suspend the current invocation of the function body immediately enclosing
+    the await expression until after `o_2` completes.
+
+  - At some time after `o_2` is completed, control returns to the current
+    invocation.
+    
+  - If `o_2` is completed with an error `x` and stack trace `t`, then `m`
+    completes with the exception `x` and stack trace `t`. _Expression soundness
+    follows trivially._
+
+  - If `o_2` is completed with an object `v`, then `m` completes with the value
+    `v`. _Since `o_2` is an instance of `Future<T>`, by future soundness, `v`
+    must be an instance of `T`. Therefore, expression soundness follows
+    trivially._
 
 ## Postfix expressions
 
@@ -396,26 +589,6 @@ TODO(paulberry): write this.
 ## Type literal
 
 TODO(paulberry): write this.
-
-# Coercions
-
-TODO(paulberry): write this.
-
-Coercions can add:
-
-- An implicit type cast from `dynamic` to some other type
-
-- An implicit `.call` insertion
-
-- An implicit generic function instantiation
-
-Coercing also generates a compile-time error if the type can't be coerced.
-
-TODO(paulberry): explain that this is basically what happens when the spec
-currently requires an assignability check.
-
-TODO(paulberry): explain how, by soundness, we can assume that the result of
-coercion to a type `T` is guaranteed to produce a value of type `T`.
 
 # Other things
 
