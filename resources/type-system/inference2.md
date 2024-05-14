@@ -264,7 +264,27 @@ TODO(paulberry): split from binary expressions
 
 ## Logical boolean expressions
 
-TODO(paulberry): split from binary expressions
+Type inference of a logical "and" expression (`e_1 && e_2`) or a logical "or"
+expression (`e_1 || e_2`), in context `K`, proceeds as follows:
+
+- Let `m_1` be the result of performing type inference on `e_1`, in context
+  `bool`, and then coercing the result to type `bool`.
+
+- Let `m_2` be the result of performing type inference on `e_2`, in context
+  `bool`, and then coercring the result to type `bool`.
+
+- The result of type inference is a compilation artifact `m` with static type
+  `bool`, whose runtime behavior is as follows:
+
+  - Execute compilation artifact `m_1`, and let `o_1` be the resulting value.
+
+  - If the expression is a logical "and" expression and `o_1` is `false`, or the
+    expression is a logical "or" expression and `o_1` is `true`, then `m`
+    produces the value `o_1`. _(In this situation, the logical boolean
+    expression is said to "short cut", since it does not execute `m_2`.)_
+
+  - Otherwise, execute the compilation artifact `m_2`, and let `o_2` be the
+    resulting value. Then, `m` produces the value `o_2`.
 
 ## Equality
 
@@ -380,6 +400,14 @@ Coercions can add:
 - An implicit `.call` insertion
 
 - An implicit generic function instantiation
+
+Coercing also generates a compile-time error if the type can't be coerced.
+
+TODO(paulberry): explain that this is basically what happens when the spec
+currently requires an assignability check.
+
+TODO(paulberry): explain how, by soundness, we can assume that the result of
+coercion to a type `T` is guaranteed to produce a value of type `T`.
 
 # Other things
 
