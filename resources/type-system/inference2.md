@@ -288,9 +288,11 @@ expression (`e_1 || e_2`), in context `K`, proceeds as follows:
 
 ## Equality
 
-TODO(paulberry): split from binary expressions
+TODO(paulberry): write this.
 
 ## User-definable binary operations
+
+TODO(paulberry): write this.
 
 Note: spec splits these into "relational expressions", "bitwise expressions",
 "shift", "additive expressions", and "multiplicative expressions".
