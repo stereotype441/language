@@ -376,72 +376,6 @@ failure.
 
 ## Local type inference
 
-Local type inference is a process by which the syntax of Dart is elaborated into
-a corresponding set of operational semantics. It is defined here as a recursive
-procedure, where each recursion step operates on a single _input artifact_ (an
-expression, statement, pattern, or collection element in the program being
-compiled), and produces a corresponding _output artifact_ (which abstractly
-represents the code produced by the compiler for the input artifact).
-
-Output artifacts are classified according to the type of input artifact that
-produces them:
-
-- The output artifact associated with an expression is known as an _expression
-  artifact_.
-
-- The output artifact associated with a statement is known as a _statement
-  artifact_.
-
-- The output artifact associated with a pattern is known as a _pattern
-  artifact_.
-
-- The output artifact associated with a collection element is known as a
-  _collection element artifact_.
-
-Some compile-time errors are specified as part of the local type inference algorithm. 
-
-### Expression Type Inference
-
-Recursion steps that operate on expressions consume an additional input known as
-the expression's _context_; this input takes the form of a type schema, and can
-be regarded, informally, as a description of a "desirable" type for the
-expression. Sometimes this is the type that the expression must have (ignoring
-coercions) in order to avoid producing a compile-time error; other times it is a
-type that is desirable for the expression to have for other reasons (e.g., in
-order to avoid demoting a type-promoted local variable).
-
-Recursion steps that operate on expressions produce an additional output known
-as the expression's _static type_. A crucial invariant of the type inference
-process, known as _soundness_, is that when the program is run, any expression
-that successfully executes (i.e., terminates without throwing an exception) is
-guaranteed to produce a value whose runtime type is a subtype of its static
-type. _Note, however, that soundness can be broken using FFI, compilation
-options that eliminate type checks, or hot reload functionality._
-
-The procedure for inferring an expression `e` in context `K`, is as follows:
-
-#### Null
-
-The result of inferring a the expression `null`, regardless of context, is an
-expression artifact that evaluates to the `null` value. Its static type is
-`Null`.
-
-#### Numbers
-
-##### Integer Literals
-
-To infer an integer literal `e` in context `K`:
-
-- Let `i` be the numeric value of `e`.
-
-- Let `S` be the greatest closure of `K`.
-
-- If `int <: S` or `double <!: S`, then:
-
-  - Define `m` 
-
-, as a process that operates on expressions, statements, and collection elements, 
-
 When type annotations are omitted on local variable declarations and function
 literals, or when type arguments are omitted from literal expressions,
 constructor invocations, or generic function invocations, then local type
@@ -1035,23 +969,6 @@ with respect to `L` under constraints `C0`
   - If for `i` in `0...m`, `Mi` is a subtype match for `Ni` with respect to `L`
   under constraints `Ci`.
 
-## Local Type Inference Procedure
-
-Within a method body or top-level initializing expression, the type inferred for
-a local variable, closure parameter, or type argument may depend on:
-
-- The types (explicit or inferred) of local variables appearing earlier in
-  control flow.
-
-- Type promotions determined by the [flow analysis][] of statements and
-  expressions appearing earlier in control flow.
-
-- A type schema associated with the immediately enclosing expression, known as
-  the expression's "context type".
-
-TODO
-
-[flow anaylsis]: https://github.com/dart-lang/language/blob/main/resources/type-system/flow-analysis.md
 
 <!--
 
