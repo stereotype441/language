@@ -1050,6 +1050,10 @@ several other soundness guarantees made by Dart:
   it completes with a value `v`, then `v` will be an instance of `T`. This
   guarantee is known as _future soundness_.
 
+The rules below include informal sketches of a proof that each of the above
+soundness guarantees holds. These are non-normative, so they are typeset in
+_italics_.
+
 # Coercions
 
 _Coercion_ is a type inference step that transforms an expression artifact `m'`,
@@ -1127,10 +1131,6 @@ expression.
 
 Expression type inference always takes place with respect to a type schema known
 as the expression's "context". TODO(paulberry): examples?
-
-The rules below include informal sketches of a proof that each expression type
-satisfies expression soundness. These are non-normative, so they are typeset in
-_italics_.
 
 TODO(paulberry): explain how it's not necessary for the static type of an
 expression to conform to its context.
@@ -1222,8 +1222,8 @@ artifact `m` with static type `String`, where `m` is determined as follows:
 
   - Let `T_i` be the static type of `m_i`.
 
-  - If `T_i :<! Object` and `T_i` is not `dynamic`, then there is a compile time
-    error.
+  - If `T_i` is not a subtype of `Object` and `T_i` is not `dynamic`, then there
+    is a compile time error.
 
 - Let `m` be an expression artifact whose runtime behavior is as follows:
   
@@ -1237,9 +1237,9 @@ artifact `m` with static type `String`, where `m` is determined as follows:
       from return value soundness that `r_i` will have a runtime type of
       `String`)._
 
-  - Concatenate together the `r_i` strings (interspersing with any
-    non-interpolation characters in `s`) to produce `r`, an instance of
-    `String`.
+  - Let `r` be an instance of `String` whose characters are the result of
+    concatenating together the `r_i` strings, interspersing with any
+    non-interpolation characters in `s`.
 
   - `m` completes with the value `r`. _Expression soundness follows trivially._
 
@@ -1397,12 +1397,14 @@ static type `bool`, where `m` is determined as follows:
     expression is a logical "or" expression and `o_1` is `true`, then `m`
     completes with the value `o_1`. _Expression soundness follows trivially._
 
-  - Otherwise, execute the expression artifact `m_2`, and let `o_2` be the
-    resulting value. _By expression soundness, `o_2` will be an instance of the
-    type `bool`._
+  - Otherwise:
+  
+    - Execute the expression artifact `m_2`, and let `o_2` be the resulting
+      value. _By expression soundness, `o_2` will be an instance of the type
+      `bool`._
     
-  - Then, `m` completes with the value `o_2`. _Expression soundness follows
-    trivially._
+    - Then, `m` completes with the value `o_2`. _Expression soundness follows
+      trivially._
 
 ## Equality
 
@@ -1459,10 +1461,10 @@ determined as follows:
       constructor `Future<T>.value()` with `o_1` as its
       argument.
     
-      - TODO(paulberry): How do we ensure soundness in the call to
-        `Future<T>.value()`? It seems like `o_1` must be an instance of the type
-        `T`, where `T` is `flatten(T_1)`. But what we have is that `o_1` is an
-        instance of `T_1`.
+      - TODO(paulberry): How do we ensure that the value passed to
+        `Future<T>.value()` is an instance of type `T`? What we have is that
+        `o_1` is an instance of `T_1`, where `T` is `flatten(T_1)`. Which is not
+        quite the same.
     
     - _By expression soundness, `o_2` must be an instance of `Future<T>`._
   
