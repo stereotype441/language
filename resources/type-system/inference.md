@@ -1211,8 +1211,7 @@ as follows:
 
   - Let `T` be the type `int`, and let `m` be an expression artifact whose
     runtime behavior is to complete with a value that is an instance of `int`
-    representing `i` - 2<sup>64</sup>. TODO(paulberry): does the CFE actually
-    implement this behavior?
+    representing `i` - 2<sup>64</sup>.
 
   - _Execution soundness follows trivially._
 
@@ -1223,11 +1222,7 @@ as follows:
     representing `i`. _Execution soundness follows trivially._
 
   - If `i` cannot be represented _precisely_ by an instance of `int`, then there
-    is a compile-time error. TODO(paulberry): does the analyzer actually
-    implement this behavior?
-
-TODO(paulberry): the CFE's `InferenceVisitorImpl.visitIntLiteral` method doesn't
-implement int-to-double logic. What's up with that?
+    is a compile-time error.
 
 TODO(paulberry): non-normative notes about numeric literals preceded by unary
 minus.
