@@ -1105,6 +1105,9 @@ artifact `m` with static type `T`, where `m` is determined as follows:
     - `m` completes with the value `o'`. _Expression soundness follows from the
       fact that `o'` is an instance of `U` and `U <: T`._
 
+    - TODO(paulberry): double check implicit call insertion against the
+      implementations.
+
   - TODO(paulberry): add more cases to handle implicit instantiation of generic
     function types, and `call` tearoff with implicit instantiation.
 
