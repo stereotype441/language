@@ -1116,38 +1116,38 @@ artifact `m_2` with static type `T_2`, where `m_2` is determined as follows:
 
       - What the analyzer actually does is:
 
-        - Starting with `T'`, convert type parameter types to their bounds (and
+        - Starting with `T_1`, convert type parameter types to their bounds (and
           promoted type parameter types to their promoted bounds), in a loop.
 
-          - I think there's an analyzer bug where if `T' = U?` where `U` extends
-            `C`, then `T'` gets converted to `C`, meaning that if `C` has a call
-            method, implicit call tearoff will be done where it shouldn't. See
-            https://github.com/dart-lang/sdk/issues/55734.
+          - I think there's an analyzer bug where if `T_1 = U?` where `U`
+            extends `C`, then `T_1` gets converted to `C`, meaning that if `C`
+            has a call method, implicit call tearoff will be done where it
+            shouldn't. See https://github.com/dart-lang/sdk/issues/55734.
 
-        - Starting with `T`, convert `FutureOr<S>` or `FutureOr<S>?` to `S` (not
-          in a loop).
+        - Starting with `T_2`, convert `FutureOr<S>` or `FutureOr<S>?` to `S`
+          (not in a loop).
 
-        - Only do the coercion if `T` is `Function`, `Function?` or a function
-          type (with optional `?`). I guess equivalently we could say that `T <:
-          Function?`.
+        - Only do the coercion if `T_2` is `Function`, `Function?` or a function
+          type (with optional `?`). I guess equivalently we could say that `T_2
+          <: Function?`.
 
         - And then it does some generic inference.
 
       - And what the CFE does is:
 
-        - Starting with `T'`, convert type parameter types to their bounds, in a
-          loop.
+        - Starting with `T_1`, convert type parameter types to their bounds, in
+          a loop.
 
           - I think this doesn't have the analyzer bug; it combines
             nullabilities.
 
-        - Computes the greatest closure of `T` (probably unnecessary because I'm
-          always going to use a type here when I specify things).
+        - Computes the greatest closure of `T_2` (probably unnecessary because
+          I'm always going to use a type here when I specify things).
 
-        - If `T` is `FutureOr<S>` or `FutureOr<S>?`, converts to `S`.
+        - If `T_2` is `FutureOr<S>` or `FutureOr<S>?`, converts to `S`.
 
-        - Only does the coercion if `T` is `Function`, `Function?` or a function
-          type (with optional `?`)
+        - Only does the coercion if `T_2` is `Function`, `Function?` or a
+          function type (with optional `?`)
 
         - Specifically doesn't try to coerce `Function` to `Function`. I should
           double check that the analyzer can't be tricked into doing this
