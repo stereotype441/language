@@ -1084,13 +1084,13 @@ artifact `m` with static type `T`, where `m` is determined as follows:
 
     - Execute expression artifact `m'`, and let `o` be the resulting value. _By
       execution soundness, `o` will be an instance of the type `T'`._
-  
+
     - If `o` is an instance of the type `T`, `m` completes with the value
       `o`. _Expression soundness follows trivially._
-    
+
     - Otherwise, `m` completes with an exception (TODO(paulberry): which
       exception?). _Expression soundness follows trivially._
-    
+
   - Otherwise, if `T'` is an interface type that contains a method called `call`
     with type `U`, and `U <: T`, then let `m` be an expression artifact whose
     runtime behavior is as follows:
@@ -1101,7 +1101,7 @@ artifact `m` with static type `T`, where `m` is determined as follows:
     - Let `o'` be the result of tearing off the `call` method of `o`. _This is
       guaranteed to succeed since `o` is an instance of `T'`, and it is
       guaranteed by tear-off soundness that `o'` will be an instance of `U`._
-    
+
     - `m` completes with the value `o'`. _Expression soundness follows from the
       fact that `o'` is an instance of `U` and `U <: T`._
 
@@ -1172,7 +1172,7 @@ as follows:
     runtime behavior is to complete with a value that is an instance of `int`
     representing `i` - 2<sup>64</sup>. TODO(paulberry): does the CFE actually
     implement this behavior?
-    
+
   - _Execution soundness follows trivially._
 
 - Otherwise:
@@ -1208,7 +1208,7 @@ artifact `m` with static type `String`, where `m` is determined as follows:
 - For each _stringInterpolation_ `s_i` inside `s`, in source order:
 
   - Define `m_i` as follows:
-  
+
     - If `s_i` takes the form '`${`' `e` '`}`':
 
       - Let `m_i` be the result of performing expression type inference on `e`,
@@ -1216,7 +1216,7 @@ artifact `m` with static type `String`, where `m` is determined as follows:
 
     - Otherwise, `s_i` takes the form '`$e`', where `e` is either `this` or an
       identifier that doesn't begin with `$`, so:
-    
+
       - Let `m_i` be the result of performing expression type inference on `e`,
         in context `_`.
 
@@ -1226,11 +1226,11 @@ artifact `m` with static type `String`, where `m` is determined as follows:
     is a compile time error.
 
 - Let `m` be an expression artifact whose runtime behavior is as follows:
-  
+
   - For each `i`, in order:
-  
+
     - Execute expression artifact `m_i`, and let `o_i` be the resulting value.
-    
+
     - Invoke the `toString` method on `o_i`, with no arguments, and let `r_i` be
       the return value. _Note that since both `Object.toString` and
       `Null.toString` are declared with a return type of `String`, it follows
@@ -1298,7 +1298,7 @@ artifact `m` with static type `T`, where `m` and `T` are determined as follows:
 
 - Let `T` be the interface type of the immediately enclosing class, enum, mixin,
   or extension type, or the "on" type of the immediately enclosing extension.
-  
+
 - If there is no immediately enclosing class, enum, mixin, extension type, or
   extension, then there is a compile-time error.
 
@@ -1398,11 +1398,11 @@ static type `bool`, where `m` is determined as follows:
     completes with the value `o_1`. _Expression soundness follows trivially._
 
   - Otherwise:
-  
+
     - Execute the expression artifact `m_2`, and let `o_2` be the resulting
       value. _By expression soundness, `o_2` will be an instance of the type
       `bool`._
-    
+
     - Then, `m` completes with the value `o_2`. _Expression soundness follows
       trivially._
 
@@ -1438,7 +1438,7 @@ determined as follows:
     `K_1` be `K`.
 
   - Otherwise, if `K` is `dynamic`, then let `K_1` be `FutureOr<_>`.
-  
+
   - Otherwise, let `K_1` be `FutureOr<K>`.
 
 - Let `m_1` be the result of performing expression type inference on `e_1`, in
@@ -1454,20 +1454,20 @@ determined as follows:
     expression soundness, `o_1` will be an instance of the type `T_1`._
 
   - Define `o_2` as follows:
-  
+
     - If `o_1` is a subtype of `Future<T>`, then let `o_2` be `o_1`.
-    
+
     - Otherwise, let `o_2` be the result of creating a new object using the
       constructor `Future<T>.value()` with `o_1` as its
       argument.
-    
+
       - TODO(paulberry): How do we ensure that the value passed to
         `Future<T>.value()` is an instance of type `T`? What we have is that
         `o_1` is an instance of `T_1`, where `T` is `flatten(T_1)`. Which is not
         quite the same.
-    
+
     - _By expression soundness, `o_2` must be an instance of `Future<T>`._
-  
+
   - Pause the stream associated with the innermost enclosing asynchronous
     **for** loop, if any.
 
@@ -1476,7 +1476,7 @@ determined as follows:
 
   - At some time after `o_2` is completed, control returns to the current
     invocation.
-    
+
   - If `o_2` is completed with an error `x` and stack trace `t`, then `m`
     completes with the exception `x` and stack trace `t`. _Expression soundness
     follows trivially._
