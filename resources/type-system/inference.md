@@ -1462,6 +1462,43 @@ TODO(paulberry): write this.
 
 See "prefix expression" in the analyzer
 
+## Null check operator
+
+Expression type inference of a null check expression (`e_1!`), in context `K`,
+produces an expression artifact `m` with static type `T`, where `m` and `T` are
+determined as follows:
+
+- Define `K_1` as follows:
+
+  - If `K` is `_` or `dynamic`, let `K_1` be `_`.
+
+  - TODO(paulberry): the CFE has this additional rule: if `K` is of the form
+    `U&V`, then `K_1` is `U?&V`, which seems wrong to me. I need to verify that
+    this is the case and think about the consequences.
+
+  - Otherwise, let `K_1` be `K?`.
+
+- Let `m_1` be the result of performing expression type inference on `e_1` in
+  context `K_1`.
+
+- Let `T` be the **NonNull**(`T_1`), where `T_1` is the static type of `m_1`.
+
+- Let `m` be an expression artifact whose runtime behavior is as follows:
+
+  - Execute expression artifact `m_1`, and let `o_1` be the resulting value. _By
+    expression soundness, `o_1` will be an instance of the type `T_1`._
+
+  - If `o_1` is the _null object_, then `m` completes with an
+    exception. (TODO(paulberry): which exception? Is this specified?)
+
+  - Otherwise, `m` completes with the value `o_1`.
+
+_Expression soundness follows from the fact that if `m` completes normally, then
+it completes with a value that is (a) not the null object, and (b) an instance
+of the type `T_1`. It is an invariant of the **NonNull** function that if `v` is
+an instance of `T_1` and not the null object, then `v` must be an instance of
+**NonNull**(`T_1`)._
+
 ## Await expressions
 
 Expression type inference of an await expression `await e_1`, in context `K`,
