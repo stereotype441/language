@@ -1105,8 +1105,45 @@ artifact `m` with static type `T`, where `m` is determined as follows:
     - `m` completes with the value `o'`. _Expression soundness follows from the
       fact that `o'` is an instance of `U` and `U <: T`._
 
-    - TODO(paulberry): double check implicit call insertion against the
-      implementations.
+    - TODO(paulberry): this is not exactly right.
+
+      - What the analyzer actually does is:
+
+        - Starting with `T'`, convert type parameter types to their bounds (and
+          promoted type parameter types to their promoted bounds), in a loop.
+
+          - I think there's an analyzer bug where if `T' = U?` where `U` extends
+            `C`, then `T'` gets converted to `C`, meaning that if `C` has a call
+            method, implicit call tearoff will be done where it shouldn't.
+
+        - Starting with `T`, convert `FutureOr<S>` or `FutureOr<S>?` to `S` (not
+          in a loop).
+
+        - Only do the coercion if `T` is `Function`, `Function?` or a function
+          type (with optional `?`). I guess equivalently we could say that `T <:
+          Function?`.
+
+        - And then it does some generic inference.
+
+      - And what the CFE does is:
+
+        - Starting with `T'`, convert type parameter types to their bounds, in a
+          loop.
+
+          - I think this doesn't have the analyzer bug; it combines
+            nullabilities.
+
+        - Computes the greatest closure of `T` (probably unnecessary because I'm
+          always going to use a type here when I specify things).
+
+        - If `T` is `FutureOr<S>` or `FutureOr<S>?`, converts to `S`.
+
+        - Only does the coercion if `T` is `Function`, `Function?` or a function
+          type (with optional `?`)
+
+        - Specifically doesn't try to coerce `Function` to `Function`. I should
+          double check that the analyzer can't be tricked into doing this
+          coercion (especially given the suspected bug around bounds).
 
   - TODO(paulberry): add more cases to handle implicit instantiation of generic
     function types, and `call` tearoff with implicit instantiation.
