@@ -1202,8 +1202,8 @@ as follows:
     representing `i`. _Execution soundness follows trivially._
 
   - If `i` cannot be represented _precisely_ by an instance of `double`, then
-    there is a compile-time error. TODO(paulberry): does the analyzer actually
-    implement this behavior?
+    there is a compile-time error. _Note: the CFE doesn't currently implement
+    this rule faithfully; see https://github.com/dart-lang/sdk/issues/55736._
 
 - Otherwise, if `l` is a hexadecimal integer literal, 2<sup>63</sup> ≤ `i` <
   2<sup>64</sup>, and the `int` class is represented as signed 64-bit two's
