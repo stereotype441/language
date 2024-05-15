@@ -1114,7 +1114,8 @@ artifact `m` with static type `T`, where `m` is determined as follows:
 
           - I think there's an analyzer bug where if `T' = U?` where `U` extends
             `C`, then `T'` gets converted to `C`, meaning that if `C` has a call
-            method, implicit call tearoff will be done where it shouldn't.
+            method, implicit call tearoff will be done where it shouldn't. See
+            https://github.com/dart-lang/sdk/issues/55734.
 
         - Starting with `T`, convert `FutureOr<S>` or `FutureOr<S>?` to `S` (not
           in a loop).
