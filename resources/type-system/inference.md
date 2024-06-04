@@ -643,7 +643,7 @@ satisfies schema `Pt`.  Constraints in which `X` appears free in either `Pb` or
 ### Closure of type constraints
 
 The closure of a type constraint `Pb <: X <: Pt` with respect to a set of type
-variables `L` is the subtype constraint `Qb <: X :< Qt` where `Qb` is the
+variables `L` is the subtype constraint `Qb <: X <: Qt` where `Qb` is the
 greatest closure of `Pb` with respect to `L`, and `Qt` is the least closure of
 `Pt` with respect to `L`.
 
@@ -1070,8 +1070,8 @@ artifact `m_2` with static type `T_2`, where `m_2` is determined as follows:
 
 - Define `m_2` as follows:
 
-  - If `T_1 <: T_2`, then let `m_2` be an expression artifact whose runtime
-    behavior is as follows:
+  - If `T_1 <: T_2`, then let `m_2` be an expression artifact with static type
+    `T_2`, whose runtime behavior is as follows:
 
     - Execute expression artifact `m_1`, and let `o_1` be the resulting
       value. _By expression soundness, `o_1` will be an instance of the type
@@ -1082,7 +1082,7 @@ artifact `m_2` with static type `T_2`, where `m_2` is determined as follows:
       type `T_2`._
 
   - Otherwise, if `T_1` is `dynamic`, then let `m_2` be an expression artifact
-    whose runtime behavior is as follows:
+    with static type `T_2`, whose runtime behavior is as follows:
 
     - Execute expression artifact `m_1`, and let `o_1` be the resulting value.
 
@@ -1099,7 +1099,7 @@ artifact `m_2` with static type `T_2`, where `m_2` is determined as follows:
 
   - Otherwise, if `T_1` is an interface type that contains a method called
     `call` with type `U`, and `U <: T_2`, then let `m_2` be an expression
-    artifact whose runtime behavior is as follows:
+    artifact with static type `T_2`, whose runtime behavior is as follows:
 
     - Execute expression artifact `m_1`, and let `o_1` be the resulting
       value. _By expression soundness, `o_1` will be an instance of the type
@@ -1271,9 +1271,6 @@ artifact `m` with static type `String`, where `m` is determined as follows:
 
   - Let `T_i` be the static type of `m_i`.
 
-  - If `T_i` is not a subtype of `Object` and `T_i` is not `dynamic`, then there
-    is a compile time error.
-
 - Let `m` be an expression artifact whose runtime behavior is as follows:
 
   - For each `i`, in order:
@@ -1333,7 +1330,7 @@ follows:
     exception. (TODO(paulberry): which exception? In practice it's
     `_TypeError`. Maybe this is specified in the null safety spec?)
 
-  - Otherwise, `m` completes with the exception `o_1`.
+  - Otherwise, `m` completes with an exception whose value is `o_1`.
 
 _Expression soundness follows from the fact that `m` does not complete with a
 value._
@@ -1437,7 +1434,7 @@ static type `bool`, where `m` is determined as follows:
   context `bool`, and then coercing the result to type `bool`.
 
 - Let `m_2` be the result of performing expression type inference on `e_2`, in
-  context `bool`, and then coercring the result to type `bool`.
+  context `bool`, and then coercing the result to type `bool`.
 
 - Let `m` be an expression artifact whose runtime behavior is as follows:
 
