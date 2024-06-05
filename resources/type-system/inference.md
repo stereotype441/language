@@ -969,6 +969,23 @@ with respect to `L` under constraints `C0`
   - If for `i` in `0...m`, `Mi` is a subtype match for `Ni` with respect to `L`
   under constraints `Ci`.
 
+## Bound resolution
+
+For any type `T`, the _bound resolution_ of `T` is a type `U`, defined by the
+following recursive process:
+
+- If `T` is a type variable `X`, then let `B` be the bound of `X`. Then `U` is
+  the bound resolution of `B`.
+
+- Otherwise, if `T` is a promoted type variable `X&B`, then `U` is the bound
+  resolution of `B`.
+
+- Otherwise, `U` is `T`.
+
+_Note that the spec notions of __dynamic__ boundedness and __Function__
+boundedness can be defined in terms of bound resolution, as follows: a type is
+__dynamic__ bounded iff its bound resolution is __dynamic__, and a type is
+__Function__ bounded if its bound resolution if __Function__.
 
 # Expression inference
 
@@ -1024,6 +1041,29 @@ succintly, the syntax of Dart is extended to allow the following forms:
   to explicitly mark integer literals that have been converted, by type
   inference, to doubles._
 
+- `@DYNAMIC_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`, where
+  `{m_0, m_1, m_2, ...}` is a list of elaborated expressions, `id` is a method
+  name identifier or operator name, `{T_0, T_1, ...}` is a (possibly empty) list
+  of types, and `{n_1, n_2, ...}` is a list of optional argument name
+  identifiers, represents the following operation:
+  - Evaluate each of `m_0`, `m_1`, `m_2`, and so on in sequence, and bind the
+    resulting values to `v_0`, `v_1`, `v_2`, and so on.
+  - Perform a dynamic method invocation using `v_0` as the target, `id` as the
+    method name, type arguments `{T_1, T_2, ...}`, and ordinary arguments `{v_1,
+    v_2, ...}` (with argument names `{n_1, n_2, ...}`).
+    - If the list of type arguments `{T_1, T_2, ...}` is empty, the invocation
+      is a non-generic invocation.
+    - If any of the argument names `n_i` is omitted, the corresponding value
+      `v_i` is treated as a positional argument. This is sometimes notated by
+      using the symbol `∅` for `n_i`.
+  - The static type of the `@DYNAMIC_INVOKE` construct is always `dynamic`.
+  - _The reason for using this notation, rather than the usual Dart syntax of
+    `m_0.id<T_0, T_1, ...>(n_1: m_1, n_2: m_2, ...)` is (a) to clarify that the
+    invocation will be done dynamically (i.e. method lookup will be done at
+    runtime, and the resolved method will never come from an extension or an
+    extension type), and (b) to allow the same syntax to be used for dynamic
+    operator invocations and dynamic method invocations._
+
 - `@IMPLICIT_CAST<T>(m)` represents an implicit cast of the expression `m` to
   type `T`. The runtime behavior of this construct is the same as that of `m as
   T`, except that in the case where the cast fails, the exception thrown is a
@@ -1064,6 +1104,28 @@ succintly, the syntax of Dart is extended to allow the following forms:
   any loss of functionality, provided they are not trying to construct a proof
   of soundness._
 
+- `@STATIC_INVOKE(f<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`, where `{m_0, m_1,
+  m_2, ...}` is a list of elaborated expressions, `f` is a static method or top
+  level function, `{T_0, T_1, ...}` is a (possibly empty) list of types, and
+  `{n_1, n_2, ...}` is a list of optional argument name identifiers, represents
+  the following operation:
+  - Evaluate each of `m_1`, `m_2`, and so on in sequence, and bind the resulting
+    values to `v_1`, `v_2`, and so on.
+  - Perform a static invocation using `f` as the target, type arguments `{T_1,
+    T_2, ...}`, and ordinary arguments `{v_1, v_2, ...}` (with argument names
+    `{n_1, n_2, ...}`).
+    - If the list of type arguments `{T_1, T_2, ...}` is empty, the invocation
+      is a non-generic invocation.
+    - If any of the argument names `n_i` is omitted, the corresponding value
+      `v_i` is treated as a positional argument. This is sometimes notated by
+      using the symbol `∅` for `n_i`.
+  - The static type of the `@STATIC_INVOKE` construct is formed by taking the
+    return type of `f`, and substituting `{T_1, T_2, ...}` in place of the type
+    arguments of `f`.
+  - _The reason for using this notation, rather than the usual Dart syntax of
+    `f<T_0, T_1, ...>(n_1: m_1, n_2: m_2, ...)` is to clarify that the
+    invocation will be done statically._
+
 ## Soundness guarantees
 
 An invariant of expression inference, known as _soundness_, is that when the
@@ -1092,6 +1154,16 @@ invariants:
 - An elaborated expression will never contain one of the tokens `?.`, `??`, or
   `??=`. _The type inference process converts expressions containing these
   tokens into simpler forms._
+
+- Whenever an elaborated expression contains `.`_<identifier> <argumentPart>_,
+  this can be interpreted as a method invocation. _Other interpretations are
+  valid in standard Dart; for example, if `b` refers to a getter, then `a.b()`
+  is not a method invocation, but a function invocation applied to a the result
+  of a getter invocation. In this scenario, the type inference process
+  elaborates `a.b()` to `a.b.call()`._
+
+  - _TODO(paulberry): but maybe I want to make a stronger guarantee. E.g. all
+    calls are turned into `@DYNAMIC_INVOKE`, `@STATIC_INVOKE`, etc._
 
 - Elaborated expressions will never contain any implicit type checks. This
   means, in particular, that:
@@ -1178,6 +1250,473 @@ of steps:
 
 _It follows, from the soundness invariant of coercions, that the static type of
 `m` is guaranteed to be a subtype of `T`._
+
+## Argument part inference
+
+The type inference rules for many kinds of expressions make use of an operation
+known as _argument part inference_. _Argument part inference_ is a type
+inference step that is applied to an optional target function type `F`, a
+sequence of expressions `{e_1, e_2, ...}`, a corresponding sequence (of the same
+length) of optional name identifiers `{n_1, n_2, ...}`, a sequence of zero or
+more type arguments `{T_1, T_2, ...}`, and a type schema `K`, known as the
+context. Since the target function type and the names are optional, we will use
+the symbol `∅` to denote a missing target function type or a missing name. _A
+sequence of zero type arguments is typically used when supplying arguments to a
+non-generic function or method, or when type arguments need to be inferred._
+
+The output of argument part inference is a sequence of elaborated expressions
+`{m_1, m_2, ...}` (of the same length as the sequence of input expressions), a
+sequence of zero or more elaborated type arguments `{U_1, U_2, ...}`, and a
+result type known as `R`. _(The sequence of optional names is unchanged by
+argument part inference.)_
+
+To emphasize the relationship between argument part inference and the syntax of
+Dart source code, the inputs and outputs of argument part inference are
+sometimes described using the `<argumentPart>` syntax, namely `<T_1, T_2,
+...>(n_1: e_1, n_2: e_2, ...)`.
+
+_So, for example, if we say that "argument part inference is invoked on `<int,
+String>(1, x: 2)`", this means that the input of argument part inference is
+applied to the sequence of expressions `{1, 2}`, the sequence of optional names
+`{∅, x}`, and the sequence of type arguments `{int, String}`._
+
+The procedure for argument part inference is as follows:
+
+- Let `{X_1, X_2, ...}` be the list of formal type parameters in `F`, or an
+  empty list if `F` is `∅`.
+
+- Let `{P_1, P_2, ...}` be the list of formal parameter types corresponding to
+  `{e_1, e_2, ...}`, determined as follows:
+
+  - If `F` is `∅`, then let each `P_i` be `_`.
+
+  - Otherwise:
+
+    - For each `n_i` that is `∅`, let `P_i` be the type of the corresponding
+      positional parameter in `F`. If there is no such parameter, it is a
+      compile time error (_too many positional arguments supplied_).
+
+    - For each `n_i` that is not `∅`, let `P_i` be the type of the parameter of
+      `F` named `n_i`. If there is no such parameter, it is a compile time error
+      (_unnexpected named argument supplied_).
+
+- Let `R_F` be the return type of `F`. Or, if `F` is `∅`, then let `R_F` be
+  `dynamic`.
+
+  - _TODO(paulberry): account for isConst parameter of
+    setupGenericTypeInference._
+
+- Produce an initial list of type constraints `C`, and an initial list of type
+  schemas `{U_1, U_2, ...}`, as follows:
+
+  - If `F` is `∅`, then:
+
+    - Let `C` be an empty list of type constraints, and let `{U_1, U_2, ...}` be
+      the same as `{T_1, T_2, ...}`. _This covers the case of dynamic
+      invocation; the user-supplied type arguments are accepted verbatim._
+
+  - Otherwise, `F` must be a function type. If the number of formal type
+    parameters of `F` (which could be zero) matches the number of type arguments
+    `T`, then:
+
+    - Let `C` be an empty list of type constraints, and let `{U_1, U_2, ...}` be
+      the same as `{T_1, T_2, ...}`. _This covers the case where no generic type
+      inference is needed, because a correct number of explicit type arguments
+      was supplied._
+
+  - Otherwise, if the number of type arguments `T` is nonzero, then there is a
+    compile-time error (_wrong number of type arguments supplied_).
+
+  - Otherwise, `F` must have at least one formal type parameter, and there must
+    be zero type arguments `T` (_in other words, type arguments must be
+    inferred_). Then:
+
+    - Initialize `C` to an empty list of type constraints.
+
+    - Initialize `{U_1, U_2, ...}` to a list of type schemas, of the same length
+      as `{X_1, X_2, ...}`, each of which is `_`.
+
+    - Using subtype constraint generation, attempt to match `R_F` as a subtype
+      of `K` with respect to the list of type variables `{X_1, X_2, ...}`.
+
+      - If this succeeds, then accumulate the resulting list of type constraints
+        into `C`. Then, let `{V_1, V_2, ...}` be the constraint solution for the
+        set of type variables `{X_1, X_2, ...}` with respect to the constaint
+        set `C`, with partial solution `{U_1, U_2, ...}`. Replace `{U_1, U_2,
+        ...}` with `{V_1, V_2, ...}`. _This step is known as "downwards
+        inference", since it has the effect of passing type information __down__
+        the syntax tree from the context of the invocation to the context of the
+        arguments._
+
+      - Otherwise, leave `C` and `{U_1, U_2, ...}` unchanged. _TODO(paulberry):
+        verify that this is not an error condition._
+
+- Partition the arguments `{e_1, e_2, ...}` into stages (see [argument
+  partitioning](#Argument-partitioning) below), and then for each stage _k_:
+
+  - For each `e_i` in stage _k_, let `K_i` be the result of substituting `{U_1,
+    U_2, ...}` for `{X_1, X_2, ...}` in `P_i`.
+
+  - For each `e_i` in stage _k_ that _does not_ take the form of a
+    _<functionExpression>_ enclosed in zero or more parentheses, in order of
+    increasing _i_:
+
+    - Let `m_i` be the result of performing expression inference on `e_i`, in
+      context `K_i`.
+
+  - For each `e_i` in stage _k_ that _does_ take the form of a
+    _<functionExpression>_ enclosed in zero or more parentheses, in order of
+    increasing _i_:
+
+    - Let `m_i` be the result of performing expression inference on `e_i`, in
+      context `K_i`.
+
+  - _Note that an invariant of argument partitioning is that arguments that are
+    not function literal expressions are always placed in stage zero, so this
+    has the effect that all arguments that are not function expressions are type
+    inferred first, in the order in which they appear in source code, followed
+    by all arguments that __are__ function expressions, possibly in a staged
+    fashion._
+
+  - If `F` has at least one formal type parameter, and there are zero type
+    arguments `T` (_in other words, generic type inference is being performed_),
+    then:
+
+    - For each `e_i` in stage _k_:
+
+      - Let `S_i` be the static type of `m_i`.
+
+      - Using subtype constraint generation, attempt to match `S_i` as a subtype
+        of `K_i` with respect to the list of type variables `{X_1, X_2, ...}`.
+
+        - If this succeeds, then accumulate the resulting list of type
+          constraints into `C`.
+
+        - Otherwise, leave `C` unchanged. _TODO(paulberry): verify that this is
+          not an error condition._
+
+    - Update `{U_1, U_2, ...}` as follows:
+
+      - If _k_ is not the last stage in the argument partitioning, then let
+        `{V_1, V_2, ...}` be the constraint solution for the set of type
+        variables `{X_1, X_2, ...}` with respect to the constaint set `C`, with
+        partial solution `{U_1, U_2, ...}`. Replace `{U_1, U_2, ...}` with
+        `{V_1, V_2, ...}`. _This step is known as "horizontal inference", since
+        it has the effect of passing type information __across__ the syntax tree
+        from the static type of some arguments to the context of other
+        arguments._
+
+      - Otherwise (_k_ __is__ the last stage in the argument partitioning), let
+        `{V_1, V_2, ...}` be the _grounded_ constraint solution for the set of
+        type variables `{X_1, X_2, ...}` with respect to the constaint set `C`,
+        with partial solution `{U_1, U_2, ...}`. Replace `{U_1, U_2, ...}` with
+        `{V_1, V_2, ...}`. _This step is known as "upwards inference", since it
+        has the effect of passing type information __up__ the syntax tree from
+        the static type of arguments to the inferred type arguments of the
+        invocation._
+
+- _Note that at this point, all entries in `{U_1, U_2, ...}` have been obtained
+  either from a _grounded_ constraint solution or from explicit types in the
+  source code, so they are guaranteed to be proper types, not type schemas._
+
+- For each `e_i`:
+
+  - Let `K_i` be the result of substituting `{U_1, U_2, ...}` for `{X_1, X_2,
+    ...}` in `P_i`. _Note that this is now guaranteed to be a proper type, not a
+    type schema._
+
+  - Let `m` be the result of performing coercion of `m_i` to type `K_i`.
+
+  - Replace `m_1` with `m`. _This ensures that the invocation is sound._
+
+- Finally, let `R` be the result of substituting `{U_1, U_2, ...}` for `{X_1,
+  X_2, ...}` in `R_F`.
+
+### Argument Partitioning
+
+In the algorithm above, the argument partitioning works as follows. First there
+is a _dependency analysis_ phase, in which type inference decides which
+invocation arguments might benefit from being type inferred before other
+arguments, and then a _stage selection_ phase, in which type inference
+partitions the arguments into stages.
+
+#### Dependency analysis
+
+First, a dependency graph is formed among the invocation arguments `e_i` based
+on the following rule: there is a dependency edge from argument `e_i` to
+argument `e_j` if and only if the type of the invocation target is generic, and
+the following relationship exists among `e_i`, `e_j`, and at least one of the
+formal type parameters `X_k`:
+
+1. `e_i` is a _<functionExpression>_ enclosed in zero or more parentheses,
+
+2. AND `P_i` is a function type,
+
+3. AND `X_k` is a free variable in the type of at least one of the parameters of
+   `P_i`,
+
+4. AND the corresponding parameter in `e_i` does not have a type annotation,
+
+5. AND EITHER:
+
+   * `P_j` is a function type, and `X_k` is a free variable in the return type
+     of `P_j`
+
+   * OR `P_j` is _not_ a function type, and `X_k` is a free variable in `P_j`.
+
+_The idea here is that we're trying to draw a dependency edge from `e_i` to
+`e_j` in precisely those cirumstances in which there is likely to be a benefit
+to performing a round of horizontal inference after type inferring `e_j` and
+before type inferring `e_i`._
+
+_Note that if `F` is `∅`, then the resulting graph has no edges._
+
+_So, for example, if the invocation in question is this:_
+
+```dart
+f((t, u) { ... } /* A */, () { ... } /* B */, (v) { ... } /* C */, (u) { ... } /* D */)
+```
+
+_And the target of the invocation is declared like this:_
+
+```dart
+void f<T, U, V>(
+    void Function(T, U) a,
+    T b,
+    U Function(V) c,
+    V Function(U) d) => ...;
+```
+
+_then the resulting dependency graph looks like this:_
+
+&emsp;B &lArr; A &rArr; C &hArr; D
+
+_(That is, there are four edges, one from A to B, one from A to C, one from C to D, and one from D to C)._
+
+#### Stage selection
+
+After building the dependency graph, it is condensed into its strongly connected
+components (a.k.a. "dependency cycles"). The resulting condensation is
+[guaranteed to be acyclic] (that is, considering the nodes of the condensed
+graph, the arguments in each node depend transitively on each other, and
+possibly on the arguments in other nodes, but no dependency cycle exists between
+one node and another).
+
+[guaranteed to be acyclic]: https://en.wikipedia.org/wiki/Strongly_connected_component#Definitions
+
+_For the example above, C and D are condensed into a single node, so the graph
+now looks like this:_
+
+&emsp;{B} &lArr; {A} &rArr; {C, D}
+
+Finally, the nodes are grouped into stages as follows. Stage zero consists of
+all nodes that have no outgoing edges. Then, those nodes are removed from the
+graph, along with all their incoming edges. For each of the following stages,
+the same procedure is followed: from the graph produced by stage _k_, let stage
+_k+1_ be the set of nodes that have no outgoing edges, then delete those nodes
+and their incoming edges to produce a newly reduced graph. This is repeated
+until the graph is empty.
+
+_In this example, that means that there will be two stages. The first stage will
+consist of arguments B, C, and D, and the second stage will consist of argument
+A._
+
+_The intuitive justification for this algorithm is that by condensing the
+dependency graph into strongly connected components, we ensure that, in the
+absence of dependency cycles, dependency arcs always go from earlier stages to
+later stages; in other words we obtain each bit of information before it is
+needed, if possible. In the event that it's not possible due to a dependency
+cycle, we group all arguments in the dependency cycle into the same stage, which
+reproduces the behavior of the Dart language before horizontal inference was
+introduced._
+
+_(Note that the invariant mentioned earlier, that non-function literals are
+always placed in the first stage, is guaranteed by the fact that dependency
+analysis only draws an edge from A to B if A is a function literal.)_
+
+## Method invocation inference
+
+The type inference rules for multiple kinds of expressions make use of an
+operation known as _method invocation inference_. _Method invocation inference_
+is a type inference step that is applied to a target elaborated expression
+`m_0`, a method name identifier or operator name `id`, a sequence of expressions
+`{e_1, e_2, ...}`, a corresponding sequence (of the same length) of optional
+name identifiers `{n_1, n_2, ...}`, a sequence of zero or more type arguments
+`{T_1, T_2, ...}`, and a type schema `K`. As with [argument part
+inference](#Argument-part-inference), the symbol `∅` denotes a missing name.
+
+The output of method invocation inference is an elaborated expression `m`,
+determined as follows:
+
+- Let `T_0` be the static type of `m_0`.
+
+- If `T_0` is `void`, there is a compile-time error.
+
+- Let `U_0` be the [bound resolution](#Bound-resolution) of `T_0`.
+
+- _TODO(paulberry): document handling of `super.m()`, and
+  `Extension(...).m()`. But not here._
+
+- If `U_0` is `dynamic` or `Never`, or `U_0` is `Function` and `id` is `call`,
+  then:
+
+  - _TODO(paulberry): Never-bounded types crash the CFE, and I'm not sure how
+    they behave for methods defined on Object._
+
+  - Invoke [argument type inference](#Argument-type-inference) on `<T_1, T_2,
+    ...>(n_1: e_1, n_2: e_2, ...)`, using a target function type of `∅` and a
+    type schema `K`. Denote the resulting elaborated expressions by `{m_1, m_2,
+    ...}`.
+
+  - If `U_0` is `Never`, then let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2,
+    ...>(n_1: m_1, n_2: m_2, ...)) as Never`. _The inclusion of `as Never`
+    ensures that the elaborated expression will have a static type of
+    `Never`. Note that since the static type of `m_0` is bounded by `Never`, the
+    dynamic invocation will never occur._
+
+  - Otherwise, let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2, ...>(n_1: m_1, n_2:
+    m_2, ...))`, with static type `dynamic`.
+
+  - _Note that this is not precisely what is currently implemented if `T_0` is
+    `dynamic` bounded. See https://github.com/dart-lang/language/issues/3895._
+
+  - _TODO(paulberry): this implies that if there's an extension method `.call`
+    on `int`, `d.hashCode()` is treated as a dynamic dispatch rather than an
+    extension method invocation. Is this correct? Is it what we want?_
+
+- Otherwise, if `U_0` is a (_non-nullable_) function type, and `id` is `call`,
+  then:
+
+  - Invoke [argument type inference](#Argument-type-inference) on `<T_1, T_2,
+    ...>(n_1: e_1, n_2: e_2, ...)`, using a target function type of `U_0` and a
+    type schema `K`. Denote the resulting elaborated expressions by `{m_1, m_2,
+    ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
+    result type by `R`.
+
+  - Let `m` be `m_0.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`.
+
+  - _The static type of `m` is `R`. This follows from the fact that the static
+    type of `m_0` is bounded by the function type `U_0`, and `R` is the result
+    of substituting `{U_1, U_2, ...}` for the type parameters of `U_0`._
+
+- Otherwise, if `U_0` has an accessible instance getter named `id`, then:
+
+  - Let `F` be the return type of `U_0`'s accessible instance getter named `id`.
+
+  - Invoke [argument type inference](#Argument-type-inference) on `<T_1, T_2,
+    ...>(n_1: e_1, n_2: e_2, ...)`, using a target function type of `F` and a
+    type schema `K`. Denote the resulting elaborated expressions by `{m_1, m_2,
+    ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
+    result type by `R`.
+
+  - Let `m` be `m_0.id.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`.
+
+  - _The static type of `m` is `R`. This follows from the fact that the static
+    type of `m_0` is bounded by `U_0`, the result of looking up `id` in `U_0`
+    has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
+    the type parameters of `F` in the return type of `F`._
+
+- Otherwise, if `U_0` has an accessible instance method named `id`, then:
+
+  - Let `F` be the type of `U_0`'s accessible instance method named `id`.
+
+  - Invoke [argument type inference](#Argument-type-inference) on `<T_1, T_2,
+    ...>(n_1: e_1, n_2: e_2, ...)`, using a target function type of `F` and a
+    type schema `K`. Denote the resulting elaborated expressions by `{m_1, m_2,
+    ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
+    result type by `R`.
+
+  - Let `m` be `m_0.id<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`.
+
+  - _The static type of `m` is `R`. This follows from the fact that the static
+    type of `m_0` is bounded by `U_0`, the result of looking up `id` in `U_0`
+    has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
+    the type parameters of `F` in the return type of `F`._
+
+- Otherwise, there is a compile-time error. _There is no accessible instance
+  method or getter on the target named `id`, and the target is not of a type
+  that allows dynamic invocation._
+
+- _TODO(paulberry): document that `F<int>.m()` (where `F` refers to a generic
+  typedef) is illegal, because it looks like a constructor._
+
+## Selector chain inference
+
+At the core of the Dart expression grammar is the production rule _<primary>
+<selector>*_, which allows suffixes such as `!`, `.identifier`,
+_<argumentPart>_, and so on, to be chained to the right of a primary expression
+such as `this`. Any construct produced using this production rule, where
+_<selector>_ is invoked at least once, is known as a _selector chain_.
+
+The meaning of a selector chain sometimes depends on name resolution. _For
+instance, `a.b()` could be an instance creation expression, a static method
+invocation, an ordinary (instance) method invocation, or a function invocation
+applied to the subexpression `a.b`, depending on what the names `a` and `b`
+resolve to._ Accordingly, the process of disambiguating and type inferring a
+selector chain requires interleaving the rules for type inference with the name
+resolution process.
+
+This is accomplished by pattern matching the selector chain against each of the
+rules below in turn. The first matching rule is chosen, and is used to type
+infer the selector chain.
+
+Each rule below matches a specific sequence of selectors on the right; the
+remainder of the selector chain is then considered to be a subexpression. _So,
+for instance, the selector chain `a.b.c()` is considered by the grammar to
+consist of the primary `a` followed by the three selectors `.b`, `.c`, and
+`()`. This matches the [method invocation](#Method-invocation) rule, which then
+treats `a.b` as the remainder subexpression, `c` as the method name identifier,
+and `()` as the <argumentPart>._
+
+The selector chain type inference rules are as follows.
+
+### Static method invocation
+
+If the expression chain is a sequence of 1 to 3 _<identifier>s_ separated by
+`.`, followed by an _<argumentPart>_, and the sequence of _<identifier>s_ can be
+resolved to a static method or top level function, then the result of selector
+chain type inference is the elaborated expression `m`, determined as follows:
+
+- Let `f` be the static method or top level function referred to by the
+  _<identifier>_ sequence.
+
+- Let `F` be the type of `f`.
+
+- Invoke argument part inference on _<argumentPart>_, using `F` as the target
+  function type and `K` as the context. Designate the result by `{m_1, m_2,
+  ...}`, `{U_1, U_2, ...}`, and `R`.
+
+- Let `m` be `@STATIC_CALL(f<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...))`. _The
+  static type of `m` is `R`._
+
+### Implicit instance creation
+
+If the expression chain consists of _<typeName>_ _<typeArguments>_? (`.`
+_<identifierOrNew>_)? _<arguments>_, and _<typeName>_ can be resolved to a type
+in the program, then, then the result of selector chain type inference is the
+elaborated expression `m`, determined as follows:
+
+- Let `C` be the type named by _<typeName>_.
+
+- Let `id` be the identifier named by _<identifierOrNew>_, or `new` if it was
+  omitted.
+
+- Let `f` be the constructor named `id` in `C`. If there is no such constructor,
+  it is a compile-time error.
+
+- Let `F` be the function type of `f`. _Note that if the type containing `c` is
+  generic, this will be a generic function type._
+
+- Invoke argument part inference on _<argumentPart>_, using `F` as the target
+  function type and `K` as the context. Designate the result by `{m_1, m_2,
+  ...}`, `{U_1, U_2, ...}`, and `R`.
+
+- Let `m` be `@NEW(C<U_1, U_2, ...>.id(n_1: m_1, n_2: m_2, ...))`. _The
+  static type of `m` is `R`._
+
+  - _TODO(paulberry): add `@NEW` construct._
+
+_TODO(paulberry): I AM HERE figuring out the remaining rules to put in place._
 
 ## Expression inference rules
 
@@ -1344,6 +1883,59 @@ argument (in the case of no short-cut). Since the static type of `m_1` and `m_2`
 are guaranteed to be a subtype of `bool`, it follows that the the logical
 boolean expression will evaluate to an instance of `bool`, so soundness is
 satisfied._
+
+### Instance creation
+
+_TODO(paulberry): rework to be more similar to the "Implicit instance creation"
+section._
+
+Expression inference of an explicit instance creation expression (`new`
+_<constructorDesignation> <arguments>_, `const` _<constructorDesignation>
+<arguments>_, or simply _<constructorDesignation> <arguments>_), in context `K`,
+produces an elaborated expression `m` with static type `T`, where `m` and `T`
+are determined as follows:
+
+- Let `c` be the constructor referred to by _<constructorDesignation>_. If
+  _<constructorDesignation>_ cannot be resolved to a constructor, it is a
+  compile-time error.
+
+- Let `F` be the function type of `c`. _Note that if the type containing `c` is
+  generic, this will be a generic function type._ If _<constructorDesignation>_
+  cannot be resolved to a constructor, it is a compile-time error.
+
+- Let `{e_1, e_2, ...}` be the sequence of expressions in _<arguments>_, `{n_1,
+  n_2, ...}` be the sequence of optional names in _<arguments>_, and `{T_1, T_2,
+  ...}` be the sequence of zero or more type arguments in
+  _<constructorDesignation>_.
+
+- Invoke argument part inference using `F`, `{e_1, e_2, ...}`, `{n_1, n_2,
+  ...}`, `{T_1, T_2, ...}`, and `K`. Designate the result by `{m_1, m_2, ...}`,
+  `{U_1, U_2, ...}`, and `R`.
+
+- Let `m` be an instance creation expression that applies type arguments `{U_1,
+  U_2, ...}` and expression arguments `{e_1, e_2, ...}` to `c`, using `{n_1,
+  n_2, ...}` as named argument names.
+
+- Let `T` be `R`. _Soundness follows from the fact that `R` is the result of
+  substituting `{U_1, U_2, ...}` into the return type of `F`._
+
+### Method invocation
+
+Expression inference of a method invocation expression `e_0.id`
+_<argumentPart>_, produces an elaborated expression `m` with static type `T`,
+where `m` and `T` are determined as follows:
+
+_(Note that `e_0` must not take the form of a valid type name; if it did, this
+syntax would be interpreted as an instance creation expression or a static
+method invocation.)_
+
+- Let `m_0` be the result of performing expression inference on `e_0`, in
+  context `_`.
+
+- Let `m` be the result of performing [method invocation
+  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
+  the target elaborated expression, `id` as the method name identifier, and `K`
+  as the type schema.
 
 ### Await expressions
 
