@@ -1,0 +1,359 @@
+Pseudo-selectors:
+- id (not at end)
+- !
+- (...)
+- .id
+- <...>
+- ?.id
+- ?[e]
+- [e]
+
+Original full expansion (considering just stuff that ends in `(...)`):
+                  (...) ambiguous
+                id(...) top level invocation, static invocation, unnamed instance creation, implicit this.method invocation, or call invocation
+                 !(...) call invocation
+             (...)(...) call invocation
+               .id(...) ambiguous
+             id.id(...) static invocation, prefixed top level invocation, prefixed unnamed instance creation, named instance creation, or method invocation
+              !.id(...) method invocation
+          (...).id(...) method invocation
+            .id.id(...) ambiguous
+          id.id.id(...) prefixed static invocation, prefixed named instance creation, or method invocation
+           !.id.id(...) method invocation
+       (...).id.id(...) method invocation
+         .id.id.id(...) method invocation
+       <...>.id.id(...) method invocation
+        ?.id.id.id(...) method invocation
+        ?[e].id.id(...) method invocation
+         [e].id.id(...) method invocation
+          <...>.id(...) ambiguous
+        id<...>.id(...) named generic instance creation or method invocation
+         !<...>.id(...) illegal
+     (...)<...>.id(...) illegal
+       .id<...>.id(...) ambiguous
+     id.id<...>.id(...) prefixed named generic instance creation or method invocation
+      !.id<...>.id(...) illegal
+  (...).id<...>.id(...) illegal
+    .id.id<...>.id(...) illegal
+  <...>.id<...>.id(...) illegal
+   ?.id.id<...>.id(...) illegal
+   ?[e].id<...>.id(...) illegal
+    [e].id<...>.id(...) illegal
+     <...><...>.id(...) illegal
+      ?.id<...>.id(...) illegal
+      ?[e]<...>.id(...) illegal
+       [e]<...>.id(...) illegal
+           ?.id.id(...) method invocation
+           ?[e].id(...) method invocation
+            [e].id(...) method invocation
+             <...>(...) ambiguous
+           id<...>(...) top level generic invocation, generic static invocation, unnamed generic instance creation, implicit this.method generic invocation, or call generic invocation
+            !<...>(...) call generic invocation
+        (...)<...>(...) call generic invocation
+          .id<...>(...) ambiguous
+        id.id<...>(...) static generic invocation, prefixed top level generic invocation, prefixed unnamed generic instance creation, or method generic invocation
+         !.id<...>(...) method generic invocation
+     (...).id<...>(...) method generic invocation
+       .id.id<...>(...) ambiguous
+     id.id.id<...>(...) prefixed static generic invocation or method generic invocation
+      !.id.id<...>(...) method generic invocation
+  (...).id.id<...>(...) method generic invocation
+    .id.id.id<...>(...) method generic invocation
+  <...>.id.id<...>(...) method generic invocation
+   ?.id.id.id<...>(...) method generic invocation
+   ?[e].id.id<...>(...) method generic invocation
+    [e].id.id<...>(...) method generic invocation
+     <...>.id<...>(...) method generic invocation
+      ?.id.id<...>(...) method generic invocation
+      ?[e].id<...>(...) method generic invocation
+       [e].id<...>(...) method generic invocation
+        <...><...>(...) illegal
+         ?.id<...>(...) method generic invocation
+	 ?[e]<...>(...) call generic invocation
+	  [e]<...>(...) call generic invocation
+	      ?.id(...) method invocation
+	      ?[e](...) call invocation
+	       [e](...) call invocation
+
+Pulling out "1 to 3 _<identifier>s_ separated by `.`, followed by an _<argumentPart>_", where the sequence of _<identifier>s_ can be resolved to a static method or top level function:
+                id(...) top level invocation or static invocation
+             id.id(...) static invocation or prefixed top level invocation
+          id.id.id(...) prefixed static invocation
+           id<...>(...) top level generic invocation or generic static invocation
+        id.id<...>(...) static generic invocation or prefixed top level generic invocation
+     id.id.id<...>(...) prefixed static generic invocation
+
+
+Remainder:
+                  (...) ambiguous
+                id(...) unnamed instance creation, implicit this.method invocation, or call invocation
+                 !(...) call invocation
+             (...)(...) call invocation
+               .id(...) ambiguous
+             id.id(...) prefixed unnamed instance creation, named instance creation, or method invocation
+              !.id(...) method invocation
+          (...).id(...) method invocation
+            .id.id(...) ambiguous
+          id.id.id(...) prefixed named instance creation, or method invocation
+           !.id.id(...) method invocation
+       (...).id.id(...) method invocation
+         .id.id.id(...) method invocation
+       <...>.id.id(...) method invocation
+        ?.id.id.id(...) method invocation
+        ?[e].id.id(...) method invocation
+         [e].id.id(...) method invocation
+          <...>.id(...) ambiguous
+        id<...>.id(...) named generic instance creation or method invocation
+         !<...>.id(...) illegal
+     (...)<...>.id(...) illegal
+       .id<...>.id(...) ambiguous
+     id.id<...>.id(...) prefixed named generic instance creation or method invocation
+      !.id<...>.id(...) illegal
+  (...).id<...>.id(...) illegal
+    .id.id<...>.id(...) illegal
+  <...>.id<...>.id(...) illegal
+   ?.id.id<...>.id(...) illegal
+   ?[e].id<...>.id(...) illegal
+    [e].id<...>.id(...) illegal
+     <...><...>.id(...) illegal
+      ?.id<...>.id(...) illegal
+      ?[e]<...>.id(...) illegal
+       [e]<...>.id(...) illegal
+           ?.id.id(...) method invocation
+           ?[e].id(...) method invocation
+            [e].id(...) method invocation
+             <...>(...) ambiguous
+           id<...>(...) unnamed generic instance creation, implicit this.method generic invocation, or call generic invocation
+            !<...>(...) call generic invocation
+        (...)<...>(...) call generic invocation
+          .id<...>(...) ambiguous
+        id.id<...>(...) prefixed unnamed generic instance creation, or method generic invocation
+         !.id<...>(...) method generic invocation
+     (...).id<...>(...) method generic invocation
+       .id.id<...>(...) method generic invocation
+     <...>.id<...>(...) method generic invocation
+      ?.id.id<...>(...) method generic invocation
+      ?[e].id<...>(...) method generic invocation
+       [e].id<...>(...) method generic invocation
+        <...><...>(...) illegal
+         ?.id<...>(...) method generic invocation
+	 ?[e]<...>(...) call generic invocation
+	  [e]<...>(...) call generic invocation
+	      ?.id(...) method invocation
+	      ?[e](...) call invocation
+	       [e](...) call invocation
+
+
+Pulling out "_<typeName>_ _<typeArguments>_? (`.` _<identifierOrNew>_)? _<arguments>_", where _<typeName>_ can be resolved to a type in the program:
+                id(...) unnamed instance creation
+             id.id(...) prefixed unnamed instance creation or named instance creation
+          id.id.id(...) prefixed named instance creation
+        id<...>.id(...) named generic instance creation
+           id<...>(...) unnamed generic instance creation
+        id.id<...>(...) prefixed unnamed generic instance creation
+     id.id<...>.id(...) prefixed named generic instance creation
+
+
+Remainder:
+                  (...) ambiguous
+                id(...) implicit this.method invocation or call invocation
+                 !(...) call invocation
+             (...)(...) call invocation
+               .id(...) method invocation
+             <...>(...) ambiguous
+           id<...>(...) implicit this.method generic invocation or call generic invocation
+            !<...>(...) call generic invocation
+        (...)<...>(...) call generic invocation
+          .id<...>(...) method generic invocation
+        <...><...>(...) illegal
+         ?.id<...>(...) method generic invocation
+	 ?[e]<...>(...) call generic invocation
+	  [e]<...>(...) call generic invocation
+	      ?.id(...) method invocation
+	      ?[e](...) call invocation
+	       [e](...) call invocation
+
+Pulling out "_<identifier> <argumentPart>_", where _<identifier>_ can be resolved to an instance method:
+                id(...) implicit this.method invocation
+           id<...>(...) implicit this.method generic invocation or call generic invocation
+
+Remainder:
+                  (...) ambiguous
+                id(...) call invocation
+                 !(...) call invocation
+             (...)(...) call invocation
+               .id(...) method invocation
+             <...>(...) ambiguous
+           id<...>(...) call generic invocation
+            !<...>(...) call generic invocation
+        (...)<...>(...) call generic invocation
+          .id<...>(...) method generic invocation
+        <...><...>(...) illegal
+         ?.id<...>(...) method generic invocation
+	 ?[e]<...>(...) call generic invocation
+	  [e]<...>(...) call generic invocation
+	      ?.id(...) method invocation
+	      ?[e](...) call invocation
+	       [e](...) call invocation
+
+Pulling out "(`.` | `?.`) _<identifier> <argumentPart>_":
+               .id(...) method invocation
+          .id<...>(...) method generic invocation
+         ?.id<...>(...) method generic invocation
+	      ?.id(...) method invocation
+
+
+Remainder:
+                  (...) ambiguous
+                id(...) call invocation
+                 !(...) call invocation
+             (...)(...) call invocation
+             <...>(...) call generic invocation
+	      ?[e](...) call invocation
+	       [e](...) call invocation
+
+Which can now be covered by "_<argumentPart>_".
+
+We can handle these cases simply, since there's no ambiguity:
+                      ! null check
+	           ?.id method tearoff or property get
+		   ?[e] index
+		    [e] index
+
+Now tackling stuff that ends in `.id`:
+	            .id ambiguous
+		  id.id static tearoff, prefixed top level function tearoff, prefixed unnamed constructor tearoff, named constructor tearoff, method tearoff, or property get
+		   !.id method tearoff or property get
+	       (...).id method tearoff or property get
+	         .id.id ambiguous
+	       id.id.id prefixed static tearoff, prefixed named constructor tearoff, method tearoff, or property get
+	        !.id.id method tearoff or property get
+	    (...).id.id method tearoff or property get
+	      .id.id.id method tearoff or property get
+	    <...>.id.id method tearoff or property get
+	     ?.id.id.id method tearoff or property get
+	     ?[e].id.id method tearoff or property get
+	      [e].id.id method tearoff or property get
+	       <...>.id ambiguous
+	     id<...>.id named generic constructor tearoff, method tearoff, or property get
+	      !<...>.id illegal
+	  (...)<...>.id illegal
+	    .id<...>.id method tearoff or property get
+	  <...><...>.id illegal
+	   ?.id<...>.id illegal
+	   ?[e]<...>.id illegal
+	    [e]<...>.id illegal
+	        ?.id.id method tearoff or property get
+		?[e].id method tearoff or property get
+		 [e].id method tearoff or property get
+
+Pulling out "1 to 3 _<identifier>s_ separated by `.`", where the sequence of _<identifier>s_ can be resolved to a static method or top level function:
+		  id.id static tearoff or prefixed top level function tearoff
+	       id.id.id prefixed static tearoff
+
+Remainder:
+	            .id ambiguous
+		  id.id prefixed unnamed constructor tearoff, named constructor tearoff, method tearoff, or property get
+		   !.id method tearoff or property get
+	       (...).id method tearoff or property get
+	         .id.id ambiguous
+	       id.id.id prefixed named constructor tearoff, method tearoff, or property get
+	        !.id.id method tearoff or property get
+	    (...).id.id method tearoff or property get
+	      .id.id.id method tearoff or property get
+	    <...>.id.id method tearoff or property get
+	     ?.id.id.id method tearoff or property get
+	     ?[e].id.id method tearoff or property get
+	      [e].id.id method tearoff or property get
+	       <...>.id ambiguous
+	     id<...>.id named generic constructor tearoff, method tearoff, or property get
+	      !<...>.id illegal
+	  (...)<...>.id illegal
+	    .id<...>.id method tearoff or property get
+	  <...><...>.id illegal
+	   ?.id<...>.id illegal
+	   ?[e]<...>.id illegal
+	    [e]<...>.id illegal
+	        ?.id.id method tearoff or property get
+		?[e].id method tearoff or property get
+		 [e].id method tearoff or property get
+
+Pulling out "_<typeName>_ _<typeArguments>_? (`.` _<identifierOrNew>_)?", where _<typeName>_ can be resolved to a type in the program:
+		  id.id prefixed unnamed constructor tearoff or named constructor tearoff
+	       id.id.id prefixed named constructor tearoff
+	     id<...>.id named generic constructor tearoff
+	  id.id<...>.id prefixed named generic constructor tearoff
+
+
+Remainder:
+	            .id method tearoff or property get
+
+Which can now be covered by ". _<identifier>_".
+
+Now tackling stuff that ends in `<...>`:
+                  <...> ambiguous
+		id<...> instantiated type name, top level instantiated tearoff, static instantiated tearoff, or implicit this.method instantiated tearoff
+		 !<...> illegal
+	     (...)<...> illegal
+	       .id<...> ambiguous
+	     id.id<...> static instantiated tearoff or prefixed top level function instantiated tearoff
+	      !.id<...> illegal
+	  (...).id<...> illegal
+	    .id.id<...> ambiguous
+	  id.id.id<...> prefixed static instantiated tearoff
+	   !.id.id<...> illegal
+       (...).id.id<...> illegal
+         .id.id.id<...> illegal
+       <...>.id.id<...> illegal
+        ?.id.id.id<...> illegal
+	?[e].id.id<...> illegal
+	 [e].id.id<...> illegal
+	  <...>.id<...> illegal
+	   ?.id.id<...> illegal
+	   ?[e].id<...> illegal
+	    [e].id<...> illegal
+	     <...><...> illegal
+	      ?.id<...> illegal
+	      ?[e]<...> illegal
+	       [e]<...> illegal
+
+Pulling out "1 to 3 _<identifier>s_ separated by `.`, followed by _<typeArguments>_", where the sequence of _<identifier>s_ can be resolved to a static method or top level function:
+		id<...> top level instantiated tearoff or static instantiated tearoff
+	     id.id<...> static instantiated tearoff or prefixed top level function instantiated tearoff
+	  id.id.id<...> prefixed static instantiated tearoff
+
+Remainder:
+                  <...> ambiguous
+		id<...> instantiated type name or implicit this.method instantiated tearoff
+		 !<...> illegal
+	     (...)<...> illegal
+	       .id<...> ambiguous
+	     id.id<...> instantiated type name
+	      !.id<...> illegal
+	  (...).id<...> illegal
+	    .id.id<...> illegal
+	  <...>.id<...> illegal
+	   ?.id.id<...> illegal
+	   ?[e].id<...> illegal
+	    [e].id<...> illegal
+	     <...><...> illegal
+	      ?.id<...> illegal
+	      ?[e]<...> illegal
+	       [e]<...> illegal
+
+Pulling out "_<typeName>_ _<typeArguments>_", where _<typeName>_ can be resolved to a type in the program:
+		id<...> instantiated type name
+	     id.id<...> instantiated type name
+
+Remainder:
+                  <...> ambiguous
+		id<...> implicit this.method instantiated tearoff
+		 !<...> illegal
+	     (...)<...> illegal
+	       .id<...> illegal
+	     <...><...> illegal
+	      ?.id<...> illegal
+	      ?[e]<...> illegal
+	       [e]<...> illegal
+
+Which can all be handled by "_<identifier> <typeArguments>_", where _<identifier>_ can be resolved to an instance method.
