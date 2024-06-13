@@ -1087,7 +1087,6 @@ succintly, the syntax of Dart is extended to allow the following forms:
     - If any of the argument names `n_i` is omitted, the corresponding value
       `v_i` is treated as a positional argument. This is sometimes notated by
       using the symbol `∅` for `n_i`.
-  - The static type of the `@DYNAMIC_INVOKE` construct is always `dynamic`.
   - _The reason for using this notation, rather than the usual Dart syntax of
     `m_0.id<T_0, T_1, ...>(n_1: m_1, n_2: m_2, ...)` is (a) to clarify that the
     invocation will be done dynamically (i.e. method lookup will be done at
@@ -1489,7 +1488,8 @@ _then the resulting dependency graph looks like this:_
 
 &emsp;B &lArr; A &rArr; C &hArr; D
 
-_(That is, there are four edges, one from A to B, one from A to C, one from C to D, and one from D to C)._
+_(That is, there are four edges, one from A to B, one from A to C, one from C to
+D, and one from D to C)._
 
 #### Stage selection
 
@@ -1543,8 +1543,8 @@ name identifiers `{n_1, n_2, ...}`, a sequence of zero or more type arguments
 `{T_1, T_2, ...}`, and a type schema `K`. As with [argument part
 inference](#Argument-part-inference), the symbol `∅` denotes a missing name.
 
-The output of method invocation inference is an elaborated expression `m`,
-determined as follows:
+The output of method invocation inference is an elaborated expression `m`, with
+static type `T`, where `m` and `T` are determined as follows:
 
 - Let `T_0` be the static type of `m_0`.
 
@@ -1567,13 +1567,13 @@ determined as follows:
     ...}`.
 
   - If `U_0` is `Never`, then let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2,
-    ...>(n_1: m_1, n_2: m_2, ...)) as Never`. _The inclusion of `as Never`
-    ensures that the elaborated expression will have a static type of
-    `Never`. Note that since the static type of `m_0` is bounded by `Never`, the
-    dynamic invocation will never occur._
+    ...>(n_1: m_1, n_2: m_2, ...))`, and let `T` be `Never`. _Note that since
+    the static type of `m_0` is bounded by `Never`, the dynamic invocation will
+    never occur, so soundness is satisfied._
 
   - Otherwise, let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2, ...>(n_1: m_1, n_2:
-    m_2, ...))`, with static type `dynamic`.
+    m_2, ...))`, and let `T` be `dynamic`. _Soundness is satisfied by the fact
+    that all values are instances satisfying type `dynamic`._
 
   - _Note that this is not precisely what is currently implemented if `T_0` is
     `dynamic` bounded. See https://github.com/dart-lang/language/issues/3895._
@@ -1591,11 +1591,10 @@ determined as follows:
     ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
     result type by `R`.
 
-  - Let `m` be `m_0.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`.
-
-  - _The static type of `m` is `R`. This follows from the fact that the static
-    type of `m_0` is bounded by the function type `U_0`, and `R` is the result
-    of substituting `{U_1, U_2, ...}` for the type parameters of `U_0`._
+  - Let `m` be `m_0.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`, and let `T`
+    be `R`. _Soundness follows from the fact that the static type of `m_0` is
+    bounded by the function type `U_0`, and `R` is the result of substituting
+    `{U_1, U_2, ...}` for the type parameters of `U_0`._
 
 - Otherwise, if `U_0` has an accessible instance getter named `id`, then:
 
@@ -1607,12 +1606,11 @@ determined as follows:
     ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
     result type by `R`.
 
-  - Let `m` be `m_0.id.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`.
-
-  - _The static type of `m` is `R`. This follows from the fact that the static
-    type of `m_0` is bounded by `U_0`, the result of looking up `id` in `U_0`
-    has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
-    the type parameters of `F` in the return type of `F`._
+  - Let `m` be `m_0.id.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`, and let
+    `T` be `R`. _Soundness follows from the fact that the static type of `m_0`
+    is bounded by `U_0`, the result of looking up `id` in `U_0` has type `F`,
+    and `R` is the result of substituting `{U_1, U_2, ...}` for the type
+    parameters of `F` in the return type of `F`._
 
 - Otherwise, if `U_0` has an accessible instance method named `id`, then:
 
@@ -1624,12 +1622,11 @@ determined as follows:
     ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
     result type by `R`.
 
-  - Let `m` be `m_0.id<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`.
-
-  - _The static type of `m` is `R`. This follows from the fact that the static
-    type of `m_0` is bounded by `U_0`, the result of looking up `id` in `U_0`
-    has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
-    the type parameters of `F` in the return type of `F`._
+  - Let `m` be `m_0.id<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`, and let `T` be
+    `R`. _Soundness follows from the fact that the static type of `m_0` is
+    bounded by `U_0`, the result of looking up `id` in `U_0` has type `F`, and
+    `R` is the result of substituting `{U_1, U_2, ...}` for the type parameters
+    of `F` in the return type of `F`._
 
 - Otherwise, there is a compile-time error. _There is no accessible instance
   method or getter on the target named `id`, and the target is not of a type
@@ -1673,7 +1670,8 @@ The selector chain type inference rules are as follows.
 If the expression chain is a sequence of 1 to 3 _<identifier>s_ separated by
 `.`, followed by an _<argumentPart>_, and the sequence of _<identifier>s_ can be
 resolved to a static method or top level function, then the result of selector
-chain type inference is the elaborated expression `m`, determined as follows:
+chain type inference is the elaborated expression `m`, with static type `T`,
+where `m` and `T` are determined as follows:
 
 - Let `f` be the static method or top level function referred to by the
   _<identifier>_ sequence.
@@ -1684,15 +1682,16 @@ chain type inference is the elaborated expression `m`, determined as follows:
   function type and `K` as the context. Designate the result by `{m_1, m_2,
   ...}`, `{U_1, U_2, ...}`, and `R`.
 
-- Let `m` be `@STATIC_CALL(f<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...))`. _The
-  static type of `m` is `R`._
+- Let `m` be `@STATIC_INVOKE(f<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...))`, and
+  let `T` be `R`. _TODO(paulberry): explain why sound._
 
 ### Implicit instance creation
 
 If the expression chain consists of _<typeName>_ _<typeArguments>_? (`.`
 _<identifierOrNew>_)? _<arguments>_, and _<typeName>_ can be resolved to a type
 in the program, then, then the result of selector chain type inference is the
-elaborated expression `m`, determined as follows:
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
 
 - Let `C` be the type named by _<typeName>_.
 
@@ -1709,8 +1708,8 @@ elaborated expression `m`, determined as follows:
   function type and `K` as the context. Designate the result by `{m_1, m_2,
   ...}`, `{U_1, U_2, ...}`, and `R`.
 
-- Let `m` be `@NEW(C<U_1, U_2, ...>.id(n_1: m_1, n_2: m_2, ...))`. _The
-  static type of `m` is `R`._
+- Let `m` be `@NEW(C<U_1, U_2, ...>.id(n_1: m_1, n_2: m_2, ...))`, and let `T`
+  be `R`. _TODO(paulberry): explain why sound._
 
   - _TODO(paulberry): add `@NEW` construct._
 
@@ -1935,6 +1934,9 @@ method invocation.)_
   inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
   the target elaborated expression, `id` as the method name identifier, and `K`
   as the type schema.
+
+- _TODO(paulberry): finish writing this section, or delete it if it's redundant
+  with the text in "Selector chain inference"._
 
 ### Await expressions
 
