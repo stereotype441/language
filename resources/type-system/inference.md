@@ -1083,28 +1083,6 @@ succintly, the syntax of Dart is extended to allow the following forms:
   representing `d`. _This is used to explicitly mark integer literals that have
   been converted, by type inference, to doubles._
 
-- `@DYNAMIC_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`, where
-  `{m_0, m_1, m_2, ...}` is a list of elaborated expressions, `id` is a method
-  name identifier or operator name, `{T_0, T_1, ...}` is a (possibly empty) list
-  of types, and `{n_1, n_2, ...}` is a list of optional argument name
-  identifiers, represents the following operation:
-  - Evaluate each of `m_0`, `m_1`, `m_2`, and so on in sequence, and bind the
-    resulting values to `v_0`, `v_1`, `v_2`, and so on.
-  - Perform a dynamic method invocation using `v_0` as the target, `id` as the
-    method name, type arguments `{T_1, T_2, ...}`, and ordinary arguments `{v_1,
-    v_2, ...}` (with argument names `{n_1, n_2, ...}`).
-    - If the list of type arguments `{T_1, T_2, ...}` is empty, the invocation
-      is a non-generic invocation.
-    - If any of the argument names `n_i` is omitted, the corresponding value
-      `v_i` is treated as a positional argument. This is sometimes notated by
-      using the symbol `∅` for `n_i`.
-  - _The reason for using this notation, rather than the usual Dart syntax of
-    `m_0.id<T_0, T_1, ...>(n_1: m_1, n_2: m_2, ...)` is (a) to clarify that the
-    invocation will be done dynamically (i.e. method lookup will be done at
-    runtime, and the resolved method will never come from an extension or an
-    extension type), and (b) to allow the same syntax to be used for dynamic
-    operator invocations and dynamic method invocations._
-
 - `@IMPLICIT_CAST<T>(m)` represents an implicit cast of the expression `m` to
   type `T`. The runtime behavior of this construct is the same as that of `m as
   T`, except that in the case where the cast fails, the exception thrown is a
@@ -1137,24 +1115,27 @@ succintly, the syntax of Dart is extended to allow the following forms:
   any loss of functionality, provided they are not trying to construct a proof
   of soundness._
 
-- `@STATIC_INVOKE(f<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`, where `{m_0, m_1,
-  m_2, ...}` is a list of elaborated expressions, `f` is a static method or top
-  level function, `{T_0, T_1, ...}` is a (possibly empty) list of types, and
-  `{n_1, n_2, ...}` is a list of optional argument name identifiers, represents
-  the following operation:
-  - Evaluate each of `m_1`, `m_2`, and so on in sequence, and bind the resulting
-    values to `v_1`, `v_2`, and so on.
-  - Perform a static invocation using `f` as the target, type arguments `{T_1,
-    T_2, ...}`, and ordinary arguments `{v_1, v_2, ...}` (with argument names
-    `{n_1, n_2, ...}`).
-    - If the list of type arguments `{T_1, T_2, ...}` is empty, the invocation
-      is a non-generic invocation.
-    - If any of the argument names `n_i` is omitted, the corresponding value
-      `v_i` is treated as a positional argument. This is sometimes notated by
-      using the symbol `∅` for `n_i`.
-  - _The reason for using this notation, rather than the usual Dart syntax of
-    `f<T_0, T_1, ...>(n_1: m_1, n_2: m_2, ...)` is to clarify that the
-    invocation will be done statically._
+In addition, the following forms are added to allow constructor invocations,
+dynamic method invocations, function object invocations, instance method
+invocations, and static/toplevel method invocations to be distinguished:
+
+- `@CONSTRUCTOR_INVOKE(T_0.id(n_1: m_1, n_2: m_2, ...))`
+
+- `@DYNAMIC_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
+
+- `@FUNCTION_INVOKE(m_0.call<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
+
+- `@INSTANCE_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
+
+- `@STATIC_INVOKE(f<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
+
+In each of these forms, each `m_i` represents an elaborated expression, each
+`T_i` represents a type, and each `n_i` represents an optional argument name
+identifier. When present, `id` represents an identifier or operator name, and
+`f` represents a static method or top level function.
+
+The semantics of each of these forms is to evaluate the `m_i` in sequence, then
+perform the appropriate kind of method or function call.
 
 ## Additional invariants satisfied by elaborated expressions
 
@@ -1587,7 +1568,9 @@ static type `T`, where `m` and `T` are determined as follows:
     that all values are instances satisfying type `dynamic`._
 
   - _Note that this is not precisely what is currently implemented if `T_0` is
-    `dynamic` bounded. See https://github.com/dart-lang/language/issues/3895._
+    `dynamic` bounded. See
+    https://github.com/dart-lang/language/issues/3895. TODO(paulberry):
+    reconcile this._
 
   - _TODO(paulberry): this implies that if there's an extension method `.call`
     on `int`, `d.hashCode()` is treated as a dynamic dispatch rather than an
@@ -1602,10 +1585,10 @@ static type `T`, where `m` and `T` are determined as follows:
     ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
     result type by `R`.
 
-  - Let `m` be `m_0.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`, and let `T`
-    be `R`. _Soundness follows from the fact that the static type of `m_0` is
-    bounded by the function type `U_0`, and `R` is the result of substituting
-    `{U_1, U_2, ...}` for the type parameters of `U_0`._
+  - Let `m` be `@FUNCTION_INVOKE(m_0.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2,
+    ...))`, and let `T` be `R`. _Soundness follows from the fact that the static
+    type of `m_0` is bounded by the function type `U_0`, and `R` is the result
+    of substituting `{U_1, U_2, ...}` for the type parameters of `U_0`._
 
 - Otherwise, if `U_0` has an accessible instance getter named `id`, then:
 
@@ -1617,11 +1600,14 @@ static type `T`, where `m` and `T` are determined as follows:
     ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
     result type by `R`.
 
-  - Let `m` be `m_0.id.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`, and let
-    `T` be `R`. _Soundness follows from the fact that the static type of `m_0`
-    is bounded by `U_0`, the result of looking up `id` in `U_0` has type `F`,
-    and `R` is the result of substituting `{U_1, U_2, ...}` for the type
-    parameters of `F` in the return type of `F`._
+  - Let `m` be `@FUNCTION_INVOKE(m_0.id.call<U_1, U_2, ...>(n_1: m_1, n_2: m_2,
+    ...))`, and let `T` be `R`. _Soundness follows from the fact that the static
+    type of `m_0` is bounded by `U_0`, the result of looking up `id` in `U_0`
+    has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
+    the type parameters of `F` in the return type of `F`._
+
+    - _TODO(paulberry): `m_0.id` should become something like
+      `@INSTANCE_GET(m_0.id)`._
 
 - Otherwise, if `U_0` has an accessible instance method named `id`, then:
 
@@ -1633,11 +1619,11 @@ static type `T`, where `m` and `T` are determined as follows:
     ...}`, the resulting elaborated type arguments by `{U_1, U_2, ...}`, and the
     result type by `R`.
 
-  - Let `m` be `m_0.id<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...)`, and let `T` be
-    `R`. _Soundness follows from the fact that the static type of `m_0` is
-    bounded by `U_0`, the result of looking up `id` in `U_0` has type `F`, and
-    `R` is the result of substituting `{U_1, U_2, ...}` for the type parameters
-    of `F` in the return type of `F`._
+  - Let `m` be `@INSTANCE_INVOKE(m_0.id<U_1, U_2, ...>(n_1: m_1, n_2: m_2,
+    ...))`, and let `T` be `R`. _Soundness follows from the fact that the static
+    type of `m_0` is bounded by `U_0`, the result of looking up `id` in `U_0`
+    has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
+    the type parameters of `F` in the return type of `F`._
 
 - Otherwise, there is a compile-time error. _There is no accessible instance
   method or getter on the target named `id`, and the target is not of a type
@@ -1654,35 +1640,43 @@ _<argumentPart>_, and so on, to be chained to the right of a primary expression
 such as `this`. Any construct produced using this production rule, where
 _<selector>_ is invoked at least once, is known as a _selector chain_.
 
-The meaning of a selector chain sometimes depends on name resolution. _For
-instance, `a.b()` could be an instance creation expression, a static method
-invocation, an ordinary (instance) method invocation, or a function invocation
-applied to the subexpression `a.b`, depending on what the names `a` and `b`
-resolve to._ Accordingly, the process of disambiguating and type inferring a
-selector chain requires interleaving the rules for type inference with the name
-resolution process.
+The static semantics of a selector chain depends on both name resolution and
+static type analysis. _For example, `a.b()` could be a static method invocation
+(if `a` refers to a class name and `b` is a static method in that class), an
+instance method invocation (if `a` is an expression whose type contains an
+instance method called `b`), or a function invocation applied to the result of
+an instance get (if `a` is an expression whose type contains a getter called
+`b`), among other things._ Accordingly, the process of disambiguating and type
+inferring a selector chain requires interleaving the rules for type inference
+with the name resolution process.
 
 This is accomplished by pattern matching the selector chain against each of the
 rules below in turn. The first matching rule is chosen, and is used to type
 infer the selector chain.
 
 Each rule below matches a specific sequence of selectors on the right; the
-remainder of the selector chain is then considered to be a subexpression. _So,
-for instance, the selector chain `a.b.c()` is considered by the grammar to
-consist of the primary `a` followed by the three selectors `.b`, `.c`, and
-`()`. This matches the [method invocation](#Method-invocation) rule, which then
-treats `a.b` as the remainder subexpression, `c` as the method name identifier,
-and `()` as the <argumentPart>._
+remainder of the selector chain (if present) is then considered to be a
+subexpression. _So, for example, the selector chain `1.isEven.toString()` is
+considered by the grammar to consist of the primary `1` followed by the three
+selectors `.isEven`, `.toString`, and `()`. This matches the [method
+invocation](#Method-invocation) rule, which then treats `1.isEven` as the
+remainder subexpression, `toString` as the method name identifier, and `()` as
+the <argumentPart>._
 
 The selector chain type inference rules are as follows.
+
+_TODO(paulberry): revisit all this stuff thinking about null shorting._
+
+_TODO(paulberry): revisit all this stuff replacing "resolved" with appropriate
+scope-related nomenclature from the spec.
 
 ### Static method invocation
 
 If the expression chain is a sequence of 1 to 3 _<identifier>s_ separated by
 `.`, followed by an _<argumentPart>_, and the sequence of _<identifier>s_ can be
 resolved to a static method or top level function, then the result of selector
-chain type inference is the elaborated expression `m`, with static type `T`,
-where `m` and `T` are determined as follows:
+chain type inference in context `K` is the elaborated expression `m`, with
+static type `T`, where `m` and `T` are determined as follows:
 
 - Let `f` be the static method or top level function referred to by the
   _<identifier>_ sequence.
@@ -1698,10 +1692,10 @@ where `m` and `T` are determined as follows:
 
 ### Implicit instance creation
 
-If the expression chain consists of _<typeName>_ _<typeArguments>_? (`.`
+If the expression chain consists of _<typeName> <typeArguments>_? (`.`
 _<identifierOrNew>_)? _<arguments>_, and _<typeName>_ can be resolved to a type
-in the program, then, then the result of selector chain type inference is the
-elaborated expression `m`, with static type `T`, where `m` and `T` are
+in the program, then the result of selector chain type inference in context `K`
+is the elaborated expression `m`, with static type `T`, where `m` and `T` are
 determined as follows:
 
 - Let `C` be the type named by _<typeName>_.
@@ -1719,12 +1713,138 @@ determined as follows:
   function type and `K` as the context. Designate the result by `{m_1, m_2,
   ...}`, `{U_1, U_2, ...}`, and `R`.
 
-- Let `m` be `@NEW(C<U_1, U_2, ...>.id(n_1: m_1, n_2: m_2, ...))`, and let `T`
-  be `R`. _TODO(paulberry): explain why sound._
+- Let `m` be `@CONSTRUCTOR_INVOKE(C<U_1, U_2, ...>.id(n_1: m_1, n_2: m_2,
+  ...))`, and let `T` be `R`. _TODO(paulberry): explain why sound._
 
-  - _TODO(paulberry): add `@NEW` construct._
+### Implicit this invocation
 
-_TODO(paulberry): I AM HERE figuring out the remaining rules to put in place._
+If the expression chain consists of _<identifier> <argumentPart>_, and
+_<identifier>_ __cannot__ be resolved to the name of a local variable, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
+
+- Let `m_0` be `this`, with static type `T_0`, where `T_0` is the interface type
+of the immediately enclosing class, enum, mixin, or extension type, or the "on"
+type of the immediately enclosing extension. _The runtime behavior of `this` is
+to evaluate to the target of the current instance member invocation, which is
+guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
+
+  - It is a compile-time error if `this` is not meaningful (i.e. because there
+    is no immediately enclosing class, enum, mixin, extension type, or
+    extension, or if the expression chain occurs in a location where `this` is
+    invalid, such as a static method).
+
+- Let `id` be the identifier named by _<identifier>_.
+
+- Let `m` and `T` be the result of performing [method invocation
+  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
+  the target elaborated expression, `id` as the method name identifier, and `K`
+  as the type schema.
+
+### Method invocation
+
+If the expression chain ends with (`.` | `?.`) _<identifier> <argumentPart>_,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
+
+- Let `e_0` be the remainder of the expression chain (prior to the `.` or `?.`).
+
+- Let `m_0` be the result of performing expression inference on `e_0`, in
+  context `_`.
+
+- Let `m` and `T` be the result of performing [method invocation
+  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
+  the target elaborated expression, `id` as the method name identifier, and `K`
+  as the type schema.
+
+_TODO(paulberry): don't forget about null shorting syntax_
+
+### Implicit call invocation
+
+If the expression chain ends with _<argumentPart>_, then the result of selector
+chain type inference in context `K` is the elaborated expression `m`, with
+static type `T`, where `m` and `T` are determined as follows:
+
+- Let `e_0` be the remainder of the expression chain (prior to the
+  _<argumentPart>_).
+
+- Let `m_0` be the result of performing expression inference on `e_0`, in
+  context `_`.
+
+- Let `m` and `T` be the result of performing [method invocation
+  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
+  the target elaborated expression, `call` as the method name identifier, and
+  `K` as the type schema.
+
+### Static method tearoff
+
+If the expression chain is a sequence of 1 to 3 _<identifier>s_ separated by
+`.`, followed optionally by _<typeArguments>_, and the sequence of
+_<identifier>s_ can be resolved to a static method or top level function, then
+the result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
+
+_TODO(paulberry)_
+
+### Constructor tearoff
+
+If the expression chain consists of _<typeName> <typeArguments>_? `.`
+_<identifierOrNew>_, and _<typeName>_ can be resolved to a type in the program,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
+
+_TODO(paulberry)_
+
+### Method tearoff or property get
+
+If the expression chain ends with (`.` | `?.`) _<identifier>_, then the result
+of selector chain type inference in context `K` is the elaborated expression
+`m`, with static type `T`, where `m` and `T` are determined as follows:
+
+_TODO(paulberry)_
+
+_TODO(paulberry): don't forget about null shorting syntax_
+
+### Implicit this method tearoff with type arguments
+
+If the expression chain consists of _<identifier> <typeArguments>_, and
+_<identifier>_ __cannot__ be resolved to the name of a local variable, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
+
+_TODO(paulberry)_
+
+### Type instantiation
+
+If the expression chain consists of _<typeName> <typeArguments>_, and
+_<typeName>_ can be resolved to a type in the program, then the result of
+selector chain type inference in context `K` is the elaborated expression `m`,
+with static type `T`, where `m` and `T` are determined as follows:
+
+_TODO(paulberry)_
+
+### Null check
+
+_TODO(paulberry)_
+
+### Index operator
+
+_TODO(paulberry)_
+
+_TODO(paulberry): don't forget about null shorting syntax_
+
+### Illegal selector chains
+
+Any selector chain that doesn't match one of the above cases is an illegal
+selector chain, and constitutes a compile-time error.
+
+_The only possible selector chains that don't match any of the above cases are
+selector chains that end in <typeArguments>. One such example is `x[y]<T>`._
 
 ## Expression inference rules
 
