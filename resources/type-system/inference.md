@@ -1634,7 +1634,7 @@ static type `T`, where `m` and `T` are determined as follows:
 
   - Otherwise, let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2, ...>(n_1: m_1, n_2:
     m_2, ...))`, and let `T` be `dynamic`. _Soundness is satisfied by the fact
-    that all values are instances satisfying type `dynamic`._
+    that all values are instances implementing type `dynamic`._
 
   - _Note that this is not precisely what is currently implemented if `T_0` is
     `dynamic` bounded. See
@@ -1796,7 +1796,7 @@ and `T` are determined as follows:
 of the immediately enclosing class, enum, mixin, or extension type, or the "on"
 type of the immediately enclosing extension. _The runtime behavior of `this` is
 to evaluate to the target of the current instance member invocation, which is
-guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
+guaranteed to be an instance implementing `T_0`. So soundness is satisfied._
 
   - It is a compile-time error if `this` is not meaningful (i.e. because there
     is no immediately enclosing class, enum, mixin, extension type, or
