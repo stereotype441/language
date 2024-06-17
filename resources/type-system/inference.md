@@ -1798,10 +1798,8 @@ type of the immediately enclosing extension. _The runtime behavior of `this` is
 to evaluate to the target of the current instance member invocation, which is
 guaranteed to be an instance implementing `T_0`. So soundness is satisfied._
 
-  - It is a compile-time error if `this` is not meaningful (i.e. because there
-    is no immediately enclosing class, enum, mixin, extension type, or
-    extension, or if the expression chain occurs in a location where `this` is
-    invalid, such as a static method).
+  - It is a compile-time error if the expression chain does not have access to
+    `this`.
 
 - Let `id` be the identifier named by _<identifier>_.
 
@@ -1908,6 +1906,9 @@ expression `m`, with static type `T`, and no null shorting clauses, where `m`
 and `T` are determined as follows:
 
 _TODO(paulberry)_
+
+- It is a compile-time error if the expression chain does not have access to
+  `this`.
 
 ### Type instantiation
 
