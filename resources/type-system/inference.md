@@ -991,9 +991,9 @@ __Function__ bounded if its bound resolution if __Function__.
 
 Expression inference is a recursive process of elaborating an expression in Dart
 source code, transforming it into a form in which all types and type coercions
-are explicit. An expression that has not yet undergone type inference is known
-as an _unelaborated expression_, and an expression that has completed type
-inference is known as an _elaborated expression_.
+are explicit. An expression that has not yet undergone type inference is
+referred to as an _unelaborated expression_, and an expression that has
+completed type inference is referred to as an _elaborated expression_.
 
 _To aid in distinguishing unelaborated and elaborated expressions, the text
 below will typically denote an unelaborated expression by letter `e` (often with
@@ -1012,9 +1012,9 @@ expression inference on `e`, in context `K`".
 _Often, an expression's context can be understood as the static type the
 expression must have (or be coercible to) in order to avoid a compile-time
 error. For example, in the statement `num n = f();`, the result of type
-inferring `f()` needs to be either a subtype of `num` (or a type that's
-coercible to `num`) in order to avoid a compile-time error. Accordingly, `f()`
-is type inferred in the context `num`._
+inferring `f()` needs to be a subtype of `num` (or a type that's coercible to
+`num`) in order to avoid a compile-time error. Accordingly, `f()` is type
+inferred in the context `num`._
 
 _However, there are some exceptions. For example, in the code `Object? x = ...;
 if (x is num) { x = f(); }`, the variable `x` is promoted to the type `num`
@@ -1036,11 +1036,12 @@ static types in the existing Dart language specification._
 _Informally, we may sometimes speak of the static type of an unelaborated
 expression `e`; when we do, what is meant by this is the static type of the
 elaborated expression `m` that results from performing expression inference on
-`e`. Note in particular that a given expression might have a different static
-type at different points in the code, since the behavior of expression inference
-depends on the context `K`, as well as the flow analysis state._
+`e` in some context `K`, where `K` depends on where `e` appears in the broader
+program. Note in particular that a given expression might have a different
+static type at different points in the code, since the behavior of expression
+inference depends on the context `K`, as well as the flow analysis state._
 
-An invariant of expression inference, known as _soundness_, is that when an
+A property of expression inference, known as _soundness_, is that when an
 elaborated expression is executed, it is guaranteed either to diverge, throw an
 exception, or evaluate to a value that is an _instance satisfying_ its static
 type. _Instance satisfying_ is defined as follows: a value `v` is an instance
@@ -1072,6 +1073,12 @@ succintly, the syntax of Dart is extended to allow the following forms:
   - Otherwise, let `u` be a future satisfying type `Future<T>` that will
     complete to the value `v` at some later point. Then,
     `@AWAIT_WITH_TYPE_CHECK<T>(m_1)` evaluates to `u`.
+
+    - _TODO(paulberry): explain why such a future is guaranteed to (soundly)
+      exist, by stipulating that if `T_1` is the static type of `m_1`, then `T`
+      must be `flatten(T_1)`, and then proving a lemma that `T_1 <:
+      FutureOr<flatten(T_1)>`; therefore `T_1 <: FutureOr<T>`, so in this
+      "otherwise" case, `v` must be an instance satisfying `T`._
 
 - `@CONCAT(m_1, m_2, ..., m_n)`, where each `m_i` is an elaborated expression
   whose static type is a subtype of `String`, represents the operation of
@@ -1159,10 +1166,10 @@ identifier. When present, `id` represents an identifier or operator name, and
 The semantics of each of these forms is to evaluate the `m_i` in sequence, then
 perform the appropriate kind of method or function call.
 
-## Additional invariants satisfied by elaborated expressions
+## Additional properties satisfied by elaborated expressions
 
 The rules below ensure that elaborated expressions will satisfy the following
-invariants:
+properties:
 
 - An elaborated expression will never contain one of the tokens `?.`, `??`, or
   `??=`. _The type inference process converts expressions containing these
@@ -1208,7 +1215,7 @@ invariants:
       corresponding arguments.
 
 _The type inference rules below include informal sketches of a proof that the
-output of type inference satisfies these additional invariants. These are
+output of type inference satisfies these additional properties. These are
 non-normative, so they are typeset in italics._
 
 ## Null shorting
@@ -1258,8 +1265,8 @@ expression, it is useful to define an operation known as _coercion_. _Coercion_
 is a type inference step that is applied to an elaborated expression `m_1` and a
 target type `T`, and produces a new elaborated expression `m_2`.
 
-_The coercion operation satisfies the soundness invariant that the static type
-of `m_2` is guaranteed to be a subtype of `T`. A proof of this is sketched
+_The coercion operation satisfies the following soundness property: the static
+type of `m_2` is guaranteed to be a subtype of `T`. A proof of this is sketched
 below._
 
 _Coercions are used in most situations where the existing spec calls for an
@@ -1271,14 +1278,14 @@ static type `T_2`, where `m_2` and `T_2` are determined as follows:
 - Let `T_1` be the static type of `m_1`.
 
 - If `T_1 <: T`, then let `m_2` be `m_1` and `T_2` be `T_1`. _Since `T_1 <: T`,
-  the soundness invariant is satisfied._
+  soundness is satisfied._
 
 - Otherwise, if `T_1` is `dynamic`, then let `m_2` be `@IMPLICIT_CAST<T>(m_1)`
-  and `T_2` be `T`. _Since `T <: T`, the soundness invariant is satisfied._
+  and `T_2` be `T`. _Since `T <: T`, soundness is satisfied._
 
 - Otherwise, if `T_1` is an interface type that contains a method called `call`
   with type `U`, and `U <: T`, then let `m_2` be `m_1.call`, and let `T_2` be
-  `U`. _Since `U <: T`, the soundness invariant is satisfied._
+  `U`. _Since `U <: T`, soundness is satisfied._
 
 - _TODO(paulberry): add more cases to handle implicit instantiation of generic
   function types, and `call` tearoff with implicit instantiation._
@@ -1299,8 +1306,8 @@ sequence of steps:
 
 - Let `m` be the result of performing coercion of `m_1` to type `T`.
 
-_It follows, from the soundness invariant of coercions, that the static type of
-`m` is guaranteed to be a subtype of `T`._
+_It follows, from the soundness of coercions, that the static type of `m` is
+guaranteed to be a subtype of `T`._
 
 ## Argument part inference
 
@@ -2059,9 +2066,8 @@ shorting clauses, where `m` is determined as follows:
 - Let `m_1` be the result of performing ordinary expression inference on `e_1`,
   in context `_`, and then coercing the result to type `Object`.
 
-- _It follows, from the soundness invariant of coercions, that the static type
-  of `m_1` is guaranteed to be a subtype of `Object`. That is, `null` will never
-  be thrown._
+- _It follows, from the soundness of coercions, that the static type of `m_1` is
+  guaranteed to be a subtype of `Object`. That is, `null` will never be thrown._
 
 - Let `m` be `throw m_1`. _Soundness follows from the fact that `throw m_1`
   never evaluates to a value._
@@ -2090,8 +2096,8 @@ is determined as follows:
 - Let `m_2` be the result of performing ordinary expression inference on `e_2`,
   in context `bool`, and then coercing the result to type `bool`.
 
-- _It follows, from the soundness invariant of coercions, that the static type
-  of `m_1` and `m_2` are both guaranteed to be a subtype of `bool`._
+- _It follows, from the soundness of coercions, that the static type of `m_1`
+  and `m_2` are both guaranteed to be a subtype of `bool`._
 
 - If `e` is of the form `e_1 && e_2`, let `m` be `m_1 && m_2`. _It is valid to
   form this elaborated expression because the static type of `m_1` and `m_2` are
@@ -2185,6 +2191,10 @@ clauses, where `m` and `T` are determined as follows:
     type `T_1` (because `T_1` is the static type of `m_1`). So we can establish
     soundness by assuming that `v` is an instance satisfying type `T_1` and not
     an instance satisfying type `Future<T_2>`, and then considering two cases:_
+
+    - _TODO(paulberry): it should be possible to simplify and clarify this
+      section once we have proven that `T <: FutureOr<flatten(T)>` for all types
+      `T`._
 
     - _If the runtime value of `v` is `null`, then by soundness, `T_1` must be
       of the form `Null`, `dynamic`, `S*`, or `S?`. Considering each of these:_
