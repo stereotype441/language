@@ -1160,11 +1160,25 @@ invocations, and static/toplevel method invocations to be distinguished:
 
 In each of these forms, each `m_i` represents an elaborated expression, each
 `T_i` represents a type, and each `n_i` represents an optional argument name
-identifier. When present, `id` represents an identifier or operator name, and
-`f` represents a static method or top level function.
+identifier. When present, `id` represents an identifier or operator name (or
+`new` in the case of `@CONSTRUCTOR_INVOKE`), and `f` represents a static method
+or top level function.
 
 The semantics of each of these forms is to evaluate the `m_i` in sequence, then
 perform the appropriate kind of method or function call.
+
+Also, the following forms are added to allow tearoffs of constructors, instance
+methods, and static/toplevel methods to be distinguished:
+
+- `@CONSTRUCTOR_TEAROFF(T_0.id)`
+
+- `@INSTANCE_TEAROFF(m_0.id)`
+
+- `@STATIC_TEAROFF(f)`
+
+When present, `T_0` represents a type, `id` represents an identifier (or `new`
+in the case of `@CONSTRUCTOR_TEAROFF`), `m_0` represents an elaborated
+expression, and `f` represents a static method or top level function.
 
 ## Additional properties satisfied by elaborated expressions
 
@@ -1694,6 +1708,8 @@ static type `T`, where `m` and `T` are determined as follows:
     has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
     the type parameters of `F` in the return type of `F`._
 
+- _TODO(paulberry): extensions._
+
 - Otherwise, there is a compile-time error. _There is no accessible instance
   method or getter on the target named `id`, and the target is not of a type
   that allows dynamic invocation._
@@ -1733,9 +1749,6 @@ remainder subexpression, `toString` as the method name identifier, and `()` as
 the <argumentPart>._
 
 The selector chain type inference rules are as follows.
-
-_TODO(paulberry): revisit all this stuff replacing "resolved" with appropriate
-scope-related nomenclature from the spec.
 
 ### Static method invocation
 
@@ -1874,7 +1887,13 @@ the result of selector chain type inference in context `K` is the elaborated
 expression `m`, with static type `T`, and no null shorting clauses, where `m`
 and `T` are determined as follows:
 
-_TODO(paulberry)_
+- Let `f` be the static method or top level function referred to by the
+  _<identifier>_ sequence.
+
+- Let `T` be the type of `f`.
+
+- Let `m_1` be `@STATIC_TEAROFF(f)`. _Soundness follows from the fact that at
+  runtime, `m_1` will evaluate to a function object whose dynamic type is `T`._
 
 ### Constructor tearoff
 
