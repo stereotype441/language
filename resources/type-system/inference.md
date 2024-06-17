@@ -974,9 +974,9 @@ with respect to `L` under constraints `C0`
 
 Expression inference is a recursive process of elaborating an expression in Dart
 source code, transforming it into a form in which all types and type coercions
-are explicit. An expression that has not yet undergone type inference is known
-as an _unelaborated expression_, and an expression that has completed type
-inference is known as an _elaborated expression_.
+are explicit. An expression that has not yet undergone type inference is
+referred to as an _unelaborated expression_, and an expression that has
+completed type inference is referred to as an _elaborated expression_.
 
 _To aid in distinguishing unelaborated and elaborated expressions, the text
 below will typically denote an unelaborated expression by letter `e` (often with
@@ -995,9 +995,9 @@ expression inference on `e`, in context `K`".
 _Often, an expression's context can be understood as the static type the
 expression must have (or be coercible to) in order to avoid a compile-time
 error. For example, in the statement `num n = f();`, the result of type
-inferring `f()` needs to be either a subtype of `num` (or a type that's
-coercible to `num`) in order to avoid a compile-time error. Accordingly, `f()`
-is type inferred in the context `num`._
+inferring `f()` needs to be a subtype of `num` (or a type that's coercible to
+`num`) in order to avoid a compile-time error. Accordingly, `f()` is type
+inferred in the context `num`._
 
 _However, there are some exceptions. For example, in the code `Object? x = ...;
 if (x is num) { x = f(); }`, the variable `x` is promoted to the type `num`
@@ -1016,40 +1016,86 @@ TODO(paulberry): maybe talk about why it's important to specify type inference
 as a series of procedural steps because of the state implicitly tracked by flow
 analysis.
 
+## Static types and soundness
+
+Every elaborated expression has an associated _static type_, which is produced
+as a by-product of the expression inference process. These static types are
+specified in this document using language such as: "inference of `e` produces an
+elaborated expression `m` with static type `T`". _The specification of static
+types in this document should be understood to supersede the specification of
+static types in the existing Dart language specification._
+
+_Informally, we may sometimes speak of the static type of an unelaborated
+expression `e`; when we do, what is meant by this is the static type of the
+elaborated expression `m` that results from performing expression inference on
+`e` in some context `K`, where `K` depends on where `e` appears in the broader
+program. Note in particular that a given expression might have a different
+static type at different points in the code, since the behavior of expression
+inference depends on the context `K`, as well as the flow analysis state._
+
+A property of expression inference, known as _soundness_, is that when an
+elaborated expression is executed, it is guaranteed either to diverge, throw an
+exception, or evaluate to a value that is an _instance satisfying_ its static
+type. _Instance satisfying_ is defined as follows: a value `v` is an instance
+satisfying type `T` iff the runtime type of `v` is a subtype of the _extension
+type erasure_ of `T`. _So, for example, every value is considered an instance
+satisfying type `dynamic`, and all values except `null` are considered an
+instance satisfying type `Object`._
+
+_This stands in contrast to the notion of "instance of"; a value `v` is an
+instance of a type `T` only if the runtime type of `v` is __precisely__ `T`._
+
+_The type inference rules below include informal sketches of a proof that
+soundness holds for each expression type. These are non-normative, so they are
+typeset in italics._
+
 ## New operations allowed in elaborated expressions
 
 The elaboration process sometimes introduces new operations that are not easily
 expressible using the syntax of Dart. To allow these operations to be specified
 succintly, the syntax of Dart is extended to allow the following forms:
 
+- `@AWAIT_WITH_TYPE_CHECK<T>(m_1)`, represents the following operation:
+
+  - Evaluate `m_1`, and let `v` denote the result.
+
+  - If `v` is an instance satisfying type `Future<T>`, then
+    `@AWAIT_WITH_TYPE_CHECK<T>(m_1)` evaluates to `v`.
+
+  - Otherwise, let `u` be a future satisfying type `Future<T>` that will
+    complete to the value `v` at some later point. Then,
+    `@AWAIT_WITH_TYPE_CHECK<T>(m_1)` evaluates to `u`.
+
+    - _TODO(paulberry): explain why such a future is guaranteed to (soundly)
+      exist, by stipulating that if `T_1` is the static type of `m_1`, then `T`
+      must be `flatten(T_1)`, and then proving a lemma that `T_1 <:
+      FutureOr<flatten(T_1)>`; therefore `T_1 <: FutureOr<T>`, so in this
+      "otherwise" case, `v` must be an instance satisfying `T`._
+
 - `@CONCAT(m_1, m_2, ..., m_n)`, where each `m_i` is an elaborated expression
   whose static type is a subtype of `String`, represents the operation of
   evaluating each `m_i` in sequence and then concatenating the results into a
-  single string. The static type of `@CONCAT(...)` is `String`.
+  single string.
 
 - `@DOUBLE(d)` represents a literal double with numeric value `d`. The runtime
   behavior of this construct is to evaluate to an instance of the type `double`
-  representing `d`. The static type of `@DOUBLE(d)` is `double`. _This is used
-  to explicitly mark integer literals that have been converted, by type
-  inference, to doubles._
+  representing `d`. _This is used to explicitly mark integer literals that have
+  been converted, by type inference, to doubles._
 
 - `@IMPLICIT_CAST<T>(m)` represents an implicit cast of the expression `m` to
   type `T`. The runtime behavior of this construct is the same as that of `m as
   T`, except that in the case where the cast fails, the exception thrown is a
-  `TypeError` rather than a `CastError`. The static type of
-  `@IMPLICIT_CAST<T>(m)` is `T`.
+  `TypeError` rather than a `CastError`.
 
 - `@INT(i)` represents a literal integer with numeric value `i`. The runtime
   behavior of this construct is to evaluate to an instance of the type `int`
-  representing `i`. The static type of `@INT(i)` is `int`. _This is used to
-  explicitly mark integer literals that have __not__ been converted, by type
-  inference, to doubles._
+  representing `i`. _This is used to explicitly mark integer literals that have
+  __not__ been converted, by type inference, to doubles._
 
 - `@LET(T v = m_1 in m_2)` represents the operation of first evaluating `m_1`,
   whose static type must be a subtype of `T`, storing the result in temporary
   storage, then evaluating `m_2` in a scope in which `v` has static type `T` and
-  evaluates to the stored value. The static type of `@LET(T v = m_1 in m_2)` is
-  the same as the static type of `m_2`.
+  evaluates to the stored value.
 
   - When this specification specifies that a `@LET` expression should be created
     using a variable `v` that does not appear in the source code, it should be
@@ -1057,46 +1103,21 @@ succintly, the syntax of Dart is extended to allow the following forms:
     that exists in the user's program. _TODO(paulberry): give an example to
     clarify._
 
-  - _`@LET(T v = m_1 in m_2)` can be understood to be equivalent to `((v) =>
-    m_2)(m_1)`, except without the overhead of constructing and executing a
-    function closure, and without the type demotions that might normally occur
-    as a result of creating a closure._
-
-- `@PROMOTED_TYPE<T>(m)` represents an elaborated expression with static type
-  `T` whose runtime behavior is the same as that of `m`, but where it is known
-  that whenever the elaborated expression executes, the resulting value is an
-  instance of `T`. _This is used in situations where additional reasoning,
-  beyond the static type of `m`, is required to establish soundness. Wherever
-  this construct is used, the additional reasoning follows in italics. Note that
+- `@PROMOTED_TYPE<T>(m)` represents an elaborated expression whose runtime
+  behavior is the same as that of `m`, but where it is known that whenever the
+  elaborated expression executes, the resulting value is an instance satisfying
+  type `T`. _This is used in situations where additional reasoning, beyond the
+  static type of `m`, is required to establish soundness. Wherever this
+  construct is used, the additional reasoning follows in italics. Note that
   since `m` and `@PROMOTED_TYPE<T>(m)` have the same runtime behavior,
   implementations can most likely elide `@PROMOTED_TYPE<T>(m)` to `m` without
   any loss of functionality, provided they are not trying to construct a proof
   of soundness._
 
-## Soundness guarantees
-
-An invariant of expression inference, known as _soundness_, is that when the
-elaborated form of any expression in the program is executed, it is guaranteed
-either to diverge, throw an exception, or evaluate to a value that is an
-_instance_ of its static type. _Instance_ is defined as follows: a value `v` is
-an instance of a type `T` iff the runtime type of `v` is a subtype of the
-_extension type erasure_ of `T`. _So, for example, every value is considered an
-instance of `dynamic`, and all values except `null` are considered an instance
-of `Object`._
-
-_Some literature uses a different definition of "instance", saying that a value
-`v` is an instance of a type `T` only if the runtime type of `v` is
-__precisely__ `T`. We adopt the "subtype" definition for consistency with other
-parts of the language spec._
-
-_The type inference rules below include informal sketches of a proof that
-soundness holds for each expression type. These are non-normative, so they are
-typeset in italics._
-
-## Additional invariants satisfied by elaborated expressions
+## Additional properties satisfied by elaborated expressions
 
 The rules below ensure that elaborated expressions will satisfy the following
-invariants:
+properties:
 
 - An elaborated expression will never contain one of the tokens `?.`, `??`, or
   `??=`. _The type inference process converts expressions containing these
@@ -1132,7 +1153,7 @@ invariants:
       corresponding arguments.
 
 _The type inference rules below include informal sketches of a proof that the
-output of type inference satisfies these additional invariants. These are
+output of type inference satisfies these additional properties. These are
 non-normative, so they are typeset in italics._
 
 ## Coercions
@@ -1142,29 +1163,27 @@ expression, it is useful to define an operation known as _coercion_. _Coercion_
 is a type inference step that is applied to an elaborated expression `m_1` and a
 target type `T`, and produces a new elaborated expression `m_2`.
 
-_The coercion operation satisfies the soundness invariant that the static type
-of `m_2` is guaranteed to be a subtype of `T`. A proof of this is sketched
+_The coercion operation satisfies the following soundness property: the static
+type of `m_2` is guaranteed to be a subtype of `T`. A proof of this is sketched
 below._
 
 _Coercions are used in most situations where the existing spec calls for an
 assignability check._
 
-Coercion of an elaborated expression `m_1` to type `T` produces `m_2`, which is
-determined as follows:
+Coercion of an elaborated expression `m_1` to type `T` produces `m_2`, with
+static type `T_2`, where `m_2` and `T_2` are determined as follows:
 
 - Let `T_1` be the static type of `m_1`.
 
-- If `T_1 <: T`, then let `m_2` be `m_1`. _Since `m_1` and `m_2` are the same,
-  the static type of `m_2` is `T_1`. Therefore, since `T_1 <: T`, the soundness
-  invariant is satisfied._
+- If `T_1 <: T`, then let `m_2` be `m_1` and `T_2` be `T_1`. _Since `T_1 <: T`,
+  soundness is satisfied._
 
-- Otherwise, if `T_1` is `dynamic`, then let `m_2` be
-  `@IMPLICIT_CAST<T>(m_1)`. _Since `@IMPLICIT_CAST<T>(m_1)` has a static type of
-  `T`, the soundness invariant is satisfied._
+- Otherwise, if `T_1` is `dynamic`, then let `m_2` be `@IMPLICIT_CAST<T>(m_1)`
+  and `T_2` be `T`. _Since `T <: T`, soundness is satisfied._
 
 - Otherwise, if `T_1` is an interface type that contains a method called `call`
-  with type `U`, and `U <: T`, then let `m_2` be `m_1.call`. _Since `m_1.call`
-  has static type `U`, and `U <: T`, the soundness invariant is satisfied._
+  with type `U`, and `U <: T`, then let `m_2` be `m_1.call`, and let `T_2` be
+  `U`. _Since `U <: T`, soundness is satisfied._
 
   - TODO(paulberry): verify that the analyzer does this.
 
@@ -1187,8 +1206,8 @@ of steps:
 
 - Let `m` be the result of performing coercion of `m_1` to type `T`.
 
-_It follows, from the soundness invariant of coercions, that the static type of
-`m` is guaranteed to be a subtype of `T`._
+_It follows, from the soundness of coercions, that the static type of `m` is
+guaranteed to be a subtype of `T`._
 
 ## Expression inference rules
 
@@ -1220,8 +1239,8 @@ as follows:
     this rule faithfully; see https://github.com/dart-lang/sdk/issues/55736._
 
   - Otherwise, let `T` be the type `double`, and let `m` be
-    `@DOUBLE(i)`. _Soundness follows from the fact that the static type of
-    `@DOUBLE(d)` is `double` for all `d`._
+    `@DOUBLE(i)`. _Soundness follows from the fact that `@DOUBLE(i)` always
+    evaluates to an instance of `double`._
 
 - Otherwise, if `l` is a hexadecimal integer literal, 2<sup>63</sup> ≤ `i` <
   2<sup>64</sup>, and the `int` class is represented as signed 64-bit two's
@@ -1229,14 +1248,15 @@ as follows:
 
   - Let `T` be the type `int`, and let `m` be `@INT(i` - 2<sup>64</sup>`)`.
 
-  - _Soundness follows from the fact that the static type of `@INT(i)` is `int`
-    for all `i`._
+  - _Soundness follows from the fact that the `@INT(j)` always evaluates to an
+    instance of `int`._
 
 - Otherwise, if `i` cannot be represented _precisely_ by an instance of `int`,
   then there is a compile-time error.
 
 - Otherwise, let `T` be the type `int`, and let `m` be `@INT(i)`. _Soundness
-  follows from the fact that the static type of `@INT(i)` is `int` for all `i`._
+  follows from the fact that `@INT(i)` always evaluates to an instance of
+  `int`._
 
 TODO(paulberry): non-normative notes about integer literals preceded by unary
 minus.
@@ -1267,7 +1287,7 @@ elaborated expression `m` with static type `String`, where `m` is determined as
 follows:
 
 - If `s` contains no _stringInterpolations_, then let `m` be `s`. _The runtime
-  behavior of a string liveral with no _stringInterpolations_ is to evaluate to
+  behavior of a string literal with no _stringInterpolations_ is to evaluate to
   an instance of the type `String`, so soundness is satisfied._
 
 - Otherwise:
@@ -1282,7 +1302,7 @@ follows:
           context `_`.
 
       - Otherwise, `s_i` takes the form '`$e`', where `e` is either `this` or an
-        identifier that doesn't begin with `$`, so:
+        identifier that doesn't contain `$`, so:
 
         - Let `m_i` be the result of performing expression inference on `e`, in
           context `_`.
@@ -1327,9 +1347,8 @@ determined as follows:
 - Let `m_1` be the result of performing expression inference on `e_1`, in
   context `_`, and then coercing the result to type `Object`.
 
-- _It follows, from the soundness invariant of coercions, that the static type
-  of `m_1` is guaranteed to be a subtype of `Object`. That is, `null` will never
-  be thrown._
+- _It follows, from the soundness of coercions, that the static type of `m_1` is
+  guaranteed to be a subtype of `Object`. That is, `null` will never be thrown._
 
 - Let `m` be `throw m_1`. _Soundness follows from the fact that `throw m_1`
   never evaluates to a value._
@@ -1337,13 +1356,13 @@ determined as follows:
 ### This
 
 Expression inference of `this`, regardless of context, produces the elaborated
-expression `this`.
+expression `this` with static type `T`, where `T` is the interface type of the
+immediately enclosing class, enum, mixin, or extension type, or the "on" type of
+the immediately enclosing extension.
 
-_The static type of `this` is the interface type of the immediately enclosing
-class, enum, mixin, or extension type, or the "on" type of the immediately
-enclosing extension. The runtime behavior of `this` is to evaluate to the target
-of the current instance member invocation, which is guaranteed to be an instance
-of this type. So soundness is satisfied._
+_The runtime behavior of `this` is to evaluate to the target of the current
+instance member invocation, which is guaranteed to be an instance satisfying
+this type. So soundness is satisfied._
 
 ### Function expressions
 
@@ -1421,8 +1440,8 @@ TODO(paulberry): split from binary expressions
 - Let `m_2` be the result of performing expression inference on `e_2`, in
   context `bool`, and then coercing the result to type `bool`.
 
-- _It follows, from the soundness invariant of coercions, that the static type
-  of `m_1` and `m_2` are both guaranteed to be a subtype of `bool`._
+- _It follows, from the soundness of coercions, that the static type of `m_1`
+  and `m_2` are both guaranteed to be a subtype of `bool`._
 
 - If `e` is of the form `e_1 && e_2`, let `m` be `m_1 && m_2`. _It is valid to
   form this elaborated expression because the static type of `m_1` and `m_2` are
@@ -1436,8 +1455,8 @@ _The runtime behavior of logical boolean expressions is to evaluate to a value
 equal to their first argument (in the case of a short-cut) or their second
 argument (in the case of no short-cut). Since the static type of `m_1` and `m_2`
 are guaranteed to be a subtype of `bool`, it follows that the the logical
-boolean expression will evaluate to an instance of `bool`, so soundness is
-satisfied._
+boolean expression will evaluate to an instance satisfying type `bool`, so
+soundness is satisfied._
 
 ### Await expressions
 
@@ -1521,90 +1540,100 @@ determined as follows:
 
 - Let `T_2` be `flatten(T_1)`.
 
-- Let `m_2` be `@LET(T_1 v = m_1 in v is Future<T_2> ? v :
-  Future<T_2>.value(@PROMOTED_TYPE<T_2>(v)))`.
+- Let `m_2` be `@AWAIT_WITH_TYPE_CHECK<T_2>(m_1)`, with static type
+  `Future<T_2>`.
 
   - _Note that in many circumstances, it will be trivial for the compiler to
-    establish that `v is Future<T_2>` always evaluates to `true`, in which case
-    `m_2` can be optimized to `@PROMOTED_TYPE<Future<T_2>>(m_1)`._
+    establish that `m_1` always evaluates to an instance `v` that satisfies type
+    `Future<T_2>`, in which case `m_2` can be optimized to
+    `@PROMOTED_TYPE<Future<T_2>>(m_1)`._
 
-  - _For soundness, we must prove that whenever `@PROMOTED_TYPE<T_2>(v)`
-    executes, the resulting value is an instance of `T_2`. Note that `v` is an
-    instance of `T_1` (because `T_1` is the static type of `m_1`), but
-    `@PROMOTED_TYPE<T_2>(v)` only executes if the runtime value of `v` is
-    __not__ an instance of `Future<T_2>`. So we can establish soundness by
-    assuming that `v` is an instance of `T_1` and not an instance of
-    `Future<T_2>`, and then considering two cases:_
+  - _For soundness, we must prove that whenever
+    `@AWAIT_WITH_TYPE_CHECK<T_2>(m_1)` evaluates `m_1` to a value `v` that is
+    __not__ an instance satisfying type `Future<T_2>`, that `v` __is__ an
+    instance satisfying type `T_2`. This is necessary to ensure that the future
+    created by `@AWAIT_WITH_TYPE_CHECK` will complete to a value satisfying its
+    type signature. Note that `v` is guaranteed to be an instance satisfying
+    type `T_1` (because `T_1` is the static type of `m_1`). So we can establish
+    soundness by assuming that `v` is an instance satisfying type `T_1` and not
+    an instance satisfying type `Future<T_2>`, and then considering two cases:_
+
+    - _TODO(paulberry): it should be possible to simplify and clarify this
+      section once we have proven that `T <: FutureOr<flatten(T)>` for all types
+      `T`._
 
     - _If the runtime value of `v` is `null`, then by soundness, `T_1` must be
       of the form `Null`, `dynamic`, `S*`, or `S?`. Considering each of these:_
 
       - _If `T_1` is of the form `Null` or `dynamic`, then by the definition of
         `flatten`, `T_2` must be the same as `T_1`. Therefore, `v` is an
-        instance of `T_2`, so soundness is satisfied._
+        instance satisfying type `T_2`, so soundness is satisfied._
 
       - _If `T_1` is of the form `S*` or `S?`, then by the definition of
         `flatten`, `T_2` must be of the form `flatten(S)*` or `flatten(S)?`,
-        respectively. `null` is an instance of all types ending in `*` and `?`,
-        so soudness is satisfied._
+        respectively. `null` is an instance satisfying all types ending in `*`
+        and `?`, so soudness is satisfied._
 
-    - _Otherwise, we need to show that if `v` is a non-null instance of `T_1`,
-      but not an instance of `Future<T_2>`, then `v` is an instance of `T_2`._
+    - _Otherwise, we need to show that if `v` is a non-null instance satisfying
+      type `T_1`, but not an instance satisfying type `Future<T_2>`, then `v` is
+      an instance satisfying type `T_2`._
 
     - _Substituting in the definition of `T_2`, we need to show that if `v` is a
-      non-null instance of `T_1`, but not an instance of `Future<flatten(T_1)>`,
-      then `v` is an instance of `flatten(T_1)`. We can prove this by induction
-      on `T_1`:_
+      non-null instance satisfying type `T_1`, but not an instance satisfying
+      type `Future<flatten(T_1)>`, then `v` is an instance satisfying type
+      `flatten(T_1)`. We can prove this by induction on `T_1`:_
 
       - _If `T_1` is `S?`, then `flatten(T_1)` is `flatten(S)?`. We need to show
-        that if `v` is a non-null instance of `S?`, but not an instance of
-        `Future<flatten(S)?>`, then `v` is an instance of
-        `flatten(S)?`. Assuming `v` is a non-null instance of `S?`, it must be a
-        non-null instance of `S`. Assuming `v` is not an instance of
-        `Future<flatten(S)?>`, it follows that `v` is not an instance of
-        `Future<flatten(S)>`. So we have satisfied the premise of the induction
-        hypothesis using `T_1 = S`, and therefore by induction, `v` is an
-        instance of `flatten(S)`. This in turn implies that `v` is an instance
-        of `flatten(S)?`._
+        that if `v` is a non-null instance satisfying type `S?`, but not an
+        instance satisfying type `Future<flatten(S)?>`, then `v` is an instance
+        satisfying type `flatten(S)?`. Assuming `v` is a non-null instance
+        satisfying type `S?`, it must be a non-null instance satisfying type
+        `S`. Assuming `v` is not an instance satisfying type
+        `Future<flatten(S)?>`, it follows that `v` is not an instance satisfying
+        type `Future<flatten(S)>`. So we have satisfied the premise of the
+        induction hypothesis using `T_1 = S`, and therefore by induction, `v` is
+        an instance satisfying type `flatten(S)`. This in turn implies that `v`
+        is an instance satisfying type `flatten(S)?`._
 
       - _(Same argument but with `?` replaced by `*`): If `T_1` is `S*`, then
         `flatten(T_1)` is `flatten(S)*`. We need to show that if `v` is a
-        non-null instance of `S*`, but not an instance of `Future<flatten(S)*>`,
-        then `v` is an instance of `flatten(S)*`. Assuming `v` is a non-null
-        instance of `S*`, it must be a non-null instance of `S`. Assuming `v` is
-        not an instance of `Future<flatten(S)*>`, it follows that `v` is not an
-        instance of `Future<flatten(S)>`. So we have satisfied the premise of
-        the induction hypothesis using `T_1 = S`, and therefore by induction,
-        `v` is an instance of `flatten(S)`. This in turn implies that `v` is an
-        instance of `flatten(S)*`._
+        non-null instance satisfying type `S*`, but not an instance satisfying
+        type `Future<flatten(S)*>`, then `v` is an instance satisfying type
+        `flatten(S)*`. Assuming `v` is a non-null instance satisfying type `S*`,
+        it must be a non-null instance satisfying type `S`. Assuming `v` is not
+        an instance satisfying type `Future<flatten(S)*>`, it follows that `v`
+        is not an instance satisfying type `Future<flatten(S)>`. So we have
+        satisfied the premise of the induction hypothesis using `T_1 = S`, and
+        therefore by induction, `v` is an instance satisfying type
+        `flatten(S)`. This in turn implies that `v` is an instance satisfying
+        type `flatten(S)*`._
 
       - _If `T_1` is `FutureOr<S>`, then `flatten(T_1)` is `S`. We need to show
-        that if `v` is a non-null instance of `FutureOr<S>`, but not an instance
-        of `Future<S>`, then `v` is an instance of `S`. This is trivially true,
-        because `FutureOr<S>` is the union of types `S` and `Future<S>`._
+        that if `v` is a non-null instance satisfying type `FutureOr<S>`, but
+        not an instance satisfying type `Future<S>`, then `v` is an instance
+        satisfying type `S`. This is trivially true, because `FutureOr<S>` is
+        the union of types `S` and `Future<S>`._
 
       - _If `T_1 <: Future`, then `flatten(T_1)` is `S`, where `S` is a type
         such that `T_1 <: Future<S>` and for all `R`, if `T_1 <: Future<R>` then
-        `S <: R`. We need to show that if `v` is a non-null instance of `T_1`,
-        but not an instance of `Future<S>`, then `v` is an instance of
-        `S`. Assuming `v` is a non-null instance of `T_1`, it must also be a
-        non-null instance of `Future<S>` (because `T_1 <: Future<S>`). But this
-        contradicts the assumption that `v` is __not__ an instance of
-        `Future<S>`, so this case is impossible._
+        `S <: R`. We need to show that if `v` is a non-null instance satisfying
+        type `T_1`, but not an instance satisfying type `Future<S>`, then `v` is
+        an instance satisfying type `S`. Assuming `v` is a non-null instance
+        satisfying type `T_1`, it must also be a non-null instance satisfying
+        type `Future<S>` (because `T_1 <: Future<S>`). But this contradicts the
+        assumption that `v` is __not__ an instance satisfying type `Future<S>`,
+        so this case is impossible._
 
       - _Finally, if none of the above cases are satisfied, then `flatten(T_1)`
-        is `T_1`. We need to show that if `v` is a non-null instance of `T_1`,
-        but not an instance of `Future<T_1>`, then `v` is an instance of
-        `T_1`. This is trivially true, since if `v` is a non-null instance of
-        `T_1`, it must be an instance of `T_1`._
+        is `T_1`. We need to show that if `v` is a non-null instance satisfying
+        type `T_1`, but not an instance satisfying type `Future<T_1>`, then `v`
+        is an instance satisfying type `T_1`. This is trivially true, since if
+        `v` is a non-null instance satisfying type `T_1`, it must be an instance
+        satisfying type `T_1`._
 
-- Let `T` be `T_2`, and let `m` be `@PROMOTED_TYPE<T>(await m_2)`. _Note that
-  `m_2` has two different behaviors, depending whether `v` is an instance of
-  `Future<T_2>`. If it is, then `m_2` evaluates to `v`, so the value of `await
-  m_2` must necessarily be an instance of `T_2`, and soundness is satisfied. If
-  it isn't, then `m_2` evaluates to `Future<T_2>.value(...)`, so again, the
-  value of `await m_2` must necessarily be an instance of `T_2`, and soundness
-  is satisfied._
+- Let `T` be `T_2`, and let `m` be `await m_2`. _Since `m_2` has static type
+  `Future<m_2>`, the value of `await m_2` must necessarily be an instance
+  satisfying type `T_2`, so soundness is satisfied._
 
 ### Postfix expressions
 
