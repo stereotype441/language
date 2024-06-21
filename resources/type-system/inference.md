@@ -1180,6 +1180,9 @@ When present, `T_0` represents a type, `id` represents an identifier (or `new`
 in the case of `@CONSTRUCTOR_TEAROFF`), `m_0` represents an elaborated
 expression, and `f` represents a static method or top level function.
 
+The semantics of each of these forms is to evaluate `m_0` if present, then
+create the appropriate tearoff function object.
+
 ## Additional properties satisfied by elaborated expressions
 
 The rules below ensure that elaborated expressions will satisfy the following
@@ -1189,15 +1192,16 @@ properties:
   `??=`. _The type inference process converts expressions containing these
   tokens into simpler forms._
 
-- Whenever an elaborated expression contains `.`_<identifier> <argumentPart>_,
-  this can be interpreted as a method invocation. _Other interpretations are
-  valid in standard Dart; for example, if `b` refers to a getter, then `a.b()`
-  is not a method invocation, but a function invocation applied to a the result
-  of a getter invocation. In this scenario, the type inference process
-  elaborates `a.b()` to `a.b.call()`._
+- Any time `.` appears in an elaborated expression, it is immediately enclosed
+  in one of the new constructs described in ???[New operations allowed in
+  elaborated
+  expressions](#New-operations-allowed-in-elaborated-expressions). _This ensures
+  that all ambiguity has been resolved between references to functions, methods,
+  and getters, and that all dynamic invocations are specifically marked as
+  such._
 
-  - _TODO(paulberry): but maybe I want to make a stronger guarantee. E.g. all
-    calls are turned into `@DYNAMIC_INVOKE`, `@STATIC_INVOKE`, etc._
+  - _TODO(paulberry): make sure to update the stuff I've written in previous PRs
+    to be consistent with this.
 
 - Elaborated expressions will never contain any implicit type checks. This
   means, in particular, that:
@@ -1233,6 +1237,39 @@ output of type inference satisfies these additional properties. These are
 non-normative, so they are typeset in italics._
 
 ## Null shorting
+
+The process of elaborating an expression involving `?.` is complicated by the
+presence of null shorting, a process in which a subexpression evaluating to
+`null` may terminate evaluation not just of the immediately enclosing
+expression, but also one or more larger containing expressions. In circumstances
+where this may occur, we say that null shorting may _extend_ from the smaller
+expression to the larger one. _For example, in `y = a?.b.f()`, if `a` evaluates
+to `null`, then the remainder of both `a?.b` and its enclosing expression
+`a?.b.f()` will be skipped, and `null` will immediately be assigned to `y`. So
+we say that null shorting may extend from `a?.b` to `a?.b.f()`._
+
+When expression inference acts on an expression from which null shorting may be
+extended, the expression inference process produces both an elaborated
+expression, `m`, and a sequence of one or more _null shorting clauses_, each of
+the form `T_i v_i = m_i`, where each `T_i` is a type, `v_i` is a variable name,
+and `m_i` is an elaborated expression whose static type is a subtype of
+`T_i?`. Each `v_i` may appear in `m`, and in all `m_j` where `j > i`; when it
+does so, it is considered to have static type `T_i`.
+
+_The intended interpretation is that each null shorting clause represents a
+subexpression that might evaluate to `null`; if it does, then the rest of the
+null shorting clauses (and `m`) should be skipped._
+
+TODO(paulberry): I AM HERE
+
+To account for this, expression inference may sometimes produce one or more
+auxiliary outputs beyond the principal elaborated expression; these auxiliary
+outputs are known as _null shorting clauses_, and they take the form `T_i v_i =
+m_i`, where `i` distinguishes the clauses, `T_i` is a type, `v_i` is a variable
+name, and `m_i` is an elaborated expression whose static type is a subtype of
+`T_i?`. Each `v_i` may appear in the principale elaborated expression, and in
+all `m_j` where `j > i`; when it does so, it is considered to have static type
+`T_i`.
 
 To form the correct elaboration of an expression involving null shorting, it is
 sometimes necessary to elaborate a subexpression into multiple pieces that can
