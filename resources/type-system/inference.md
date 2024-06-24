@@ -1842,8 +1842,8 @@ clauses, where `m` and `T` are determined as follows:
 - Let `f` be the constructor named `id` in `C`. If there is no such constructor,
   it is a compile-time error.
 
-- Let `F` be the function type of `f`. _Note that if the type containing `c` is
-  generic, this will be a generic function type._
+- Let `F` be the function type of `f`. _Note that if `C` is generic, this will
+  be a generic function type._
 
 - Invoke argument part inference on _<argumentPart>_, using `F` as the target
   function type and `K` as the context. Designate the result by `{m_1, m_2,
@@ -1866,15 +1866,15 @@ type of the immediately enclosing extension. _The runtime behavior of `this` is
 to evaluate to the target of the current instance member invocation, which is
 guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
 
-  - It is a compile-time error if the expression chain does not have access to
-    `this`.
+  It is a compile-time error if the expression chain does not have access to
+  `this`.
 
 - Let `id` be the identifier named by _<identifier>_.
 
 - Let `m` and `T` be the result of performing [method invocation
   inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
   the target elaborated expression, `id` as the method name identifier, and `K`
-  as the type schema.
+  as the type schema. _TODO(paulberry): explain why sound._
 
 ### Method invocation
 
@@ -1893,15 +1893,15 @@ elaborated expression `m`, with static type `T`, and null shorting clauses
 
   - If the method invocation uses `?.`, then:
 
-    - Let `U` be `NonNull(T_0)` _TODO(paulberry): clean up notation_
+    - Let `U` be `NonNull(T_0)`.
 
     - Let `v` be a fresh synthetic variable.
 
-    - Let `C` be the result of appending `U v = m_0` to the end of `C_0`.
+    - Let `C` be the result of appending `U v <- m_0` to the end of `C_0`.
 
     - Let `m_1` be `v`, with static type `U`.
 
-  - Otherwise (the method invocation uses `.`:
+  - Otherwise (the method invocation uses `.`):
 
     - Let `C` be `C_0`.
 
@@ -1910,8 +1910,7 @@ elaborated expression `m`, with static type `T`, and null shorting clauses
 - Let `m` and `T` be the result of performing [method invocation
   inference](#Method-invocation-inference) on _<argumentPart>_, using `m_1` as
   the target elaborated expression, `id` as the method name identifier, and `K`
-  as the type schema. _TODO(paulberry): is this the correct schema if null
-  shorting is in play?_
+  as the type schema. _TODO(paulberry): explain why sound._
 
 ### Implicit call invocation
 
@@ -1930,8 +1929,7 @@ determined as follows:
 - Let `m` and `T` be the result of performing [method invocation
   inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
   the target elaborated expression, `call` as the method name identifier, and
-  `K` as the type schema. _TODO(paulberry): is this the correct schema if null
-  shorting is in play?_
+  `K` as the type schema. _TODO(paulberry): explain why sound._
 
 ### Static method tearoff
 
@@ -1958,7 +1956,35 @@ then the result of selector chain type inference in context `K` is the
 elaborated expression `m`, with static type `T`, and no null shorting clauses,
 where `m` and `T` are determined as follows:
 
-_TODO(paulberry)_
+- Let `C` be the type named by _<typeName>_.
+
+- Let `id` be the identifier named by _<identifierOrNew>_, or `new` if it was
+  omitted.
+
+- Let `f` be the constructor named `id` in `C`. If there is no such constructor,
+  it is a compile-time error.
+
+- Let `F` be the function type of `f`. _Note that if `C` is generic, this will
+  be a generic function type._
+
+- If _<typeArguments>_ are present, and `C` is generic, then:
+
+  - Let `U` be the result of substituting these type arguments for the type
+    parameters of `C`. If the number of type arguments doesn't match the number
+    of type parameters of `C`, or the bounds of `C`'s type parameters are not
+    satisfied by the substitution, it is a compile-time error.
+
+  - Let `m` be `@CONSTRUCTOR_TEAROFF(U.id)`, and let `T` be the result of making
+    the aforementioned substitution into `F`. _TODO(paulberry): explain why
+    sound._
+
+- Otherwise, if _<typeArguments>_ are not present, then:
+
+  - Let `m` be `@CONSTRUCTOR_TEAROOF(C.id)`, and let `T` be
+    `F`. _TODO(paulberry): explain why sound._
+
+- Otherwise, there is a compile time error (type arguments applied to a
+  non-generic type).
 
 ### Method tearoff or property get
 
