@@ -1133,26 +1133,25 @@ succintly, the syntax of Dart is extended to allow the following forms:
   any loss of functionality, provided they are not trying to construct a proof
   of soundness._
 
-- `@SHORTING_LET(T_1 v_1 = m_1, T_2 v_2 = m_2, ... in m)` represents the
+- `@RESOLVED_NULL_SHORT(T_1 v_1 <- m_1; T_2 v_2 <- m_2; m)` represents the
   following operation:
 
-  - For each `T_i v_i = m_i` section, in sequence:
+  - For each `T_i v_i <- m_i` section, in sequence:
 
     - Let `v_i` represent the result of evaluating `m_i`, whose static type must
       be a subtype of `T_i?`. _Each `m_i` may refer to any `v_j` that precedes
       it; if it does so, the static type of `v_j` is considered to be `T_j`._
 
     - If `m_i` evaluates to `null`, then skip the evaluation of all further
-      `m_i`, and let `@SHORTING_LET(...)` evaluate to `null`.
+      `m_i`, and let `@RESOLVED_NULL_SHORT(...)` evaluate to `null`.
 
-  - If no `m_i` evaluated to `null`, then let `@SHORTING_LET(...)` evaluate to
-    the result of evaluating `m`.
+  - If no `m_i` evaluated to `null`, then let `@RESOLVED_NULL_SHORT(...)`
+    evaluate to the result of evaluating `m`.
 
-  - _`@SHORTING_LET` is used for elaborating null-shorting operations. For
-    example, `a?.b?.c` is elaborated approximately into `@SHORTING_LET(T_1 v_1 =
-    a, T_2 v_2 = v_1.b in v_2.c)`._
+  - _The notation was deliberately chosen to resemble the `Maybe` monad in
+    Haskell, with has similar semantics._
 
-    - _TODO(paulberry): explain why "approximately"._
+- `@VARIABLE_GET(v)` _TODO(paulberry)
 
 In addition, the following forms are added to allow constructor invocations,
 dynamic method invocations, function object invocations, instance method
@@ -1252,72 +1251,80 @@ The process of elaborating an expression involving `?.` is complicated by the
 presence of null shorting, a process in which a subexpression evaluating to
 `null` may terminate evaluation not just of the immediately enclosing
 expression, but also one or more larger containing expressions. In circumstances
-where this may occur, we say that null shorting may _extend_ from the smaller
-expression to the larger one. _For example, in `y = a?.b.f()`, if `a` evaluates
-to `null`, then the remainder of both `a?.b` and its enclosing expression
-`a?.b.f()` will be skipped, and `null` will immediately be assigned to `y`. So
-we say that null shorting may extend from `a?.b` to `a?.b.f()`._
+where this may occur, we say that null shorting _may be extended_ from the
+smaller expression to the larger one. _For example, in `y = a?.b.f()`, if `a`
+evaluates to `null`, then the remainder of both `a?.b` and its enclosing
+expression `a?.b.f()` will be skipped, and `null` will immediately be assigned
+to `y`. So we say that null shorting may be extended from `a?.b` to `a?.b.f()`._
 
 When expression inference acts on an expression from which null shorting may be
 extended, the expression inference process produces both an elaborated
 expression, `m`, and a sequence of one or more _null shorting clauses_, each of
-the form `T_i v_i = m_i`, where each `T_i` is a type, `v_i` is a variable name,
+the form `T_i v_i <- m_i`, where each `T_i` is a type, `v_i` is a variable name,
 and `m_i` is an elaborated expression whose static type is a subtype of
 `T_i?`. Each `v_i` may appear in `m`, and in all `m_j` where `j > i`; when it
 does so, it is considered to have static type `T_i`.
 
-_The intended interpretation is that each null shorting clause represents a
-subexpression that might evaluate to `null`; if it does, then the rest of the
-null shorting clauses (and `m`) should be skipped._
+In the text below, all recursive invocations of expression inference will be
+specified as taking place either with _deferred_ null shorting or with
+_resolved_ null shorting.
 
-TODO(paulberry): I AM HERE
+Deferred null shorting is used for cases where the type inference process for an
+expression `e_1` recursively invokes expression inference for subexpression
+`e_2`, and null shorting may be extended from `e_2` to `e_1`. When deferred null
+shorting is used, any null shorting clauses produced by the inference of `e_2`
+are considered to be an output of the recursive invocation, and may be further
+acted upon by the remainder of the type inference algorithm for `e_1`.
 
-To account for this, expression inference may sometimes produce one or more
-auxiliary outputs beyond the principal elaborated expression; these auxiliary
-outputs are known as _null shorting clauses_, and they take the form `T_i v_i =
-m_i`, where `i` distinguishes the clauses, `T_i` is a type, `v_i` is a variable
-name, and `m_i` is an elaborated expression whose static type is a subtype of
-`T_i?`. Each `v_i` may appear in the principale elaborated expression, and in
-all `m_j` where `j > i`; when it does so, it is considered to have static type
-`T_i`.
+Resolved null shorting is used for all other cases where expression type
+inference is invoked on an expression `e`. The following process is used to
+perform expression type inference of an expression `e` in context `K`, with
+resolved null shorting:
 
-To form the correct elaboration of an expression involving null shorting, it is
-sometimes necessary to elaborate a subexpression into multiple pieces that can
-later be assembled into the full elaboration. This process is known as
-_expression inference with deferred null shorting_. The pieces produced are an
-elaborated expression `m` and a sequence of zero or more _null shorting clauses_
-of the form `T_i v_i = m_i`, where `T_i` is a type, `v_i` is a variable name,
-and `m_i` is an elaborated expression whose static type is a subtype of
-`T_i?`. Each `v_i` may appear in `m`, and in all `m_j` where `j > i`; when it
-does so, it is considered to have static type `T_i`.
+- Perform expression type inference on expression `e` in context `K`, with
+  deferred null shorting. Let `m` represent the resulting elaborated expression,
+  let `T` be its static type, and let `T_i v_i <- m_i` be the resulting null
+  shorting clauses (if any).
 
-_The intended interpretation is that each `m_i` will be evaluated in sequence;
-if any of them evaluates to `null`, the whole expression evaluates to `null`;
-otherwise, the `m` will be evaluated._
+- If no null shorting clauses were produced, then let the result of expression
+  inference with resolved null shorting be `m` , with static type `T`.
 
-The process of assembling an elaborated expression `m`, and a sequence of null
-shorting clauses `T_i v_i = m_i`, into a full elaboration, is known as
-_resolving null shorting_, and operates as follows:
+- Otherwise, let the result of expression inference with resolved null shorting
+  be `@RESOLVED_NULL_SHORT(T_1 v_1 <- m_1; T_2 v_2 <- m_2; m)`, with static type
+  `T?`.
 
-- Let `T` be the static type of `m`.
+_For example, the type inference process for `f(a?.b.c)` works as
+follows. Assume that `f` is a top level function, `a` is a local variable with
+static type `T?`, `T.b` has static type `U`, and `U.c` has static type `V`:_
 
-- If there are no null shorting clauses, then the result of resolving null
-  shorting is `m`, with static type `T`.
+- _Since null shorting may not be extended from `a?.b.c` to `f(a?.b.c)`, type
+  inference is recursively invoked on `a?.b.c`, with resolved null shorting:_
 
-- Otherwise, the result of resolving null shorting is `@SHORTING_LET(T_1 v_1 =
-  m_1, T_2 v_2 = m_2, ... in m)`, with static type `T?`.
+  - _Since null shorting may be extended from `a?.b` to `a?.b.c`, type inference
+    is recursively invoked on `a?.b`, with deferred null shorting:_
 
-The remainder of the "expression inference" section will specify the behavior of
-expression inference with deferred null shorting. When it is necessary to
-perform ordinary expression inference on an expression `e`, in context `K`, the
-sequence of steps is:
+    - _Since null shorting may be extended from `a` to `a?.b`, type inference is
+      recursively invoked on `a`, with deferred null shorting:_
 
-- Perform expression inference with deferred null shorting on `e`, in context
-  `K`, producing an elaborated expression and zero or more null shorting
-  clauses.
+      - _Type inference of `a` produces elaborated expression
+        `@VARIABLE_GET(a)`, with static type `T?`, and no null shorting
+        clauses._
 
-- Combine the elaborated expression and the null shorting clauses by resolving
-  null shorting.
+    - _Type inference of `a?.b` now proceeds, creating the null shorting clause
+      `T v_1 <- @VARIABLE_GET(a)` and the elaborated expression `v_1.b`, with
+      static type `U`._
+
+  - _Type inference of `a?.b.c` now proceeds. The null shorting clause `T v_1 <-
+    @VARIABLE_GET(a)` is kept, and the elaborated expression is changed to
+    `v_1.b.c`, with static type `V`._
+
+  - _Since type inference of `a?.b.c` was invoked with resolved null shorting,
+    these are combined together to produce `@RESOLVED_NULL_SHORT(T v_1 <-
+    @VARIABLE_GET(a); v_1.b.c)`._
+
+- _Type inference of `f(a?.b.c)` now proceeds, producing
+  `@STATIC_INVOKE(f(@RESOLVED_NULL_SHORT(T v_1 <- @VARIABLE_GET(a);
+  v_1.b.c)))`._
 
 ## Coercions
 
@@ -1358,12 +1365,12 @@ static type `T_2`, where `m_2` and `T_2` are determined as follows:
 ### Shorthand for coercions
 
 In the text that follows, we will sometimes say something like "let `m` be the
-result of performing ordinary expression inference on `e`, in context `K`, and
-then coercing the result to type `T`." This is shorthand for the following
-sequence of steps:
+result of performing expression inference on `e`, in context `K`, and then
+coercing the result to type `T`." This is shorthand for the following sequence
+of steps:
 
-- Let `m_1` be the result of performing ordinary expression inference on `e`, in
-  context `K`.
+- Let `m_1` be the result of performing expression inference on `e`, in context
+  `K`, with resolved null shorting.
 
 - Let `m` be the result of performing coercion of `m_1` to type `T`.
 
@@ -1480,15 +1487,15 @@ The procedure for argument part inference is as follows:
     _<functionExpression>_ enclosed in zero or more parentheses, in order of
     increasing _i_:
 
-    - Let `m_i` be the result of performing ordinary expression inference on
-      `e_i`, in context `K_i`.
+    - Let `m_i` be the result of performing expression inference on `e_i`, in
+      context `K_i`, with resolved null shorting.
 
   - For each `e_i` in stage _k_ that _does_ take the form of a
     _<functionExpression>_ enclosed in zero or more parentheses, in order of
     increasing _i_:
 
-    - Let `m_i` be the result of performing ordinary expression inference on
-      `e_i`, in context `K_i`.
+    - Let `m_i` be the result of performing expression inference on `e_i`, in
+      context `K_i`, with resolved null shorting.
 
   - _Note that an invariant of argument partitioning is that arguments that are
     not function literal expressions are always placed in stage zero, so this
@@ -1877,9 +1884,9 @@ elaborated expression `m`, with static type `T`, and null shorting clauses
 
 - Let `e_0` be the remainder of the expression chain (prior to the `.` or `?.`).
 
-- Perform expression inference with deferred null shorting on `e_0`, in context
-  `_`. Let `m_0` be the resulting elaborated expression and let `C_0` be the
-  resulting null shorting clauses. Let `T_0` be the static type of `m_0`.
+- Perform expression inference on `e_0`, in context `_`, with deferred null
+  shorting. Let `m_0` be the resulting elaborated expression and let `C_0` be
+  the resulting null shorting clauses. Let `T_0` be the static type of `m_0`.
 
 - Let `C` and `m_1` be determined as follows:
 
@@ -1915,8 +1922,8 @@ determined as follows:
 - Let `e_0` be the remainder of the expression chain (prior to the
   _<argumentPart>_).
 
-- Perform expression inference with deferred null shorting on `e_0`, in context
-  `_`. Let `m_0` be the resulting elaborated expression and let `C` be the
+- Perform expression inference on `e_0`, in context `_`, with deferred null
+  shorting. Let `m_0` be the resulting elaborated expression and let `C` be the
   resulting null shorting clauses.
 
 - Let `m` and `T` be the result of performing [method invocation
@@ -2095,14 +2102,14 @@ clauses, where `m` is determined as follows:
 
       - If `s_i` takes the form '`${`' `e` '`}`':
 
-        - Let `m_i` be the result of performing ordinary expression inference on
-          `e`, in context `_`.
+        - Let `m_i` be the result of performing expression inference on `e`, in
+          context `_`, with resolved null shorting.
 
       - Otherwise, `s_i` takes the form '`$e`', where `e` is either `this` or an
         identifier that doesn't contain `$`, so:
 
-        - Let `m_i` be the result of performing ordinary expression inference on
-          `e`, in context `_`.
+        - Let `m_i` be the result of performing expression inference on `e`, in
+          context `_`, with resolved null shorting.
 
     - Let `n_i` be `m_i.toString()`. _Since both `Object.toString` and
       `Null.toString` are declared with a return type of `String`, it follows
@@ -2130,8 +2137,8 @@ Expression inference of a throw expression `throw e_1`, regardless of context,
 produces an elaborated expression `m` with static type `Never`, and no null
 shorting clauses, where `m` is determined as follows:
 
-- Let `m_1` be the result of performing ordinary expression inference on `e_1`,
-  in context `_`, and then coercing the result to type `Object`.
+- Let `m_1` be the result of performing expression inference on `e_1`, in
+  context `_`, and then coercing the result to type `Object`.
 
 - _It follows, from the soundness of coercions, that the static type of `m_1` is
   guaranteed to be a subtype of `Object`. That is, `null` will never be thrown._
@@ -2157,11 +2164,11 @@ Expression inference of a logical "and" expression (`e_1 && e_2`) or a logical
 expression `m` with static type `bool`, and no null shorting clauses, where `m`
 is determined as follows:
 
-- Let `m_1` be the result of performing ordinary expression inference on `e_1`,
-  in context `bool`, and then coercing the result to type `bool`.
+- Let `m_1` be the result of performing expression inference on `e_1`, in
+  context `bool`, and then coercing the result to type `bool`.
 
-- Let `m_2` be the result of performing ordinary expression inference on `e_2`,
-  in context `bool`, and then coercing the result to type `bool`.
+- Let `m_2` be the result of performing expression inference on `e_2`, in
+  context `bool`, and then coercing the result to type `bool`.
 
 - _It follows, from the soundness of coercions, that the static type of `m_1`
   and `m_2` are both guaranteed to be a subtype of `bool`._
@@ -2231,8 +2238,8 @@ clauses, where `m` and `T` are determined as follows:
 
   - Otherwise, let `K_1` be `FutureOr<K>`.
 
-- Let `m_1` be the result of performing ordinary expression inference on `e_1`,
-  in context `K_1`.
+- Let `m_1` be the result of performing expression inference on `e_1`, in
+  context `K_1`, with resolved null shorting.
 
 - Let `T_1` be the static type of `m_1`.
 
