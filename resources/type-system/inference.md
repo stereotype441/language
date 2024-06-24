@@ -1142,12 +1142,11 @@ succintly, the syntax of Dart is extended to allow the following forms:
       be a subtype of `T_i?`. _Each `m_i` may refer to any `v_j` that precedes
       it; if it does so, the static type of `v_j` is considered to be `T_j`._
 
-    - If `m_i` evaluates to `null`, then evaluation of the `@SHORTING_LET`
-      immediately terminates, evaluating to `null`.
+    - If `m_i` evaluates to `null`, then skip the evaluation of all further
+      `m_i`, and let `@SHORTING_LET(...)` evaluate to `null`.
 
-  - Let `v_0` represent the result of evaluating `m`.
-
-  - Then `@SHORTING_LET` evaluates to `v_0`.
+  - If no `m_i` evaluated to `null`, then let `@SHORTING_LET(...)` evaluate to
+    the result of evaluating `m`.
 
   - _`@SHORTING_LET` is used for elaborating null-shorting operations. For
     example, `a?.b?.c` is elaborated approximately into `@SHORTING_LET(T_1 v_1 =
