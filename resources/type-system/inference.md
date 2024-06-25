@@ -1134,6 +1134,24 @@ succintly, the syntax of Dart is extended to allow the following forms:
   any loss of functionality, provided they are not trying to construct a proof
   of soundness._
 
+- `@RESOLVED_NULL_SHORT(T_1 v_1 <- m_1; T_2 v_2 <- m_2; m)` represents the
+  following operation:
+
+  - For each `T_i v_i <- m_i` section, in sequence:
+
+    - Let `v_i` represent the result of evaluating `m_i`, whose static type must
+      be a subtype of `T_i?`. _Each `m_i` may refer to any `v_j` that precedes
+      it; if it does so, the static type of `v_j` is considered to be `T_j`._
+
+    - If `m_i` evaluates to `null`, then skip the evaluation of all further
+      `m_i`, and let `@RESOLVED_NULL_SHORT(...)` evaluate to `null`.
+
+  - If no `m_i` evaluated to `null`, then let `@RESOLVED_NULL_SHORT(...)`
+    evaluate to the result of evaluating `m`.
+
+  - _The notation was deliberately chosen to resemble the `Maybe` monad in
+    Haskell, with has similar semantics._
+
 - `@VARIABLE_GET(v)` _TODO(paulberry)
 
 In addition, the following forms are added to allow constructor invocations,
@@ -1228,6 +1246,87 @@ _The type inference rules below include informal sketches of a proof that the
 output of type inference satisfies these additional properties. These are
 non-normative, so they are typeset in italics._
 
+## Null shorting
+
+The process of elaborating an expression involving `?.` is complicated by the
+presence of null shorting, a process in which a subexpression evaluating to
+`null` may terminate evaluation not just of the immediately enclosing
+expression, but also one or more larger containing expressions. In circumstances
+where this may occur, we say that null shorting _may be extended_ from the
+smaller expression to the larger one. _For example, in `y = a?.b.f()`, if `a`
+evaluates to `null`, then the remainder of both `a?.b` and its enclosing
+expression `a?.b.f()` will be skipped, and `null` will immediately be assigned
+to `y`. So we say that null shorting may be extended from `a?.b` to `a?.b.f()`._
+
+When expression inference acts on an expression from which null shorting may be
+extended, the expression inference process produces both an elaborated
+expression, `m`, and a sequence of one or more _null shorting clauses_, each of
+the form `T_i v_i <- m_i`, where each `T_i` is a type, `v_i` is a variable name,
+and `m_i` is an elaborated expression whose static type is a subtype of
+`T_i?`. Each `v_i` may appear in `m`, and in all `m_j` where `j > i`; when it
+does so, it is considered to have static type `T_i`.
+
+In the text below, all recursive invocations of expression inference will be
+specified as taking place either with _deferred_ null shorting or with
+_resolved_ null shorting.
+
+Deferred null shorting is used for cases where the type inference process for an
+expression `e_1` recursively invokes expression inference for subexpression
+`e_2`, and null shorting may be extended from `e_2` to `e_1`. When deferred null
+shorting is used, any null shorting clauses produced by the inference of `e_2`
+are considered to be an output of the recursive invocation, and may be further
+acted upon by the remainder of the type inference algorithm for `e_1`.
+
+Resolved null shorting is used for all other cases where expression type
+inference is invoked on an expression `e`. The following process is used to
+perform expression type inference of an expression `e` in context `K`, with
+resolved null shorting:
+
+- Perform expression type inference on expression `e` in context `K`, with
+  deferred null shorting. Let `m` represent the resulting elaborated expression,
+  let `T` be its static type, and let `T_i v_i <- m_i` be the resulting null
+  shorting clauses (if any).
+
+- If no null shorting clauses were produced, then let the result of expression
+  inference with resolved null shorting be `m` , with static type `T`.
+
+- Otherwise, let the result of expression inference with resolved null shorting
+  be `@RESOLVED_NULL_SHORT(T_1 v_1 <- m_1; T_2 v_2 <- m_2; m)`, with static type
+  `T?`.
+
+_For example, the type inference process for `f(a?.b.c)` works as
+follows. Assume that `f` is a top level function, `a` is a local variable with
+static type `T?`, `T.b` has static type `U`, and `U.c` has static type `V`:_
+
+- _Since null shorting may not be extended from `a?.b.c` to `f(a?.b.c)`, type
+  inference is recursively invoked on `a?.b.c`, with resolved null shorting:_
+
+  - _Since null shorting may be extended from `a?.b` to `a?.b.c`, type inference
+    is recursively invoked on `a?.b`, with deferred null shorting:_
+
+    - _Since null shorting may be extended from `a` to `a?.b`, type inference is
+      recursively invoked on `a`, with deferred null shorting:_
+
+      - _Type inference of `a` produces elaborated expression
+        `@VARIABLE_GET(a)`, with static type `T?`, and no null shorting
+        clauses._
+
+    - _Type inference of `a?.b` now proceeds, creating the null shorting clause
+      `T v_1 <- @VARIABLE_GET(a)` and the elaborated expression `v_1.b`, with
+      static type `U`._
+
+  - _Type inference of `a?.b.c` now proceeds. The null shorting clause `T v_1 <-
+    @VARIABLE_GET(a)` is kept, and the elaborated expression is changed to
+    `v_1.b.c`, with static type `V`._
+
+  - _Since type inference of `a?.b.c` was invoked with resolved null shorting,
+    these are combined together to produce `@RESOLVED_NULL_SHORT(T v_1 <-
+    @VARIABLE_GET(a); v_1.b.c)`._
+
+- _Type inference of `f(a?.b.c)` now proceeds, producing
+  `@STATIC_INVOKE(f(@RESOLVED_NULL_SHORT(T v_1 <- @VARIABLE_GET(a);
+  v_1.b.c)))`._
+
 ## Coercions
 
 Before considering the specific rules for type inferring each type of
@@ -1272,7 +1371,7 @@ coercing the result to type `T`." This is shorthand for the following sequence
 of steps:
 
 - Let `m_1` be the result of performing expression inference on `e`, in context
-  `K`.
+  `K`, with resolved null shorting.
 
 - Let `m` be the result of performing coercion of `m_1` to type `T`.
 
@@ -1331,6 +1430,9 @@ The procedure for argument part inference is as follows:
 - Let `R_F` be the return type of `F`. Or, if `F` is `∅`, then let `R_F` be
   `dynamic`.
 
+  - _TODO(paulberry): account for isConst parameter of
+    setupGenericTypeInference._
+
 - Produce an initial list of type constraints `C`, and an initial list of type
   schemas `{U_1, U_2, ...}`, as follows:
 
@@ -1387,14 +1489,14 @@ The procedure for argument part inference is as follows:
     increasing _i_:
 
     - Let `m_i` be the result of performing expression inference on `e_i`, in
-      context `K_i`.
+      context `K_i`, with resolved null shorting.
 
   - For each `e_i` in stage _k_ that _does_ take the form of a
     _<functionExpression>_ enclosed in zero or more parentheses, in order of
     increasing _i_:
 
     - Let `m_i` be the result of performing expression inference on `e_i`, in
-      context `K_i`.
+      context `K_i`, with resolved null shorting.
 
   - _Note that an invariant of argument partitioning is that arguments that are
     not function literal expressions are always placed in stage zero, so this
@@ -1713,7 +1815,8 @@ If the selector chain is a sequence of 1 to 3 _<identifier>s_ separated by `.`,
 followed by an _<argumentPart>_, and the sequence of _<identifier>s_ can be
 resolved to a static method or top level function, then the result of selector
 chain type inference in context `K` is the elaborated expression `m`, with
-static type `T`, where `m` and `T` are determined as follows:
+static type `T`, and no null shorting clauses, where `m` and `T` are determined
+as follows:
 
 - Let `f` be the static method or top level function referred to by the
   _<identifier>_ sequence.
@@ -1732,18 +1835,34 @@ static type `T`, where `m` and `T` are determined as follows:
 If the selector chain consists of _<typeName> <typeArguments>_? (`.`
 _<identifierOrNew>_)? _<arguments>_, and _<typeName>_ can be resolved to a type
 in the program, then the result of selector chain type inference in context `K`
-is the elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
+is the elaborated expression `m`, with static type `T`, and no null shorting
+clauses, where `m` and `T` are determined as follows:
 
-_TODO(paulberry): specify this._
+- Let `C` be the type named by _<typeName>_.
+
+- Let `id` be the identifier named by _<identifierOrNew>_, or `new` if it was
+  omitted.
+
+- Let `f` be the constructor named `id` in `C`. If there is no such constructor,
+  it is a compile-time error.
+
+- Let `F` be the function type of `f`. _Note that if `C` is generic, this will
+  be a generic function type._
+
+- Invoke argument part inference on _<argumentPart>_, using `F` as the target
+  function type and `K` as the context. Designate the result by `{m_1, m_2,
+  ...}`, `{U_1, U_2, ...}`, and `R`.
+
+- Let `m` be `@CONSTRUCTOR_INVOKE(C<U_1, U_2, ...>.id(n_1: m_1, n_2: m_2,
+  ...))`, and let `T` be `R`. _TODO(paulberry): explain why sound._
 
 ### Implicit this invocation
 
 If the selector chain consists of _<identifier> <argumentPart>_, and
 _<identifier>_ __cannot__ be resolved to the name of a local variable, then the
 result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+expression `m`, with static type `T`, and no null shorting clauses, where `m`
+and `T` are determined as follows:
 
 - Let `m_0` be `this`, with static type `T_0`, where `T_0` is the interface type
 of the immediately enclosing class, enum, mixin, or extension type, or the "on"
@@ -1765,18 +1884,35 @@ guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
 
 If the selector chain ends with (`.` | `?.`) _<identifier> <argumentPart>_, then
 the result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
+`T`, and `C` are determined as follows:
 
 - Let `e_0` be the remainder of the selector chain (prior to the `.` or `?.`).
 
-- Perform expression inference on `e_0`, in context `_`. Let `m_0` be the
-  resulting elaborated expression. Let `T_0` be the static type of `m_0`.
+- Perform expression inference on `e_0`, in context `_`, with deferred null
+  shorting. Let `m_0` be the resulting elaborated expression and let `C_0` be
+  the resulting null shorting clauses. Let `T_0` be the static type of `m_0`.
 
-- _TODO(paulberry): handle null shorting._
+- Let `C` and `m_1` be determined as follows:
+
+  - If the token preceding the _<identifier>_ is `?.`, then:
+
+    - Let `U` be `NonNull(T_0)`.
+
+    - Let `v` be a fresh synthetic variable.
+
+    - Let `C` be the result of appending `U v <- m_0` to the end of `C_0`.
+
+    - Let `m_1` be `v`, with static type `U`.
+
+  - Otherwise (the token preceding the _<identifier>_ is `.`):
+
+    - Let `C` be `C_0`.
+
+    - Let `m_1` be `m_0`.
 
 - Let `m` and `T` be the result of performing [method invocation
-  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
+  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_1` as
   the target elaborated expression, `id` as the method name identifier, and `K`
   as the type schema. _TODO(paulberry): explain why sound._
 
@@ -1784,13 +1920,15 @@ follows:
 
 If the selector chain ends with _<argumentPart>_, then the result of selector
 chain type inference in context `K` is the elaborated expression `m`, with
-static type `T`, where `m` and `T` are determined as follows:
+static type `T`, and null shorting clauses `C`, where `m`, `T`, and `C` are
+determined as follows:
 
 - Let `e_0` be the remainder of the selector chain (prior to the
   _<argumentPart>_).
 
-- Perform expression inference on `e_0`, in context `_`. Let `m_0` be the
-  resulting elaborated expression.
+- Perform expression inference on `e_0`, in context `_`, with deferred null
+  shorting. Let `m_0` be the resulting elaborated expression and let `C` be the
+  resulting null shorting clauses.
 
 - Let `m` and `T` be the result of performing [method invocation
   inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
@@ -1803,54 +1941,138 @@ If the selector chain is a sequence of 1 to 3 _<identifier>s_ separated by `.`,
 followed optionally by _<typeArguments>_, and the sequence of _<identifier>s_
 can be resolved to a static method or top level function, then the result of
 selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
+with static type `T`, and no null shorting clauses, where `m` and `T` are
+determined as follows:
 
-_TODO(paulberry): specify this._
+- Let `f` be the static method or top level function referred to by the
+  _<identifier>_ sequence.
+
+- Let `T` be the type of `f`.
+
+- Let `m_1` be `@STATIC_TEAROFF(f)`. _Soundness follows from the fact that at
+  runtime, `m_1` will evaluate to a function object whose dynamic type is `T`._
 
 ### Constructor tearoff
 
 If the selector chain consists of _<typeName> <typeArguments>_? `.`
 _<identifierOrNew>_, and _<typeName>_ can be resolved to a type in the program,
 then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
+elaborated expression `m`, with static type `T`, and no null shorting clauses,
+where `m` and `T` are determined as follows:
 
-_TODO(paulberry): specify this._
+- Let `C` be the type named by _<typeName>_.
+
+- Let `id` be the identifier named by _<identifierOrNew>_, or `new` if it was
+  omitted.
+
+- Let `f` be the constructor named `id` in `C`. If there is no such constructor,
+  it is a compile-time error.
+
+- Let `F` be the function type of `f`. _Note that if `C` is generic, this will
+  be a generic function type._
+
+- If _<typeArguments>_ are present, and `C` is generic, then:
+
+  - Let `U` be the result of substituting these type arguments for the type
+    parameters of `C`. If the number of type arguments doesn't match the number
+    of type parameters of `C`, or the bounds of `C`'s type parameters are not
+    satisfied by the substitution, it is a compile-time error.
+
+  - Let `m` be `@CONSTRUCTOR_TEAROFF(U.id)`, and let `T` be the result of making
+    the aforementioned substitution into `F`. _TODO(paulberry): explain why
+    sound._
+
+- Otherwise, if _<typeArguments>_ are not present, then:
+
+  - Let `m` be `@CONSTRUCTOR_TEAROOF(C.id)`, and let `T` be
+    `F`. _TODO(paulberry): explain why sound._
+
+- Otherwise, there is a compile time error (type arguments applied to a
+  non-generic type).
 
 ### Method tearoff or property get
 
 If the selector chain ends with (`.` | `?.`) _<identifier>_, then the result of
 selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
+with static type `T`, and null shorting clauses `C`, where `m`, `T`, and `C` are
+determined as follows:
 
-_TODO(paulberry): specify this._
+- Let `e_0` be the remainder of the selector chain (prior to the `.` or `?.`).
+
+- Perform expression inference on `e_0`, in context `_`, with deferred null
+  shorting. Let `m_0` be the resulting elaborated expression and let `C_0` be
+  the resulting null shorting clauses. Let `T_0` be the static type of `m_0`.
+
+- Let `C` and `m_1` be determined as follows:
+
+  - If the token preceding the _<identifier>_ is `?.`, then:
+
+    - Let `U` be `NonNull(T_0)`.
+
+    - Let `v` be a fresh synthetic variable.
+
+    - Let `C` be the result of appending `U v <- m_0` to the end of `C_0`.
+
+    - Let `m_1` be `v`, with static type `U`.
+
+  - Otherwise (the token preceding the _<identifier>_ is `.`):
+
+    - Let `C` be `C_0`.
+
+    - Let `m_1` be `m_0`.
+
+- Let `T_1` be the static type of `m_1`.
+
+- If `T_1` is `void`, there is a compile-time error.
+
+- Let `U_1` be the [bound resolution](#Bound-resolution) of `T_1`.
+
+- _TODO(paulberry): document handling of `super.p`, and `Extension(...).p`. But
+  not here._
+
+- If `
+
+- If `U_1` is `dynamic` or `Never`, or `U_0` is `Function` and `id` is `call`,
+  then:
+
+_TODO(paulberry)_
+
+_TODO(paulberry): don't forget about null shorting syntax_
 
 ### Implicit this method tearoff with type arguments
 
 If the expression chain consists of _<identifier> <typeArguments>_, and
 _<identifier>_ __cannot__ be resolved to the name of a local variable, then the
 result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+expression `m`, with static type `T`, and no null shorting clauses, where `m`
+and `T` are determined as follows:
 
-_TODO(paulberry): specify this._
+_TODO(paulberry)_
+
+- It is a compile-time error if the expression chain does not have access to
+  `this`.
 
 ### Type instantiation
 
 If the expression chain consists of _<typeName> <typeArguments>_, and
 _<typeName>_ can be resolved to a type in the program, then the result of
 selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
+with static type `T`, and no null shorting clauses, where `m` and `T` are
+determined as follows:
 
-_TODO(paulberry): specify this._
+_TODO(paulberry)_
 
 ### Null check
 
-_TODO(paulberry): specify this._
+_TODO(paulberry)_
+
+_TODO(paulberry): don't forget to end null shorting._
 
 ### Index operator
 
-_TODO(paulberry): specify this._
+_TODO(paulberry)_
+
+_TODO(paulberry): don't forget about null shorting syntax_
 
 ### Illegal selector chains
 
@@ -1867,12 +2089,13 @@ Dart expression.
 
 ### Parenthesized expression
 
-_TODO(paulberry): specify._
+_TODO(paulberry): specify, and make sure it resolves null shorting._
 
 ### Null
 
 Expression inference of the literal `null`, regardless of context, produces the
-elaborated expression `null`, with static type `Null`.
+elaborated expression `null`, with static type `Null`, and no null shorting
+clauses.
 
 _The runtime behavior of `null` is to evaluate to an instance of the type
 `Null`, so soundness is satisfied._
@@ -1880,8 +2103,8 @@ _The runtime behavior of `null` is to evaluate to an instance of the type
 ### Integer literals
 
 Expression inference of an integer literal `l`, in context `K`, produces an
-elaborated expression `m` with static type `T`, where `m` and `T` are determined
-as follows:
+elaborated expression `m` with static type `T`, and no null shorting clauses,
+where `m` and `T` are determined as follows:
 
 - Let `i` be the numeric value of `l`.
 
@@ -1915,7 +2138,8 @@ as follows:
 ### Double literals
 
 Expression inference of a double literal `l`, regardless of context, produces
-the elaborated expression `l`, with static type `double`.
+the elaborated expression `l`, with static type `double`, and no null shorting
+clauses.
 
 _The runtime behavior of a double literal is to evaluate to an instance of the
 type `double`, so soundness is satisfied._
@@ -1923,7 +2147,8 @@ type `double`, so soundness is satisfied._
 ### Booleans
 
 Expression inference of a boolean literal `e` (`true` or `false`), regardless of
-context, produces the elaborated expression `e`, with static type `bool`.
+context, produces the elaborated expression `e`, with static type `bool`, and no
+null shorting clauses.
 
 _The runtime behavior of a boolean literal is to evaluate to an instance of the
 type `bool`, so soundness is satisfied._
@@ -1931,8 +2156,8 @@ type `bool`, so soundness is satisfied._
 ### Strings
 
 Expression inference of a string literal `s`, regardless of context, produces an
-elaborated expression `m` with static type `String`, where `m` is determined as
-follows:
+elaborated expression `m` with static type `String`, and no null shorting
+clauses, where `m` is determined as follows:
 
 - If `s` contains no _stringInterpolations_, then let `m` be `s`. _The runtime
   behavior of a string literal with no _stringInterpolations_ is to evaluate to
@@ -1947,13 +2172,13 @@ follows:
       - If `s_i` takes the form '`${`' `e` '`}`':
 
         - Let `m_i` be the result of performing expression inference on `e`, in
-          context `_`.
+          context `_`, with resolved null shorting.
 
       - Otherwise, `s_i` takes the form '`$e`', where `e` is either `this` or an
         identifier that doesn't contain `$`, so:
 
         - Let `m_i` be the result of performing expression inference on `e`, in
-          context `_`.
+          context `_`, with resolved null shorting.
 
     - Let `n_i` be `m_i.toString()`. _Since both `Object.toString` and
       `Null.toString` are declared with a return type of `String`, it follows
@@ -1969,7 +2194,8 @@ follows:
 ### Symbol literal
 
 Expression inference of a symbol literal `e`, regardless of context, produces
-the elaborated expression `e`, with static type `Symbol`.
+the elaborated expression `e`, with static type `Symbol`, and no null shorting
+clauses.
 
 _The runtime behavior of a symbol literal is to evaluate to an instance of the
 type `Symbol`, so soundness is satisfied._
@@ -1977,8 +2203,8 @@ type `Symbol`, so soundness is satisfied._
 ### Throw
 
 Expression inference of a throw expression `throw e_1`, regardless of context,
-produces an elaborated expression `m` with static type `Never`, where `m` is
-determined as follows:
+produces an elaborated expression `m` with static type `Never`, and no null
+shorting clauses, where `m` is determined as follows:
 
 - Let `m_1` be the result of performing expression inference on `e_1`, in
   context `_`, and then coercing the result to type `Object`.
@@ -1992,9 +2218,9 @@ determined as follows:
 ### This
 
 Expression inference of `this`, regardless of context, produces the elaborated
-expression `this` with static type `T`, where `T` is the interface type of the
-immediately enclosing class, enum, mixin, or extension type, or the "on" type of
-the immediately enclosing extension.
+expression `this` with static type `T`, and no null shorting clauses, where `T`
+is the interface type of the immediately enclosing class, enum, mixin, or
+extension type, or the "on" type of the immediately enclosing extension.
 
 _The runtime behavior of `this` is to evaluate to the target of the current
 instance member invocation, which is guaranteed to be an instance satisfying
@@ -2004,7 +2230,8 @@ this type. So soundness is satisfied._
 
 Expression inference of a logical "and" expression (`e_1 && e_2`) or a logical
 "or" expression (`e_1 || e_2`), regardless of context, produces an elaborated
-expression `m` with static type `bool`, where `m` is determined as follows:
+expression `m` with static type `bool`, and no null shorting clauses, where `m`
+is determined as follows:
 
 - Let `m_1` be the result of performing expression inference on `e_1`, in
   context `bool`, and then coercing the result to type `bool`.
@@ -2030,11 +2257,46 @@ are guaranteed to be a subtype of `bool`, it follows that the the logical
 boolean expression will evaluate to an instance satisfying type `bool`, so
 soundness is satisfied._
 
+### Instance creation
+
+_TODO(paulberry): rework to be more similar to the "Implicit instance creation"
+section._
+
+Expression inference of an explicit instance creation expression (`new`
+_<constructorDesignation> <arguments>_, `const` _<constructorDesignation>
+<arguments>_, or simply _<constructorDesignation> <arguments>_), in context `K`,
+produces an elaborated expression `m` with static type `T`, and no null shorting
+clauses, where `m` and `T` are determined as follows:
+
+- Let `c` be the constructor referred to by _<constructorDesignation>_. If
+  _<constructorDesignation>_ cannot be resolved to a constructor, it is a
+  compile-time error.
+
+- Let `F` be the function type of `c`. _Note that if the type containing `c` is
+  generic, this will be a generic function type._ If _<constructorDesignation>_
+  cannot be resolved to a constructor, it is a compile-time error.
+
+- Let `{e_1, e_2, ...}` be the sequence of expressions in _<arguments>_, `{n_1,
+  n_2, ...}` be the sequence of optional names in _<arguments>_, and `{T_1, T_2,
+  ...}` be the sequence of zero or more type arguments in
+  _<constructorDesignation>_.
+
+- Invoke argument part inference using `F`, `{e_1, e_2, ...}`, `{n_1, n_2,
+  ...}`, `{T_1, T_2, ...}`, and `K`. Designate the result by `{m_1, m_2, ...}`,
+  `{U_1, U_2, ...}`, and `R`.
+
+- Let `m` be an instance creation expression that applies type arguments `{U_1,
+  U_2, ...}` and expression arguments `{e_1, e_2, ...}` to `c`, using `{n_1,
+  n_2, ...}` as named argument names.
+
+- Let `T` be `R`. _Soundness follows from the fact that `R` is the result of
+  substituting `{U_1, U_2, ...}` into the return type of `F`._
+
 ### Await expressions
 
 Expression inference of an await expression `await e_1`, in context `K`,
-produces an elaborated expression `m` with static type `T`, where `m` and `T`
-are determined as follows:
+produces an elaborated expression `m` with static type `T`, and no null shorting
+clauses, where `m` and `T` are determined as follows:
 
 - Define `K_1` as follows:
 
@@ -2046,7 +2308,7 @@ are determined as follows:
   - Otherwise, let `K_1` be `FutureOr<K>`.
 
 - Let `m_1` be the result of performing expression inference on `e_1`, in
-  context `K_1`.
+  context `K_1`, with resolved null shorting.
 
 - Let `T_1` be the static type of `m_1`.
 
