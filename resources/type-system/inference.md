@@ -1549,9 +1549,6 @@ static type `T`, where `m` and `T` are determined as follows:
 - If `U_0` is `dynamic` or `Never`, or `U_0` is `Function` and `id` is `call`,
   then:
 
-  - _TODO(paulberry): Never-bounded types crash the CFE, and I'm not sure how
-    they behave for methods defined on Object._
-
   - Invoke [argument part inference](#Argument-part-inference) on `<T_1, T_2,
     ...>(n_1: e_1, n_2: e_2, ...)`, using a target function type of `∅` and a
     type schema `K`. Denote the resulting elaborated expressions by `{m_1, m_2,
