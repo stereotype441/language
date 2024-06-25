@@ -1774,6 +1774,10 @@ static type `T`, where `m` and `T` are determined as follows:
 
 ## Selector chain inference
 
+_TODO(paulberry): rework this section to work with cascades._
+
+_TODO(paulberry): explicit extension invocation._
+
 At the core of the Dart expression grammar is the production rule _<primary>
 <selector>*_, which allows suffixes such as `!`, `.identifier`,
 _<argumentPart>_, and so on, to be chained to the right of a primary expression
@@ -1807,8 +1811,8 @@ The selector chain type inference rules are as follows.
 
 ### Static method invocation
 
-If the expression chain is a sequence of 1 to 3 _<identifier>s_ separated by
-`.`, followed by an _<argumentPart>_, and the sequence of _<identifier>s_ can be
+If the selector chain is a sequence of 1 to 3 _<identifier>s_ separated by `.`,
+followed by an _<argumentPart>_, and the sequence of _<identifier>s_ can be
 resolved to a static method or top level function, then the result of selector
 chain type inference in context `K` is the elaborated expression `m`, with
 static type `T`, and no null shorting clauses, where `m` and `T` are determined
@@ -1828,7 +1832,7 @@ as follows:
 
 ### Implicit instance creation
 
-If the expression chain consists of _<typeName> <typeArguments>_? (`.`
+If the selector chain consists of _<typeName> <typeArguments>_? (`.`
 _<identifierOrNew>_)? _<arguments>_, and _<typeName>_ can be resolved to a type
 in the program, then the result of selector chain type inference in context `K`
 is the elaborated expression `m`, with static type `T`, and no null shorting
@@ -1854,7 +1858,7 @@ clauses, where `m` and `T` are determined as follows:
 
 ### Implicit this invocation
 
-If the expression chain consists of _<identifier> <argumentPart>_, and
+If the selector chain consists of _<identifier> <argumentPart>_, and
 _<identifier>_ __cannot__ be resolved to the name of a local variable, then the
 result of selector chain type inference in context `K` is the elaborated
 expression `m`, with static type `T`, and no null shorting clauses, where `m`
@@ -1866,7 +1870,7 @@ type of the immediately enclosing extension. _The runtime behavior of `this` is
 to evaluate to the target of the current instance member invocation, which is
 guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
 
-  It is a compile-time error if the expression chain does not have access to
+  It is a compile-time error if the selector chain does not have access to
   `this`.
 
 - Let `id` be the identifier named by _<identifier>_.
@@ -1878,12 +1882,12 @@ guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
 
 ### Method invocation
 
-If the expression chain ends with (`.` | `?.`) _<identifier> <argumentPart>_,
-then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, and null shorting clauses
-`C`, where `m`, `T`, and `C` are determined as follows:
+If the selector chain ends with (`.` | `?.`) _<identifier> <argumentPart>_, then
+the result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
+`T`, and `C` are determined as follows:
 
-- Let `e_0` be the remainder of the expression chain (prior to the `.` or `?.`).
+- Let `e_0` be the remainder of the selector chain (prior to the `.` or `?.`).
 
 - Perform expression inference on `e_0`, in context `_`, with deferred null
   shorting. Let `m_0` be the resulting elaborated expression and let `C_0` be
@@ -1891,7 +1895,7 @@ elaborated expression `m`, with static type `T`, and null shorting clauses
 
 - Let `C` and `m_1` be determined as follows:
 
-  - If the method invocation uses `?.`, then:
+  - If the token preceding the _<identifier>_ is `?.`, then:
 
     - Let `U` be `NonNull(T_0)`.
 
@@ -1901,7 +1905,7 @@ elaborated expression `m`, with static type `T`, and null shorting clauses
 
     - Let `m_1` be `v`, with static type `U`.
 
-  - Otherwise (the method invocation uses `.`):
+  - Otherwise (the token preceding the _<identifier>_ is `.`):
 
     - Let `C` be `C_0`.
 
@@ -1914,12 +1918,12 @@ elaborated expression `m`, with static type `T`, and null shorting clauses
 
 ### Implicit call invocation
 
-If the expression chain ends with _<argumentPart>_, then the result of selector
+If the selector chain ends with _<argumentPart>_, then the result of selector
 chain type inference in context `K` is the elaborated expression `m`, with
 static type `T`, and null shorting clauses `C`, where `m`, `T`, and `C` are
 determined as follows:
 
-- Let `e_0` be the remainder of the expression chain (prior to the
+- Let `e_0` be the remainder of the selector chain (prior to the
   _<argumentPart>_).
 
 - Perform expression inference on `e_0`, in context `_`, with deferred null
@@ -1933,12 +1937,12 @@ determined as follows:
 
 ### Static method tearoff
 
-If the expression chain is a sequence of 1 to 3 _<identifier>s_ separated by
-`.`, followed optionally by _<typeArguments>_, and the sequence of
-_<identifier>s_ can be resolved to a static method or top level function, then
-the result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, and no null shorting clauses, where `m`
-and `T` are determined as follows:
+If the selector chain is a sequence of 1 to 3 _<identifier>s_ separated by `.`,
+followed optionally by _<typeArguments>_, and the sequence of _<identifier>s_
+can be resolved to a static method or top level function, then the result of
+selector chain type inference in context `K` is the elaborated expression `m`,
+with static type `T`, and no null shorting clauses, where `m` and `T` are
+determined as follows:
 
 - Let `f` be the static method or top level function referred to by the
   _<identifier>_ sequence.
@@ -1950,7 +1954,7 @@ and `T` are determined as follows:
 
 ### Constructor tearoff
 
-If the expression chain consists of _<typeName> <typeArguments>_? `.`
+If the selector chain consists of _<typeName> <typeArguments>_? `.`
 _<identifierOrNew>_, and _<typeName>_ can be resolved to a type in the program,
 then the result of selector chain type inference in context `K` is the
 elaborated expression `m`, with static type `T`, and no null shorting clauses,
@@ -1988,10 +1992,48 @@ where `m` and `T` are determined as follows:
 
 ### Method tearoff or property get
 
-If the expression chain ends with (`.` | `?.`) _<identifier>_, then the result
-of selector chain type inference in context `K` is the elaborated expression
-`m`, with static type `T`, and null shorting clauses `C`, where `m`, `T`, and
-`C` are determined as follows:
+If the selector chain ends with (`.` | `?.`) _<identifier>_, then the result of
+selector chain type inference in context `K` is the elaborated expression `m`,
+with static type `T`, and null shorting clauses `C`, where `m`, `T`, and `C` are
+determined as follows:
+
+- Let `e_0` be the remainder of the selector chain (prior to the `.` or `?.`).
+
+- Perform expression inference on `e_0`, in context `_`, with deferred null
+  shorting. Let `m_0` be the resulting elaborated expression and let `C_0` be
+  the resulting null shorting clauses. Let `T_0` be the static type of `m_0`.
+
+- Let `C` and `m_1` be determined as follows:
+
+  - If the token preceding the _<identifier>_ is `?.`, then:
+
+    - Let `U` be `NonNull(T_0)`.
+
+    - Let `v` be a fresh synthetic variable.
+
+    - Let `C` be the result of appending `U v <- m_0` to the end of `C_0`.
+
+    - Let `m_1` be `v`, with static type `U`.
+
+  - Otherwise (the token preceding the _<identifier>_ is `.`):
+
+    - Let `C` be `C_0`.
+
+    - Let `m_1` be `m_0`.
+
+- Let `T_1` be the static type of `m_1`.
+
+- If `T_1` is `void`, there is a compile-time error.
+
+- Let `U_1` be the [bound resolution](#Bound-resolution) of `T_1`.
+
+- _TODO(paulberry): document handling of `super.p`, and `Extension(...).p`. But
+  not here._
+
+- If `
+
+- If `U_1` is `dynamic` or `Never`, or `U_0` is `Function` and `id` is `call`,
+  then:
 
 _TODO(paulberry)_
 
