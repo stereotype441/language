@@ -1152,7 +1152,7 @@ succintly, the syntax of Dart is extended to allow the following forms:
   - _The notation was deliberately chosen to resemble the `Maybe` monad in
     Haskell, with has similar semantics._
 
-- `@VARIABLE_GET(v)` _TODO(paulberry)
+- `@VARIABLE_GET(v)` _TODO(paulberry)_
 
 In addition, the following forms are added to allow constructor invocations,
 dynamic method invocations, function object invocations, instance method
