@@ -1164,7 +1164,7 @@ properties:
   tokens into simpler forms._
 
 - Any time `.` appears in an elaborated expression, it is immediately enclosed
-  in one of the new constructs described in ???[New operations allowed in
+  in one of the new constructs described in [New operations allowed in
   elaborated
   expressions](#New-operations-allowed-in-elaborated-expressions). _This ensures
   that all ambiguity has been resolved between references to functions, methods,
