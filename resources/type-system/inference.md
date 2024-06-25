@@ -1152,9 +1152,13 @@ succintly, the syntax of Dart is extended to allow the following forms:
   - _The notation was deliberately chosen to resemble the `Maybe` monad in
     Haskell, with has similar semantics._
 
+- `@VARIABLE_GET(v)` _TODO(paulberry)_
+
 In addition, the following forms are added to allow constructor invocations,
 dynamic method invocations, function object invocations, instance method
 invocations, and static/toplevel method invocations to be distinguished:
+
+- `@CONSTRUCTOR_INVOKE(T_0.id(n_1: m_1, n_2: m_2, ...))`
 
 - `@DYNAMIC_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
 
@@ -1166,11 +1170,28 @@ invocations, and static/toplevel method invocations to be distinguished:
 
 In each of these forms, each `m_i` represents an elaborated expression, each
 `T_i` represents a type, and each `n_i` represents an optional argument name
-identifier. When present, `id` represents an identifier or operator name, and
-`f` represents a static method or top level function.
+identifier. When present, `id` represents an identifier or operator name (or
+`new` in the case of `@CONSTRUCTOR_INVOKE`), and `f` represents a static method
+or top level function.
 
 The semantics of each of these forms is to evaluate the `m_i` in sequence, then
 perform the appropriate kind of method or function call.
+
+Also, the following forms are added to allow tearoffs of constructors, instance
+methods, and static/toplevel methods to be distinguished:
+
+- `@CONSTRUCTOR_TEAROFF(T_0.id)`
+
+- `@INSTANCE_TEAROFF(m_0.id)`
+
+- `@STATIC_TEAROFF(f)`
+
+When present, `T_0` represents a type, `id` represents an identifier (or `new`
+in the case of `@CONSTRUCTOR_TEAROFF`), `m_0` represents an elaborated
+expression, and `f` represents a static method or top level function.
+
+The semantics of each of these forms is to evaluate `m_0` if present, then
+create the appropriate tearoff function object.
 
 ## Additional properties satisfied by elaborated expressions
 
