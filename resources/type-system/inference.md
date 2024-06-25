@@ -1758,20 +1758,16 @@ static type `T`, where `m` and `T` are determined as follows:
     has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
     the type parameters of `F` in the return type of `F`._
 
-- _TODO(paulberry): extensions._
+- _TODO(paulberry): handle the possibility that `id` might resolve to an
+  extension method or extension getter._
 
 - Otherwise, there is a compile-time error. _There is no accessible instance
   method or getter on the target named `id`, and the target is not of a type
   that allows dynamic invocation._
 
-- _TODO(paulberry): document that `F<int>.m()` (where `F` refers to a generic
-  typedef) is illegal, because it looks like a constructor._
-
 ## Selector chain inference
 
 _TODO(paulberry): rework this section to work with cascades._
-
-_TODO(paulberry): explicit extension invocation._
 
 At the core of the Dart expression grammar is the production rule _<primary>
 <selector>*_, which allows suffixes such as `!`, `.identifier`,
@@ -1818,12 +1814,14 @@ as follows:
 
 - Let `F` be the type of `f`.
 
-- Invoke argument part inference on _<argumentPart>_, using `F` as the target
-  function type and `K` as the context. Designate the result by `{m_1, m_2,
-  ...}`, `{U_1, U_2, ...}`, and `R`.
+- Invoke [argument part inference](#Argument-part-inference) on
+  _<argumentPart>_, using `F` as the target function type and `K` as the
+  context. Designate the result by `{m_1, m_2, ...}`, `{U_1, U_2, ...}`, and
+  `R`.
 
 - Let `m` be `@STATIC_INVOKE(f<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...))`, and
-  let `T` be `R`. _TODO(paulberry): explain why sound._
+  let `T` be `R`. _This is sound because `R` is the result of substituting
+  `<U_1, U_2, ...>` for the type arguments of `f` in the return type of `f`._
 
 ### Implicit instance creation
 
@@ -1873,7 +1871,7 @@ guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
 - Let `m` and `T` be the result of performing [method invocation
   inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
   the target elaborated expression, `id` as the method name identifier, and `K`
-  as the type schema. _TODO(paulberry): explain why sound._
+  as the type schema.
 
 ### Explicit extension invocation
 
@@ -1929,7 +1927,7 @@ expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
 - Let `m` and `T` be the result of performing [method invocation
   inference](#Method-invocation-inference) on _<argumentPart>_, using `m_1` as
   the target elaborated expression, `id` as the method name identifier, and `K`
-  as the type schema. _TODO(paulberry): explain why sound._
+  as the type schema.
 
 ### Explicit extension call invocation
 
@@ -1967,7 +1965,7 @@ determined as follows:
 - Let `m` and `T` be the result of performing [method invocation
   inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
   the target elaborated expression, `call` as the method name identifier, and
-  `K` as the type schema. _TODO(paulberry): explain why sound._
+  `K` as the type schema.
 
 ### Static method tearoff
 
