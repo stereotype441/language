@@ -1630,8 +1630,6 @@ static type `T`, where `m` and `T` are determined as follows:
 
 ## Selector chain inference
 
-_TODO(paulberry): specify behavior of cascades._
-
 At the core of the Dart expression grammar is the production rule _<primary>
 <selector>*_, which allows suffixes such as `!`, `.identifier`,
 _<argumentPart>_, and so on, to be chained to the right of a primary expression
@@ -1897,10 +1895,6 @@ selector chains that end in <typeArguments>. One such example is `x[y]<T>`._
 
 The following sections detail the specific type inference rules for each valid
 Dart expression.
-
-### Parenthesized expression
-
-_TODO(paulberry): specify._
 
 ### Null
 
