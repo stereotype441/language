@@ -1134,7 +1134,7 @@ succintly, the syntax of Dart is extended to allow the following forms:
   any loss of functionality, provided they are not trying to construct a proof
   of soundness._
 
-- `@VARIABLE_GET(v)` _TODO(paulberry)
+- `@VARIABLE_GET(v)` _TODO(paulberry)_
 
 In addition, the following forms are added to allow constructor invocations,
 dynamic method invocations, function object invocations, instance method
