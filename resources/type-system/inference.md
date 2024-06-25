@@ -1554,19 +1554,29 @@ static type `T`, where `m` and `T` are determined as follows:
     type schema `K`. Denote the resulting elaborated expressions by `{m_1, m_2,
     ...}`.
 
-  - If `U_0` is `Never`, then let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2,
-    ...>(n_1: m_1, n_2: m_2, ...))`, and let `T` be `Never`. _Note that since
-    the static type of `m_0` is bounded by `Never`, the dynamic invocation will
-    never occur, so soundness is satisfied._
+  - Let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2, ...>(n_1: m_1, n_2: m_2,
+    ...))`.
 
-  - Otherwise, let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2, ...>(n_1: m_1, n_2:
-    m_2, ...))`, and let `T` be `dynamic`. _Soundness is satisfied by the fact
-    that all values are instances satisfying type `dynamic`._
+  - If `U_0` is `Never`, then let `T` be `Never`. _Note that since the static
+    type of `m_0` is bounded by `Never`, the dynamic invocation will never
+    occur, so soundness is satisfied._
 
-  - _Note that this is not precisely what is currently implemented if `T_0` is
-    `dynamic` bounded. See
-    https://github.com/dart-lang/language/issues/3895. TODO(paulberry):
-    reconcile this._
+  - Otherwise, if `U_0` is `dynamic` and `id` is the name of an instance method
+    of `Object` whose type is `F`, and the sequence of optional name identifiers
+    `{n_1, n_2, ...}` is compatible with the signature of `F`, then let `T` be
+    the return type of `F`. _Soundness is satisfied by the fact that this
+    invocation will either fail a runtime type check, or be dispatched to a
+    valid override of the `Object` method. So the returned value, if any, will
+    be an instance satisfying `T`._
+
+    _Note that if `{n_1, n_2, ...}` is __not__ compatible with the signature of
+    `F`, then this rule does not apply and `T` is `dynamic`. The reason for this
+    is that at runtime, if the target doesn't contain an implementation of `id`
+    with a suitable signature, the invocation will be handled by `noSuchMethod`,
+    which could return any value._
+
+  - Otherwise, let `T` be `dynamic`. _Soundness is satisfied by the fact that
+    all values are instances satisfying type `dynamic`._
 
   - _TODO(paulberry): this implies that if there's an extension method `.call`
     on `int`, `d.hashCode()` is treated as a dynamic dispatch rather than an
