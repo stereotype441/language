@@ -1630,7 +1630,7 @@ static type `T`, where `m` and `T` are determined as follows:
 
 ## Selector chain inference
 
-_TODO(paulberry): rework this section to work with cascades._
+_TODO(paulberry): specify behavior of cascades._
 
 At the core of the Dart expression grammar is the production rule _<primary>
 <selector>*_, which allows suffixes such as `!`, `.identifier`,
