@@ -1475,8 +1475,7 @@ The procedure for argument part inference is as follows:
         the syntax tree from the context of the invocation to the context of the
         arguments._
 
-      - Otherwise, leave `C` and `{U_1, U_2, ...}` unchanged. _TODO(paulberry):
-        verify that this is not an error condition._
+      - Otherwise, leave `C` and `{U_1, U_2, ...}` unchanged.
 
 - Partition the arguments `{e_1, e_2, ...}` into stages (see [argument
   partitioning](#Argument-partitioning) below), and then for each stage _k_:
@@ -1519,8 +1518,7 @@ The procedure for argument part inference is as follows:
         - If this succeeds, then accumulate the resulting list of type
           constraints into `C`.
 
-        - Otherwise, leave `C` unchanged. _TODO(paulberry): verify that this is
-          not an error condition._
+        - Otherwise, leave `C` unchanged.
 
     - Update `{U_1, U_2, ...}` as follows:
 
@@ -1681,9 +1679,6 @@ static type `T`, where `m` and `T` are determined as follows:
 - If `T_0` is `void`, there is a compile-time error.
 
 - Let `U_0` be the [bound resolution](#Bound-resolution) of `T_0`.
-
-- _TODO(paulberry): document handling of `super.m()`, and
-  `Extension(...).m()`. But not here._
 
 - If `U_0` is `dynamic` or `Never`, or `U_0` is `Function` and `id` is `call`,
   then:
