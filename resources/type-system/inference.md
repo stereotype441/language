@@ -1605,9 +1605,6 @@ static type `T`, where `m` and `T` are determined as follows:
     has type `F`, and `R` is the result of substituting `{U_1, U_2, ...}` for
     the type parameters of `F` in the return type of `F`._
 
-    - _TODO(paulberry): `m_0.id` should become something like
-      `@INSTANCE_GET(m_0.id)`._
-
 - Otherwise, if `U_0` has an accessible instance method named `id`, then:
 
   - Let `F` be the type of `U_0`'s accessible instance method named `id`.
