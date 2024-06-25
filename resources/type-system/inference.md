@@ -1880,6 +1880,26 @@ guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
   the target elaborated expression, `id` as the method name identifier, and `K`
   as the type schema. _TODO(paulberry): explain why sound._
 
+### Explicit extension invocation
+
+If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
+followed by _<argumentPart>_ `.` _<identifier> <argumentPart>_, and the 1 or 2
+_<identifier>s_ before the first _<argumentPart>_ can be resolved to an
+extension in the program, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Super invocation
+
+If the selector chain consists of `super` `.` _<identifier> <argumentPart>_,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
+
+_TODO(paulberry): specify this._
+
 ### Method invocation
 
 If the selector chain ends with (`.` | `?.`) _<identifier> <argumentPart>_, then
@@ -1916,7 +1936,26 @@ expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
   the target elaborated expression, `id` as the method name identifier, and `K`
   as the type schema. _TODO(paulberry): explain why sound._
 
-### Implicit call invocation
+### Explicit extension call invocation
+
+If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
+followed by _<argumentPart> <argumentPart>_, and the 1 or 2 _<identifier>s_
+before the first _<argumentPart>_ can be resolved to an extension in the
+program, then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Super call invocation
+
+If the selector chain consists of `super` _<argumentPart>_, then the result of
+selector chain type inference in context `K` is the elaborated expression `m`,
+with static type `T`, where `m` and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Call invocation
 
 If the selector chain ends with _<argumentPart>_, then the result of selector
 chain type inference in context `K` is the elaborated expression `m`, with
@@ -1990,6 +2029,25 @@ where `m` and `T` are determined as follows:
 - Otherwise, there is a compile time error (type arguments applied to a
   non-generic type).
 
+### Explicit extension tearoff or property get
+
+If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
+followed by _<argumentPart>_ `.` _<identifier>_, and the 1 or 2 _<identifier>s_
+before the _<argumentPart>_ can be resolved to an extension in the program, then
+the result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
+
+_TODO(paulberry): specify this._
+
+### Super method tearoff or property get
+
+If the selector chain consists of `super` `.` _<identifier>_, then the result of
+selector chain type inference in context `K` is the elaborated expression `m`,
+with static type `T`, where `m` and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
+
 ### Method tearoff or property get
 
 If the selector chain ends with (`.` | `?.`) _<identifier>_, then the result of
@@ -2062,13 +2120,30 @@ determined as follows:
 
 _TODO(paulberry)_
 
-### Null check
+### Super index operation
+
+If the selector chain consists of `super` `[` _<expression>_ `]`, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
 
 _TODO(paulberry)_
 
 _TODO(paulberry): don't forget to end null shorting._
 
-### Index operator
+### Index operation
+
+If the expression chain ends with `?`? `[` _<expression>_ `]`, then the result
+of selector chain type inference in context `K` is the elaborated expression
+`m`, with static type `T`, where `m` and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Null check
+
+If the expression chain ends with `!`, then the result of selector chain type
+inference in context `K` is the elaborated expression `m`, with static type `T`,
+where `m` and `T` are determined as follows:
 
 _TODO(paulberry)_
 
