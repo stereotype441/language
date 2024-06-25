@@ -1172,7 +1172,7 @@ properties:
   such._
 
   - _TODO(paulberry): make sure to update the stuff I've written in previous PRs
-    to be consistent with this.
+    to be consistent with this, including implicit `.call` tearoff._
 
 - Elaborated expressions will never contain any implicit type checks. This
   means, in particular, that:
