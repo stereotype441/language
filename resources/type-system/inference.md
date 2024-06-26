@@ -971,16 +971,16 @@ with respect to `L` under constraints `C0`
 
 ## Bound resolution
 
-For any type `T`, the _bound resolution_ of `T` is a type defined by the
+For any type `T`, the _bound resolution_ of `T` is a type `U`, defined by the
 following recursive process:
 
-- If `T` is a type variable `X`, then let `B` be the bound of `X`. Then the
-  bound resolution of `T` is the bound resolution of `B`.
+- If `T` is a type variable `X`, then let `B` be the bound of `X`. Then let `U`
+  be the bound resolution of `B`.
 
-- Otherwise, if `T` is a promoted type variable `X&B`, then the bound resolution
-  of `T` is the bound resolution of `B`.
+- Otherwise, if `T` is a promoted type variable `X&B`, then let `U` be the bound
+  resolution of `B`.
 
-- Otherwise, `U` is `T`.
+- Otherwise, let `U` be `T`.
 
 _Note that the spec notions of __dynamic__ boundedness and __Function__
 boundedness can be defined in terms of bound resolution, as follows: a type is
