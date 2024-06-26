@@ -1288,7 +1288,7 @@ resolved null shorting:
   shorting clauses (if any).
 
 - If no null shorting clauses were produced, then let the result of expression
-  inference with resolved null shorting be `m` , with static type `T`.
+  inference with resolved null shorting be `m`, with static type `T`.
 
 - Otherwise, let the result of expression inference with resolved null shorting
   be `@RESOLVED_NULL_SHORT(T_1 v_1 <- m_1; T_2 v_2 <- m_2; m)`, with static type
@@ -1885,8 +1885,8 @@ followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;
 &lt;argumentPart&gt;_, and the 1 or 2 _&lt;identifier&gt;s_ before the first
 _&lt;argumentPart&gt;_ can be resolved to an extension in the program, then the
 result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+expression `m`, with static type `T`, and no null shorting clauses, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -1894,8 +1894,8 @@ _TODO(paulberry): specify this._
 
 If the selector chain consists of `super` `.` _&lt;identifier&gt;
 &lt;argumentPart&gt;_, then the result of selector chain type inference in
-context `K` is the elaborated expression `m`, with static type `T`, where `m`
-and `T` are determined as follows:
+context `K` is the elaborated expression `m`, and no null shorting clauses, with
+static type `T`, where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -1941,8 +1941,8 @@ If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
 followed by _&lt;argumentPart&gt; &lt;argumentPart&gt;_, and the 1 or 2
 _&lt;identifier&gt;s_ before the first _&lt;argumentPart&gt;_ can be resolved to
 an extension in the program, then the result of selector chain type inference in
-context `K` is the elaborated expression `m`, with static type `T`, where `m`
-and `T` are determined as follows:
+context `K` is the elaborated expression `m`, with static type `T`, and no null
+shorting clauses, where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -2038,8 +2038,8 @@ If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
 followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;_, and the 1 or 2
 _&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
 extension in the program, then the result of selector chain type inference in
-context `K` is the elaborated expression `m`, with static type `T`, where `m`
-and `T` are determined as follows:
+context `K` is the elaborated expression `m`, with static type `T`, and no null
+shorting clauses, where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -2047,8 +2047,8 @@ _TODO(paulberry): specify this._
 
 If the selector chain consists of `super` `.` _&lt;identifier&gt;_, then the
 result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+expression `m`, with static type `T`, and no null shorting clauses, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -2106,17 +2106,18 @@ _TODO(paulberry): don't forget about null shorting syntax_
 If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
 and _&lt;identifier&gt;_ __cannot__ be resolved to the name of a local variable,
 then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
+elaborated expression `m`, with static type `T`, and no null shorting clauses,
+where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
 ### Type instantiation
 
-If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_,
-and _&lt;typeName&gt;_ can be resolved to a type in the program, then the result
-of selector chain type inference in context `K` is the elaborated expression
-`m`, with static type `T`, where `m` and `T` are determined as follows:
+If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_, and
+_&lt;typeName&gt;_ can be resolved to a type in the program, then the result of
+selector chain type inference in context `K` is the elaborated expression `m`,
+with static type `T`, and no null shorting clauses, where `m` and `T` are
+determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -2126,8 +2127,8 @@ If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
 followed by _&lt;argumentPart&gt;_ `[` _&lt;expression&gt;_ `]`, and the 1 or 2
 _&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
 extension in the program, then the result of selector chain type inference in
-context `K` is the elaborated expression `m`, with static type `T`, where `m`
-and `T` are determined as follows:
+context `K` is the elaborated expression `m`, with static type `T`, and no null
+shorting clauses, where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -2135,8 +2136,8 @@ _TODO(paulberry): specify this._
 
 If the selector chain consists of `super` `[` _&lt;expression&gt;_ `]`, then the
 result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+expression `m`, with static type `T`, and no null shorting clauses, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry)_
 
@@ -2146,8 +2147,8 @@ _TODO(paulberry): don't forget to end null shorting._
 
 If the selector chain ends with `?`? `[` _&lt;expression&gt;_ `]`, then the
 result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
+`T`, and `C` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -2155,7 +2156,7 @@ _TODO(paulberry): specify this._
 
 If the selector chain ends with `!`, then the result of selector chain type
 inference in context `K` is the elaborated expression `m`, with static type `T`,
-where `m` and `T` are determined as follows:
+and no null shorting clauses, where `m` and `T` are determined as follows:
 
 _TODO(paulberry)_
 
