@@ -1150,7 +1150,7 @@ succintly, the syntax of Dart is extended to allow the following forms:
     evaluate to the result of evaluating `m`.
 
   - _The notation was deliberately chosen to resemble the `Maybe` monad in
-    Haskell, with has similar semantics._
+    Haskell, which has similar semantics._
 
 In addition, the following forms are added to allow constructor invocations,
 dynamic method invocations, function object invocations, instance method
@@ -1220,11 +1220,11 @@ The process of elaborating an expression involving `?.` is complicated by the
 presence of null shorting, a process in which a subexpression evaluating to
 `null` may terminate evaluation not just of the immediately enclosing
 expression, but also one or more larger containing expressions. In circumstances
-where this may occur, we say that null shorting _may be extended_ from the
-smaller expression to the larger one. _For example, in `y = a?.b.f()`, if `a`
-evaluates to `null`, then the remainder of both `a?.b` and its enclosing
-expression `a?.b.f()` will be skipped, and `null` will immediately be assigned
-to `y`. So we say that null shorting may be extended from `a?.b` to `a?.b.f()`._
+where this may occur, we say that null shorting _is extended_ from the smaller
+expression to the larger one. _For example, in `y = a?.b.f()`, if `a` evaluates
+to `null`, then the remainder of both `a?.b` and its enclosing expression
+`a?.b.f()` will be skipped, and `null` will immediately be assigned to `y`. So
+we say that null shorting is extended from `a?.b` to `a?.b.f()`._
 
 When expression inference acts on an expression from which null shorting may be
 extended, the expression inference process produces both an elaborated
@@ -1234,16 +1234,17 @@ and `m_i` is an elaborated expression whose static type is a subtype of
 `T_i?`. Each `v_i` may appear in `m`, and in all `m_j` where `j > i`; when it
 does so, it is considered to have static type `T_i`.
 
-In the text below, all recursive invocations of expression inference will be
-specified as taking place either with _deferred_ null shorting or with
-_resolved_ null shorting.
+In the remainder of this document, all recursive invocations of expression
+inference will be specified as taking place either with _deferred_ null shorting
+or with _resolved_ null shorting.
 
 Deferred null shorting is used for cases where the type inference process for an
 expression `e_1` recursively invokes expression inference for subexpression
-`e_2`, and null shorting may be extended from `e_2` to `e_1`. When deferred null
-shorting is used, any null shorting clauses produced by the inference of `e_2`
-are considered to be an output of the recursive invocation, and may be further
-acted upon by the remainder of the type inference algorithm for `e_1`.
+`e_2`, and any null shorting that occurs in `e_2`will be extended to `e_1`. When
+deferred null shorting is used, any null shorting clauses produced by the
+inference of `e_2` are considered to be an output of the recursive invocation,
+and may be further acted upon by the remainder of the type inference algorithm
+for `e_1`.
 
 Resolved null shorting is used for all other cases where expression type
 inference is invoked on an expression `e`. The following process is used to
@@ -1266,13 +1267,13 @@ _For example, the type inference process for `f(a?.b.c)` works as
 follows. Assume that `f` is a top level function, `a` is a local variable with
 static type `T?`, `T.b` has static type `U`, and `U.c` has static type `V`:_
 
-- _Since null shorting may not be extended from `a?.b.c` to `f(a?.b.c)`, type
+- _Since null shorting is not extended from `a?.b.c` to `f(a?.b.c)`, type
   inference is recursively invoked on `a?.b.c`, with resolved null shorting:_
 
-  - _Since null shorting may be extended from `a?.b` to `a?.b.c`, type inference
-    is recursively invoked on `a?.b`, with deferred null shorting:_
+  - _Since null shorting is extended from `a?.b` to `a?.b.c`, type inference is
+    recursively invoked on `a?.b`, with deferred null shorting:_
 
-    - _Since null shorting may be extended from `a` to `a?.b`, type inference is
+    - _Since null shorting is extended from `a` to `a?.b`, type inference is
       recursively invoked on `a`, with deferred null shorting:_
 
       - _Type inference of `a` produces elaborated expression `a`, with static
