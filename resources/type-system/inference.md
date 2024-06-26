@@ -1852,7 +1852,7 @@ _TODO(paulberry): specify this._
 
 ### Implicit this method tearoff with type arguments
 
-If the expression chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
+If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
 and _&lt;identifier&gt;_ __cannot__ be resolved to the name of a local variable,
 then the result of selector chain type inference in context `K` is the
 elaborated expression `m`, with static type `T`, where `m` and `T` are
@@ -1862,10 +1862,21 @@ _TODO(paulberry): specify this._
 
 ### Type instantiation
 
-If the expression chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_,
+If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_,
 and _&lt;typeName&gt;_ can be resolved to a type in the program, then the result
 of selector chain type inference in context `K` is the elaborated expression
 `m`, with static type `T`, where `m` and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Explicit extension index operation
+
+If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
+followed by _&lt;argumentPart&gt;_ `[` _&lt;expression&gt;_ `]`, and the 1 or 2
+_&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
+extension in the program, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -1880,7 +1891,7 @@ _TODO(paulberry): specify this._
 
 ### Index operation
 
-If the expression chain ends with `?`? `[` _&lt;expression&gt;_ `]`, then the
+If the selector chain ends with `?`? `[` _&lt;expression&gt;_ `]`, then the
 result of selector chain type inference in context `K` is the elaborated
 expression `m`, with static type `T`, where `m` and `T` are determined as
 follows:
@@ -1889,7 +1900,7 @@ _TODO(paulberry): specify this._
 
 ### Null check
 
-If the expression chain ends with `!`, then the result of selector chain type
+If the selector chain ends with `!`, then the result of selector chain type
 inference in context `K` is the elaborated expression `m`, with static type `T`,
 where `m` and `T` are determined as follows:
 
