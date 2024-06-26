@@ -1354,17 +1354,17 @@ The procedure for argument part inference is as follows:
     _&lt;functionExpression&gt;_ enclosed in zero or more parentheses, in order
     of increasing _i_:
 
-    - Let `m_i` be the result of performing expression inference on `e_i`, in
-      context `K_i`.
+    - Let `m_i_preliminary` be the result of performing expression inference on
+      `e_i`, in context `K_i`.
 
   - For each `e_i` in stage _k_ that _does_ take the form of a
     _&lt;functionExpression&gt;_ enclosed in zero or more parentheses, in order
     of increasing _i_:
 
-    - Let `m_i` be the result of performing expression inference on `e_i`, in
-      context `K_i`.
+    - Let `m_i_preliminary` be the result of performing expression inference on
+      `e_i`, in context `K_i`.
 
-  - _Note that an invariant of argument partitioning is that arguments that are
+  - _Note that a property of argument partitioning is that arguments that are
     not function literal expressions are always placed in stage zero, so this
     has the effect that all arguments that are not function expressions are type
     inferred first, in the order in which they appear in source code, followed
@@ -1377,7 +1377,7 @@ The procedure for argument part inference is as follows:
 
     - For each `e_i` in stage _k_:
 
-      - Let `S_i` be the static type of `m_i`.
+      - Let `S_i` be the static type of `m_i_preliminary`.
 
       - Using subtype constraint generation, attempt to match `S_i` as a subtype
         of `K_i` with respect to the list of type variables `{X_1, X_2, ...}`.
@@ -1417,9 +1417,8 @@ The procedure for argument part inference is as follows:
     ...}` in `P_i`. _Note that this is now guaranteed to be a proper type, not a
     type schema._
 
-  - Let `m` be the result of performing coercion of `m_i` to type `K_i`.
-
-  - Replace `m_1` with `m`. _This ensures that the invocation is sound._
+  - Let `m_i` be the result of performing coercion of `m_i_preliminary` to type
+    `K_i`. _This ensures that the invocation is sound._
 
 - Finally, let `R` be the result of substituting `{U_1, U_2, ...}` for `{X_1,
   X_2, ...}` in `R_F`.
@@ -1523,7 +1522,7 @@ cycle, we group all arguments in the dependency cycle into the same stage, which
 reproduces the behavior of the Dart language before horizontal inference was
 introduced._
 
-_(Note that the invariant mentioned earlier, that non-function literals are
+_(Note that the property mentioned earlier, that non-function literals are
 always placed in the first stage, is guaranteed by the fact that dependency
 analysis only draws an edge from A to B if A is a function literal.)_
 
@@ -1574,7 +1573,8 @@ static type `T`, where `m` and `T` are determined as follows:
     `F`, then this rule does not apply and `T` is `dynamic`. The reason for this
     is that at runtime, if the target doesn't contain an implementation of `id`
     with a suitable signature, the invocation will be handled by `noSuchMethod`,
-    which could return any value._
+    which could return any value. See
+    https://github.com/dart-lang/language/issues/3895 for further discussion._
 
   - Otherwise, let `T` be `dynamic`. _Soundness is satisfied by the fact that
     all values are instances satisfying type `dynamic`._
@@ -1655,14 +1655,14 @@ This is accomplished by pattern matching the selector chain against each of the
 rules below in turn. The first matching rule is chosen, and is used to type
 infer the selector chain.
 
-Each rule below matches a specific sequence of selectors on the right; the
-remainder of the selector chain (if present) is then considered to be a
-subexpression. _So, for example, the selector chain `1.isEven.toString()` is
-considered by the grammar to consist of the primary `1` followed by the three
-selectors `.isEven`, `.toString`, and `()`. This matches the [method
-invocation](#Method-invocation) rule, which then treats `1.isEven` as the
-remainder subexpression, `toString` as the method name identifier, and `()` as
-the &lt;argumentPart&gt;._
+Some of the rules below match the entire selector chain. Other rules match a
+specific sequence of selectors on the right, in which case the remainder of the
+selector chain (if present) is then considered to be a subexpression. _So, for
+example, the selector chain `1.isEven.toString()` is considered by the grammar
+to consist of the primary `1` followed by the three selectors `.isEven`,
+`.toString`, and `()`. This matches the [method invocation](#Method-invocation)
+rule, which then treats `1.isEven` as the remainder subexpression, `toString` as
+the method name identifier, and `()` as the &lt;argumentPart&gt;._
 
 The selector chain type inference rules are as follows.
 
