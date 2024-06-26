@@ -1152,8 +1152,6 @@ succintly, the syntax of Dart is extended to allow the following forms:
   - _The notation was deliberately chosen to resemble the `Maybe` monad in
     Haskell, with has similar semantics._
 
-- `@VARIABLE_GET(v)` _TODO(paulberry)_
-
 In addition, the following forms are added to allow constructor invocations,
 dynamic method invocations, function object invocations, instance method
 invocations, and static/toplevel method invocations to be distinguished:
@@ -1277,25 +1275,22 @@ static type `T?`, `T.b` has static type `U`, and `U.c` has static type `V`:_
     - _Since null shorting may be extended from `a` to `a?.b`, type inference is
       recursively invoked on `a`, with deferred null shorting:_
 
-      - _Type inference of `a` produces elaborated expression
-        `@VARIABLE_GET(a)`, with static type `T?`, and no null shorting
-        clauses._
+      - _Type inference of `a` produces elaborated expression `a`, with static
+        type `T?`, and no null shorting clauses._
 
     - _Type inference of `a?.b` now proceeds, creating the null shorting clause
-      `T v_1 <- @VARIABLE_GET(a)` and the elaborated expression `v_1.b`, with
-      static type `U`._
+      `T v_1 <- a` and the elaborated expression `v_1.b`, with static type `U`._
 
   - _Type inference of `a?.b.c` now proceeds. The null shorting clause `T v_1 <-
-    @VARIABLE_GET(a)` is kept, and the elaborated expression is changed to
-    `v_1.b.c`, with static type `V`._
+    a` is kept, and the elaborated expression is changed to `v_1.b.c`, with
+    static type `V`._
 
   - _Since type inference of `a?.b.c` was invoked with resolved null shorting,
-    these are combined together to produce `@RESOLVED_NULL_SHORT(T v_1 <-
-    @VARIABLE_GET(a); v_1.b.c)`._
+    these are combined together to produce `@RESOLVED_NULL_SHORT(T v_1 <- a;
+    v_1.b.c)`._
 
 - _Type inference of `f(a?.b.c)` now proceeds, producing
-  `@STATIC_INVOKE(f(@RESOLVED_NULL_SHORT(T v_1 <- @VARIABLE_GET(a);
-  v_1.b.c)))`._
+  `@STATIC_INVOKE(f(@RESOLVED_NULL_SHORT(T v_1 <- a; v_1.b.c)))`._
 
 ## Coercions
 
