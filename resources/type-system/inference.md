@@ -1268,7 +1268,7 @@ argument part inference.)_
 
 To emphasize the relationship between argument part inference and the syntax of
 Dart source code, the inputs and outputs of argument part inference are
-sometimes described using the `<argumentPart>` syntax, namely `<T_1, T_2,
+sometimes described using the _&lt;argumentPart&gt;_ syntax, namely `<T_1, T_2,
 ...>(n_1: e_1, n_2: e_2, ...)`.
 
 _So, for example, if we say that "argument part inference is invoked on `<int,
@@ -1358,8 +1358,8 @@ The procedure for argument part inference is as follows:
       context `K_i`.
 
   - For each `e_i` in stage _k_ that _does_ take the form of a
-    _<functionExpression>_ enclosed in zero or more parentheses, in order of
-    increasing _i_:
+    _&lt;functionExpression&gt;_ enclosed in zero or more parentheses, in order
+    of increasing _i_:
 
     - Let `m_i` be the result of performing expression inference on `e_i`, in
       context `K_i`.
@@ -1440,7 +1440,7 @@ argument `e_j` if and only if the type of the invocation target is generic, and
 the following relationship exists among `e_i`, `e_j`, and at least one of the
 formal type parameters `X_k`:
 
-1. `e_i` is a _<functionExpression>_ enclosed in zero or more parentheses,
+1. `e_i` is a _&lt;functionExpression&gt;_ enclosed in zero or more parentheses,
 
 2. AND `P_i` is a function type,
 
@@ -1634,11 +1634,12 @@ static type `T`, where `m` and `T` are determined as follows:
 
 ## Selector chain inference
 
-At the core of the Dart expression grammar is the production rule _<primary>
-<selector>*_, which allows suffixes such as `!`, `.identifier`,
-_<argumentPart>_, and so on, to be chained to the right of a primary expression
-such as `this`. Any construct produced using this production rule, where
-_<selector>_ is invoked at least once, is known as a _selector chain_.
+At the core of the Dart expression grammar is the production rule
+_&lt;primary&gt; &lt;selector&gt;*_, which allows suffixes such as `!`,
+`.identifier`, _&lt;argumentPart&gt;_, and so on, to be chained to the right of
+a primary expression such as `this`. Any construct produced using this
+production rule, where _&lt;selector&gt;_ is invoked at least once, is known as
+a _selector chain_.
 
 The static semantics of a selector chain depends on both name resolution and
 static type analysis. _For example, `a.b()` could be a static method invocation
@@ -1661,25 +1662,26 @@ considered by the grammar to consist of the primary `1` followed by the three
 selectors `.isEven`, `.toString`, and `()`. This matches the [method
 invocation](#Method-invocation) rule, which then treats `1.isEven` as the
 remainder subexpression, `toString` as the method name identifier, and `()` as
-the <argumentPart>._
+the &lt;argumentPart&gt;._
 
 The selector chain type inference rules are as follows.
 
 ### Static method invocation
 
-If the selector chain is a sequence of 1 to 3 _<identifier>s_ separated by `.`,
-followed by an _<argumentPart>_, and the sequence of _<identifier>s_ can be
-resolved to a static method or top level function, then the result of selector
-chain type inference in context `K` is the elaborated expression `m`, with
-static type `T`, where `m` and `T` are determined as follows:
+If the selector chain is a sequence of 1 to 3 _&lt;identifier&gt;s_ separated by
+`.`, followed by an _&lt;argumentPart&gt;_, and the sequence of
+_&lt;identifier&gt;s_ can be resolved to a static method or top level function,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
 
 - Let `f` be the static method or top level function referred to by the
-  _<identifier>_ sequence.
+  _&lt;identifier&gt;_ sequence.
 
 - Let `F` be the type of `f`.
 
 - Invoke [argument part inference](#Argument-part-inference) on
-  _<argumentPart>_, using `F` as the target function type and `K` as the
+  _&lt;argumentPart&gt;_, using `F` as the target function type and `K` as the
   context. Designate the result by `{m_1, m_2, ...}`, `{U_1, U_2, ...}`, and
   `R`.
 
@@ -1689,21 +1691,21 @@ static type `T`, where `m` and `T` are determined as follows:
 
 ### Implicit instance creation
 
-If the selector chain consists of _<typeName> <typeArguments>_? (`.`
-_<identifierOrNew>_)? _<arguments>_, and _<typeName>_ can be resolved to a type
-in the program, then the result of selector chain type inference in context `K`
-is the elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
+If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_? (`.`
+_&lt;identifierOrNew&gt;_)? _&lt;arguments&gt;_, and _&lt;typeName&gt;_ can be
+resolved to a type in the program, then the result of selector chain type
+inference in context `K` is the elaborated expression `m`, with static type `T`,
+where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
 ### Implicit this invocation
 
-If the selector chain consists of _<identifier> <argumentPart>_, and
-_<identifier>_ __cannot__ be resolved to the name of a local variable, then the
-result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+If the selector chain consists of _&lt;identifier&gt; &lt;argumentPart&gt;_, and
+_&lt;identifier&gt;_ __cannot__ be resolved to the name of a local variable,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
 
 - Let `m_0` be `this`, with static type `T_0`, where `T_0` is the interface type
 of the immediately enclosing class, enum, mixin, or extension type, or the "on"
@@ -1714,39 +1716,40 @@ guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
   It is a compile-time error if the selector chain does not have access to
   `this`.
 
-- Let `id` be the identifier named by _<identifier>_.
+- Let `id` be the identifier named by _&lt;identifier&gt;_.
 
 - Let `m` and `T` be the result of performing [method invocation
-  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
-  the target elaborated expression, `id` as the method name identifier, and `K`
-  as the type schema.
+  inference](#Method-invocation-inference) on _&lt;argumentPart&gt;_, using
+  `m_0` as the target elaborated expression, `id` as the method name identifier,
+  and `K` as the type schema.
 
 ### Explicit extension invocation
 
-If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
-followed by _<argumentPart>_ `.` _<identifier> <argumentPart>_, and the 1 or 2
-_<identifier>s_ before the first _<argumentPart>_ can be resolved to an
-extension in the program, then the result of selector chain type inference in
-context `K` is the elaborated expression `m`, with static type `T`, where `m`
-and `T` are determined as follows:
+If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
+followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;
+&lt;argumentPart&gt;_, and the 1 or 2 _&lt;identifier&gt;s_ before the first
+_&lt;argumentPart&gt;_ can be resolved to an extension in the program, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
 
 _TODO(paulberry): specify this._
 
 ### Super invocation
 
-If the selector chain consists of `super` `.` _<identifier> <argumentPart>_,
-then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
+If the selector chain consists of `super` `.` _&lt;identifier&gt;
+&lt;argumentPart&gt;_, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
 ### Method invocation
 
-If the selector chain ends with (`.` | `?.`) _<identifier> <argumentPart>_, then
-the result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+If the selector chain ends with (`.` | `?.`) _&lt;identifier&gt;
+&lt;argumentPart&gt;_, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
 
 - Let `e_0` be the remainder of the selector chain (prior to the `.` or `?.`).
 
@@ -1756,115 +1759,119 @@ follows:
 - _TODO(paulberry): handle null shorting._
 
 - Let `m` and `T` be the result of performing [method invocation
-  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
-  the target elaborated expression, `id` as the method name identifier, and `K`
-  as the type schema.
+  inference](#Method-invocation-inference) on _&lt;argumentPart&gt;_, using
+  `m_0` as the target elaborated expression, `id` as the method name identifier,
+  and `K` as the type schema.
 
 ### Explicit extension call invocation
 
-If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
-followed by _<argumentPart> <argumentPart>_, and the 1 or 2 _<identifier>s_
-before the first _<argumentPart>_ can be resolved to an extension in the
-program, then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
+If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
+followed by _&lt;argumentPart&gt; &lt;argumentPart&gt;_, and the 1 or 2
+_&lt;identifier&gt;s_ before the first _&lt;argumentPart&gt;_ can be resolved to
+an extension in the program, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
 ### Super call invocation
 
-If the selector chain consists of `super` _<argumentPart>_, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
-
-_TODO(paulberry): specify this._
-
-### Call invocation
-
-If the selector chain ends with _<argumentPart>_, then the result of selector
-chain type inference in context `K` is the elaborated expression `m`, with
-static type `T`, where `m` and `T` are determined as follows:
-
-- Let `e_0` be the remainder of the selector chain (prior to the
-  _<argumentPart>_).
-
-- Perform expression inference on `e_0`, in context `_`. Let `m_0` be the
-  resulting elaborated expression.
-
-- Let `m` and `T` be the result of performing [method invocation
-  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
-  the target elaborated expression, `call` as the method name identifier, and
-  `K` as the type schema.
-
-### Static method tearoff
-
-If the selector chain is a sequence of 1 to 3 _<identifier>s_ separated by `.`,
-followed optionally by _<typeArguments>_, and the sequence of _<identifier>s_
-can be resolved to a static method or top level function, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
-
-_TODO(paulberry): specify this._
-
-### Constructor tearoff
-
-If the selector chain consists of _<typeName> <typeArguments>_? `.`
-_<identifierOrNew>_, and _<typeName>_ can be resolved to a type in the program,
-then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
-
-_TODO(paulberry): specify this._
-
-### Explicit extension tearoff or property get
-
-If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
-followed by _<argumentPart>_ `.` _<identifier>_, and the 1 or 2 _<identifier>s_
-before the _<argumentPart>_ can be resolved to an extension in the program, then
-the result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
-
-_TODO(paulberry): specify this._
-
-### Super method tearoff or property get
-
-If the selector chain consists of `super` `.` _<identifier>_, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
-
-_TODO(paulberry): specify this._
-
-### Method tearoff or property get
-
-If the selector chain ends with (`.` | `?.`) _<identifier>_, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
-
-_TODO(paulberry): specify this._
-
-### Implicit this method tearoff with type arguments
-
-If the expression chain consists of _<identifier> <typeArguments>_, and
-_<identifier>_ __cannot__ be resolved to the name of a local variable, then the
+If the selector chain consists of `super` _&lt;argumentPart&gt;_, then the
 result of selector chain type inference in context `K` is the elaborated
 expression `m`, with static type `T`, where `m` and `T` are determined as
 follows:
 
 _TODO(paulberry): specify this._
 
-### Type instantiation
+### Call invocation
 
-If the expression chain consists of _<typeName> <typeArguments>_, and
-_<typeName>_ can be resolved to a type in the program, then the result of
+If the selector chain ends with _&lt;argumentPart&gt;_, then the result of
 selector chain type inference in context `K` is the elaborated expression `m`,
 with static type `T`, where `m` and `T` are determined as follows:
+
+- Let `e_0` be the remainder of the selector chain (prior to the
+  _&lt;argumentPart&gt;_).
+
+- Perform expression inference on `e_0`, in context `_`. Let `m_0` be the
+  resulting elaborated expression.
+
+- Let `m` and `T` be the result of performing [method invocation
+  inference](#Method-invocation-inference) on _&lt;argumentPart&gt;_, using
+  `m_0` as the target elaborated expression, `call` as the method name
+  identifier, and `K` as the type schema.
+
+### Static method tearoff
+
+If the selector chain is a sequence of 1 to 3 _&lt;identifier&gt;s_ separated by
+`.`, followed optionally by _&lt;typeArguments&gt;_, and the sequence of
+_&lt;identifier&gt;s_ can be resolved to a static method or top level function,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Constructor tearoff
+
+If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_? `.`
+_&lt;identifierOrNew&gt;_, and _&lt;typeName&gt;_ can be resolved to a type in
+the program, then the result of selector chain type inference in context `K` is
+the elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Explicit extension tearoff or property get
+
+If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
+followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;_, and the 1 or 2
+_&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
+extension in the program, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Super method tearoff or property get
+
+If the selector chain consists of `super` `.` _&lt;identifier&gt;_, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
+
+_TODO(paulberry): specify this._
+
+### Method tearoff or property get
+
+If the selector chain ends with (`.` | `?.`) _&lt;identifier&gt;_, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
+
+_TODO(paulberry): specify this._
+
+### Implicit this method tearoff with type arguments
+
+If the expression chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
+and _&lt;identifier&gt;_ __cannot__ be resolved to the name of a local variable,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Type instantiation
+
+If the expression chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_,
+and _&lt;typeName&gt;_ can be resolved to a type in the program, then the result
+of selector chain type inference in context `K` is the elaborated expression
+`m`, with static type `T`, where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
 ### Super index operation
 
-If the selector chain consists of `super` `[` _<expression>_ `]`, then the
+If the selector chain consists of `super` `[` _&lt;expression&gt;_ `]`, then the
 result of selector chain type inference in context `K` is the elaborated
 expression `m`, with static type `T`, where `m` and `T` are determined as
 follows:
@@ -1873,9 +1880,10 @@ _TODO(paulberry): specify this._
 
 ### Index operation
 
-If the expression chain ends with `?`? `[` _<expression>_ `]`, then the result
-of selector chain type inference in context `K` is the elaborated expression
-`m`, with static type `T`, where `m` and `T` are determined as follows:
+If the expression chain ends with `?`? `[` _&lt;expression&gt;_ `]`, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
 
 _TODO(paulberry): specify this._
 
@@ -1893,7 +1901,8 @@ Any selector chain that doesn't match one of the above cases is an illegal
 selector chain, and constitutes a compile-time error.
 
 _The only possible selector chains that don't match any of the above cases are
-selector chains that end in <typeArguments>. One such example is `x[y]<T>`._
+selector chains that end in &lt;typeArguments&gt;. One such example is
+`x[y]<T>`._
 
 ## Expression inference rules
 
