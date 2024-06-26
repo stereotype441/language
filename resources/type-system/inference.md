@@ -1578,10 +1578,6 @@ static type `T`, where `m` and `T` are determined as follows:
   - Otherwise, let `T` be `dynamic`. _Soundness is satisfied by the fact that
     all values are instances satisfying type `dynamic`._
 
-  - _TODO(paulberry): this implies that if there's an extension method `.call`
-    on `int`, `d.hashCode()` is treated as a dynamic dispatch rather than an
-    extension method invocation. Is this correct? Is it what we want?_
-
 - Otherwise, if `U_0` is a (_non-nullable_) function type, and `id` is `call`,
   then:
 
