@@ -1240,11 +1240,11 @@ or with _resolved_ null shorting.
 
 Deferred null shorting is used for cases where the type inference process for an
 expression `e_1` recursively invokes expression inference for subexpression
-`e_2`, and any null shorting that occurs in `e_2`will be extended to `e_1`. When
-deferred null shorting is used, any null shorting clauses produced by the
-inference of `e_2` are considered to be an output of the recursive invocation,
-and may be further acted upon by the remainder of the type inference algorithm
-for `e_1`.
+`e_2`, and any null shorting that occurs in `e_2` will be extended to
+`e_1`. When deferred null shorting is used, any null shorting clauses produced
+by the inference of `e_2` are considered to be an output of the recursive
+invocation, and may be further acted upon by the remainder of the type inference
+logic for `e_1`.
 
 Resolved null shorting is used for all other cases where expression type
 inference is invoked on an expression `e`. The following process is used to
@@ -1856,7 +1856,8 @@ shorting clauses `C`, where `m`, `T`, and `C` are determined as follows:
 
 - Let `C` and `m_1` be determined as follows:
 
-  - If the token preceding the _<identifier>_ is `?.`, then:
+  - If the token preceding the _<identifier>_ is `?.` (meaning the method
+    invocation is null-aware), then:
 
     - Let `U` be `NonNull(T_0)`.
 
@@ -1866,7 +1867,8 @@ shorting clauses `C`, where `m`, `T`, and `C` are determined as follows:
 
     - Let `m_1` be `v`, with static type `U`.
 
-  - Otherwise (the token preceding the _<identifier>_ is `.`):
+  - Otherwise (the token preceding the _<identifier>_ is `.`, meaning the method
+    invocation is not null-aware):
 
     - Let `C` be `C_0`.
 
