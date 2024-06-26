@@ -2038,7 +2038,19 @@ Dart expression.
 
 ### Parenthesized expression
 
-_TODO(paulberry): specify, and make sure it resolves null shorting._
+Expression inference of a parenthesized expression `(e_1)`, in context `K`,
+produces an elaborated expression `m` with static type `T`, and no null shorting
+clauses, where `m` and `T` are determined as follows:
+
+- Let `m` be the result of performing expression inference on `e_1`, in context
+  `K`, with resolved null shorting, and let `T` be its static type.
+
+_Note that wrapping a subexpression in parentheses forces null shorting to be
+resolved. For example, `a?.b.toString()` has a different meaning than
+`(a?.b).toString()`. In the former case, if `a` evaluates to `null`, `toString`
+will not be invoked, so the entire expression will evaluate to `null`. In the
+latter case, if `a` evaluates to `null`, `toString` __will__ be invoked, so the
+entire expression will evaluate to the __string__ "`null`"._
 
 ### Null
 
