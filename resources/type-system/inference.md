@@ -974,18 +974,18 @@ with respect to `L` under constraints `C0`
 For any type `T`, the _bound resolution_ of `T` is a type `U`, defined by the
 following recursive process:
 
-- If `T` is a type variable `X`, then let `B` be the bound of `X`. Then `U` is
-  the bound resolution of `B`.
+- If `T` is a type variable `X`, then let `B` be the bound of `X`. Then let `U`
+  be the bound resolution of `B`.
 
-- Otherwise, if `T` is a promoted type variable `X&B`, then `U` is the bound
+- Otherwise, if `T` is a promoted type variable `X&B`, then let `U` be the bound
   resolution of `B`.
 
-- Otherwise, `U` is `T`.
+- Otherwise, let `U` be `T`.
 
 _Note that the spec notions of __dynamic__ boundedness and __Function__
 boundedness can be defined in terms of bound resolution, as follows: a type is
 __dynamic__ bounded iff its bound resolution is __dynamic__, and a type is
-__Function__ bounded if its bound resolution if __Function__.
+__Function__ bounded if its bound resolution if __Function__._
 
 # Expression inference
 
@@ -1399,7 +1399,7 @@ argument part inference.)_
 
 To emphasize the relationship between argument part inference and the syntax of
 Dart source code, the inputs and outputs of argument part inference are
-sometimes described using the `<argumentPart>` syntax, namely `<T_1, T_2,
+sometimes described using the _&lt;argumentPart&gt;_ syntax, namely `<T_1, T_2,
 ...>(n_1: e_1, n_2: e_2, ...)`.
 
 _So, for example, if we say that "argument part inference is invoked on `<int,
@@ -1440,7 +1440,8 @@ The procedure for argument part inference is as follows:
 
     - Let `C` be an empty list of type constraints, and let `{U_1, U_2, ...}` be
       the same as `{T_1, T_2, ...}`. _This covers the case of dynamic
-      invocation; the user-supplied type arguments are accepted verbatim._
+      invocation; the user-supplied type arguments are accepted without
+      modification._
 
   - Otherwise, `F` must be a function type. If the number of formal type
     parameters of `F` (which could be zero) matches the number of type arguments
@@ -1455,7 +1456,7 @@ The procedure for argument part inference is as follows:
     compile-time error (_wrong number of type arguments supplied_).
 
   - Otherwise, `F` must have at least one formal type parameter, and there must
-    be zero type arguments `T` (_in other words, type arguments must be
+    be zero type arguments `T` (_in other words, type arguments will be
     inferred_). Then:
 
     - Initialize `C` to an empty list of type constraints.
@@ -1484,20 +1485,20 @@ The procedure for argument part inference is as follows:
     U_2, ...}` for `{X_1, X_2, ...}` in `P_i`.
 
   - For each `e_i` in stage _k_ that _does not_ take the form of a
-    _<functionExpression>_ enclosed in zero or more parentheses, in order of
-    increasing _i_:
+    _&lt;functionExpression&gt;_ enclosed in zero or more parentheses, in order
+    of increasing _i_:
 
-    - Let `m_i` be the result of performing expression inference on `e_i`, in
-      context `K_i`, with resolved null shorting.
+    - Let `m_i_preliminary` be the result of performing expression inference on
+      `e_i`, in context `K_i`, with resolved null shorting.
 
   - For each `e_i` in stage _k_ that _does_ take the form of a
-    _<functionExpression>_ enclosed in zero or more parentheses, in order of
-    increasing _i_:
+    _&lt;functionExpression&gt;_ enclosed in zero or more parentheses, in order
+    of increasing _i_:
 
-    - Let `m_i` be the result of performing expression inference on `e_i`, in
-      context `K_i`, with resolved null shorting.
+    - Let `m_i_preliminary` be the result of performing expression inference on
+      `e_i`, in context `K_i`, with resolved null shorting.
 
-  - _Note that an invariant of argument partitioning is that arguments that are
+  - _Note that a property of argument partitioning is that arguments that are
     not function literal expressions are always placed in stage zero, so this
     has the effect that all arguments that are not function expressions are type
     inferred first, in the order in which they appear in source code, followed
@@ -1510,7 +1511,7 @@ The procedure for argument part inference is as follows:
 
     - For each `e_i` in stage _k_:
 
-      - Let `S_i` be the static type of `m_i`.
+      - Let `S_i` be the static type of `m_i_preliminary`.
 
       - Using subtype constraint generation, attempt to match `S_i` as a subtype
         of `K_i` with respect to the list of type variables `{X_1, X_2, ...}`.
@@ -1550,9 +1551,8 @@ The procedure for argument part inference is as follows:
     ...}` in `P_i`. _Note that this is now guaranteed to be a proper type, not a
     type schema._
 
-  - Let `m` be the result of performing coercion of `m_i` to type `K_i`.
-
-  - Replace `m_1` with `m`. _This ensures that the invocation is sound._
+  - Let `m_i` be the result of performing coercion of `m_i_preliminary` to type
+    `K_i`. _This ensures that the invocation is sound._
 
 - Finally, let `R` be the result of substituting `{U_1, U_2, ...}` for `{X_1,
   X_2, ...}` in `R_F`.
@@ -1573,7 +1573,7 @@ argument `e_j` if and only if the type of the invocation target is generic, and
 the following relationship exists among `e_i`, `e_j`, and at least one of the
 formal type parameters `X_k`:
 
-1. `e_i` is a _<functionExpression>_ enclosed in zero or more parentheses,
+1. `e_i` is a _&lt;functionExpression&gt;_ enclosed in zero or more parentheses,
 
 2. AND `P_i` is a function type,
 
@@ -1656,7 +1656,7 @@ cycle, we group all arguments in the dependency cycle into the same stage, which
 reproduces the behavior of the Dart language before horizontal inference was
 introduced._
 
-_(Note that the invariant mentioned earlier, that non-function literals are
+_(Note that the property mentioned earlier, that non-function literals are
 always placed in the first stage, is guaranteed by the fact that dependency
 analysis only draws an edge from A to B if A is a function literal.)_
 
@@ -1683,31 +1683,35 @@ static type `T`, where `m` and `T` are determined as follows:
 - If `U_0` is `dynamic` or `Never`, or `U_0` is `Function` and `id` is `call`,
   then:
 
-  - _TODO(paulberry): Never-bounded types crash the CFE, and I'm not sure how
-    they behave for methods defined on Object._
-
   - Invoke [argument part inference](#Argument-part-inference) on `<T_1, T_2,
     ...>(n_1: e_1, n_2: e_2, ...)`, using a target function type of `∅` and a
     type schema `K`. Denote the resulting elaborated expressions by `{m_1, m_2,
     ...}`.
 
-  - If `U_0` is `Never`, then let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2,
-    ...>(n_1: m_1, n_2: m_2, ...))`, and let `T` be `Never`. _Note that since
-    the static type of `m_0` is bounded by `Never`, the dynamic invocation will
-    never occur, so soundness is satisfied._
+  - Let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2, ...>(n_1: m_1, n_2: m_2,
+    ...))`.
 
-  - Otherwise, let `m` be `@DYNAMIC_INVOKE(m_0.id<U_1, U_2, ...>(n_1: m_1, n_2:
-    m_2, ...))`, and let `T` be `dynamic`. _Soundness is satisfied by the fact
-    that all values are instances satisfying type `dynamic`._
+  - If `U_0` is `Never`, then let `T` be `Never`. _Note that since the static
+    type of `m_0` is bounded by `Never`, the dynamic invocation will never
+    occur, so soundness is satisfied._
 
-  - _Note that this is not precisely what is currently implemented if `T_0` is
-    `dynamic` bounded. See
-    https://github.com/dart-lang/language/issues/3895. TODO(paulberry):
-    reconcile this._
+  - Otherwise, if `U_0` is `dynamic` and `id` is the name of an instance method
+    of `Object` whose type is `F`, and the sequence of optional name identifiers
+    `{n_1, n_2, ...}` is compatible with the signature of `F`, then let `T` be
+    the return type of `F`. _Soundness is satisfied by the fact that this
+    invocation will either fail a runtime type check, or be dispatched to a
+    valid override of the `Object` method. So the returned value, if any, will
+    be an instance satisfying `T`._
 
-  - _TODO(paulberry): this implies that if there's an extension method `.call`
-    on `int`, `d.hashCode()` is treated as a dynamic dispatch rather than an
-    extension method invocation. Is this correct? Is it what we want?_
+    _Note that if `{n_1, n_2, ...}` is __not__ compatible with the signature of
+    `F`, then this rule does not apply and `T` is `dynamic`. The reason for this
+    is that at runtime, if the target doesn't contain an implementation of `id`
+    with a suitable signature, the invocation will be handled by `noSuchMethod`,
+    which could return any value. See
+    https://github.com/dart-lang/language/issues/3895 for further discussion._
+
+  - Otherwise, let `T` be `dynamic`. _Soundness is satisfied by the fact that
+    all values are instances satisfying type `dynamic`._
 
 - Otherwise, if `U_0` is a (_non-nullable_) function type, and `id` is `call`,
   then:
@@ -1769,11 +1773,12 @@ static type `T`, where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify behavior of cascades._
 
-At the core of the Dart expression grammar is the production rule _<primary>
-<selector>*_, which allows suffixes such as `!`, `.identifier`,
-_<argumentPart>_, and so on, to be chained to the right of a primary expression
-such as `this`. Any construct produced using this production rule, where
-_<selector>_ is invoked at least once, is known as a _selector chain_.
+At the core of the Dart expression grammar is the production rule
+_&lt;primary&gt; &lt;selector&gt;*_, which allows suffixes such as `!`,
+`.identifier`, _&lt;argumentPart&gt;_, and so on, to be chained to the right of
+a primary expression such as `this`. Any construct produced using this
+production rule, where _&lt;selector&gt;_ is invoked at least once, is known as
+a _selector chain_.
 
 The static semantics of a selector chain depends on both name resolution and
 static type analysis. _For example, `a.b()` could be a static method invocation
@@ -1789,33 +1794,33 @@ This is accomplished by pattern matching the selector chain against each of the
 rules below in turn. The first matching rule is chosen, and is used to type
 infer the selector chain.
 
-Each rule below matches a specific sequence of selectors on the right; the
-remainder of the selector chain (if present) is then considered to be a
-subexpression. _So, for example, the selector chain `1.isEven.toString()` is
-considered by the grammar to consist of the primary `1` followed by the three
-selectors `.isEven`, `.toString`, and `()`. This matches the [method
-invocation](#Method-invocation) rule, which then treats `1.isEven` as the
-remainder subexpression, `toString` as the method name identifier, and `()` as
-the <argumentPart>._
+Some of the rules below match the entire selector chain. Other rules match a
+specific sequence of selectors on the right, in which case the remainder of the
+selector chain (if present) is then considered to be a subexpression. _So, for
+example, the selector chain `1.isEven.toString()` is considered by the grammar
+to consist of the primary `1` followed by the three selectors `.isEven`,
+`.toString`, and `()`. This matches the [method invocation](#Method-invocation)
+rule, which then treats `1.isEven` as the remainder subexpression, `toString` as
+the method name identifier, and `()` as the &lt;argumentPart&gt;._
 
 The selector chain type inference rules are as follows.
 
 ### Static method invocation
 
-If the selector chain is a sequence of 1 to 3 _<identifier>s_ separated by `.`,
-followed by an _<argumentPart>_, and the sequence of _<identifier>s_ can be
-resolved to a static method or top level function, then the result of selector
-chain type inference in context `K` is the elaborated expression `m`, with
-static type `T`, and no null shorting clauses, where `m` and `T` are determined
-as follows:
+If the selector chain is a sequence of 1 to 3 _&lt;identifier&gt;s_ separated by
+`.`, followed by an _&lt;argumentPart&gt;_, and the sequence of
+_&lt;identifier&gt;s_ can be resolved to a static method or top level function,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, and no null shorting clauses,
+where `m` and `T` are determined as follows:
 
 - Let `f` be the static method or top level function referred to by the
-  _<identifier>_ sequence.
+  _&lt;identifier&gt;_ sequence.
 
 - Let `F` be the type of `f`.
 
 - Invoke [argument part inference](#Argument-part-inference) on
-  _<argumentPart>_, using `F` as the target function type and `K` as the
+  _&lt;argumentPart&gt;_, using `F` as the target function type and `K` as the
   context. Designate the result by `{m_1, m_2, ...}`, `{U_1, U_2, ...}`, and
   `R`.
 
@@ -1825,11 +1830,11 @@ as follows:
 
 ### Implicit instance creation
 
-If the selector chain consists of _<typeName> <typeArguments>_? (`.`
-_<identifierOrNew>_)? _<arguments>_, and _<typeName>_ can be resolved to a type
-in the program, then the result of selector chain type inference in context `K`
-is the elaborated expression `m`, with static type `T`, and no null shorting
-clauses, where `m` and `T` are determined as follows:
+If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_? (`.`
+_&lt;identifierOrNew&gt;_)? _&lt;arguments&gt;_, and _&lt;typeName&gt;_ can be
+resolved to a type in the program, then the result of selector chain type
+inference in context `K` is the elaborated expression `m`, with static type `T`,
+and no null shorting clauses, where `m` and `T` are determined as follows:
 
 - Let `C` be the type named by _<typeName>_.
 
@@ -1851,11 +1856,11 @@ clauses, where `m` and `T` are determined as follows:
 
 ### Implicit this invocation
 
-If the selector chain consists of _<identifier> <argumentPart>_, and
-_<identifier>_ __cannot__ be resolved to the name of a local variable, then the
-result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, and no null shorting clauses, where `m`
-and `T` are determined as follows:
+If the selector chain consists of _&lt;identifier&gt; &lt;argumentPart&gt;_, and
+_&lt;identifier&gt;_ __cannot__ be resolved to the name of a local variable,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, and no null shorting clauses,
+where `m` and `T` are determined as follows:
 
 - Let `m_0` be `this`, with static type `T_0`, where `T_0` is the interface type
 of the immediately enclosing class, enum, mixin, or extension type, or the "on"
@@ -1866,39 +1871,40 @@ guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
   It is a compile-time error if the selector chain does not have access to
   `this`.
 
-- Let `id` be the identifier named by _<identifier>_.
+- Let `id` be the identifier named by _&lt;identifier&gt;_.
 
 - Let `m` and `T` be the result of performing [method invocation
-  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
-  the target elaborated expression, `id` as the method name identifier, and `K`
-  as the type schema.
+  inference](#Method-invocation-inference) on _&lt;argumentPart&gt;_, using
+  `m_0` as the target elaborated expression, `id` as the method name identifier,
+  and `K` as the type schema.
 
 ### Explicit extension invocation
 
-If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
-followed by _<argumentPart>_ `.` _<identifier> <argumentPart>_, and the 1 or 2
-_<identifier>s_ before the first _<argumentPart>_ can be resolved to an
-extension in the program, then the result of selector chain type inference in
-context `K` is the elaborated expression `m`, with static type `T`, where `m`
-and `T` are determined as follows:
+If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
+followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;
+&lt;argumentPart&gt;_, and the 1 or 2 _&lt;identifier&gt;s_ before the first
+_&lt;argumentPart&gt;_ can be resolved to an extension in the program, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
 
 _TODO(paulberry): specify this._
 
 ### Super invocation
 
-If the selector chain consists of `super` `.` _<identifier> <argumentPart>_,
-then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
+If the selector chain consists of `super` `.` _&lt;identifier&gt;
+&lt;argumentPart&gt;_, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
 ### Method invocation
 
-If the selector chain ends with (`.` | `?.`) _<identifier> <argumentPart>_, then
-the result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
-`T`, and `C` are determined as follows:
+If the selector chain ends with (`.` | `?.`) _&lt;identifier&gt;
+&lt;argumentPart&gt;_, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, and null
+shorting clauses `C`, where `m`, `T`, and `C` are determined as follows:
 
 - Let `e_0` be the remainder of the selector chain (prior to the `.` or `?.`).
 
@@ -1925,56 +1931,60 @@ expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
     - Let `m_1` be `m_0`.
 
 - Let `m` and `T` be the result of performing [method invocation
-  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_1` as
-  the target elaborated expression, `id` as the method name identifier, and `K`
-  as the type schema.
+  inference](#Method-invocation-inference) on _&lt;argumentPart&gt;_, using
+  `m_1` as the target elaborated expression, `id` as the method name identifier,
+  and `K` as the type schema.
 
 ### Explicit extension call invocation
 
-If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
-followed by _<argumentPart> <argumentPart>_, and the 1 or 2 _<identifier>s_
-before the first _<argumentPart>_ can be resolved to an extension in the
-program, then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, where `m` and `T` are
-determined as follows:
+If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
+followed by _&lt;argumentPart&gt; &lt;argumentPart&gt;_, and the 1 or 2
+_&lt;identifier&gt;s_ before the first _&lt;argumentPart&gt;_ can be resolved to
+an extension in the program, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
 ### Super call invocation
 
-If the selector chain consists of `super` _<argumentPart>_, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
+If the selector chain consists of `super` _&lt;argumentPart&gt;_, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, and no null shorting clauses, where `m`
+and `T` are determined as follows:
 
-_TODO(paulberry): specify this._
+_TODO(paulberry)_
+
+- It is a compile-time error if the expression chain does not have access to
+  `this`.
 
 ### Call invocation
 
-If the selector chain ends with _<argumentPart>_, then the result of selector
-chain type inference in context `K` is the elaborated expression `m`, with
-static type `T`, and null shorting clauses `C`, where `m`, `T`, and `C` are
+If the selector chain ends with _&lt;argumentPart&gt;_, then the result of
+selector chain type inference in context `K` is the elaborated expression `m`,
+with static type `T`, and null shorting clauses `C`, where `m`, `T`, and `C` are
 determined as follows:
 
 - Let `e_0` be the remainder of the selector chain (prior to the
-  _<argumentPart>_).
+  _&lt;argumentPart&gt;_).
 
 - Perform expression inference on `e_0`, in context `_`, with deferred null
   shorting. Let `m_0` be the resulting elaborated expression and let `C` be the
   resulting null shorting clauses.
 
 - Let `m` and `T` be the result of performing [method invocation
-  inference](#Method-invocation-inference) on _<argumentPart>_, using `m_0` as
-  the target elaborated expression, `call` as the method name identifier, and
-  `K` as the type schema.
+  inference](#Method-invocation-inference) on _&lt;argumentPart&gt;_, using
+  `m_0` as the target elaborated expression, `call` as the method name
+  identifier, and `K` as the type schema.
 
 ### Static method tearoff
 
-If the selector chain is a sequence of 1 to 3 _<identifier>s_ separated by `.`,
-followed optionally by _<typeArguments>_, and the sequence of _<identifier>s_
-can be resolved to a static method or top level function, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, and no null shorting clauses, where `m` and `T` are
-determined as follows:
+If the selector chain is a sequence of 1 to 3 _&lt;identifier&gt;s_ separated by
+`.`, followed optionally by _&lt;typeArguments&gt;_, and the sequence of
+_&lt;identifier&gt;s_ can be resolved to a static method or top level function,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, and no null shorting clauses,
+where `m` and `T` are determined as follows:
 
 - Let `f` be the static method or top level function referred to by the
   _<identifier>_ sequence.
@@ -1986,11 +1996,11 @@ determined as follows:
 
 ### Constructor tearoff
 
-If the selector chain consists of _<typeName> <typeArguments>_? `.`
-_<identifierOrNew>_, and _<typeName>_ can be resolved to a type in the program,
-then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, and no null shorting clauses,
-where `m` and `T` are determined as follows:
+If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_? `.`
+_&lt;identifierOrNew&gt;_, and _&lt;typeName&gt;_ can be resolved to a type in
+the program, then the result of selector chain type inference in context `K` is
+the elaborated expression `m`, with static type `T`, and no null shorting
+clauses, where `m` and `T` are determined as follows:
 
 - Let `C` be the type named by _<typeName>_.
 
@@ -2024,29 +2034,30 @@ where `m` and `T` are determined as follows:
 
 ### Explicit extension tearoff or property get
 
-If the selector chain consists of 1 or 2 _<identifier>s_ separated by `.`,
-followed by _<argumentPart>_ `.` _<identifier>_, and the 1 or 2 _<identifier>s_
-before the _<argumentPart>_ can be resolved to an extension in the program, then
-the result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, where `m` and `T` are determined as
-follows:
+If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
+followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;_, and the 1 or 2
+_&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
+extension in the program, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
 ### Super method tearoff or property get
 
-If the selector chain consists of `super` `.` _<identifier>_, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, where `m` and `T` are determined as follows:
+If the selector chain consists of `super` `.` _&lt;identifier&gt;_, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
 
 _TODO(paulberry): specify this._
 
 ### Method tearoff or property get
 
-If the selector chain ends with (`.` | `?.`) _<identifier>_, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, and null shorting clauses `C`, where `m`, `T`, and `C` are
-determined as follows:
+If the selector chain ends with (`.` | `?.`) _&lt;identifier&gt;_, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
+`T`, and `C` are determined as follows:
 
 - Let `e_0` be the remainder of the selector chain (prior to the `.` or `?.`).
 
@@ -2092,30 +2103,37 @@ _TODO(paulberry): don't forget about null shorting syntax_
 
 ### Implicit this method tearoff with type arguments
 
-If the expression chain consists of _<identifier> <typeArguments>_, and
-_<identifier>_ __cannot__ be resolved to the name of a local variable, then the
-result of selector chain type inference in context `K` is the elaborated
-expression `m`, with static type `T`, and no null shorting clauses, where `m`
-and `T` are determined as follows:
+If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
+and _&lt;identifier&gt;_ __cannot__ be resolved to the name of a local variable,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, where `m` and `T` are
+determined as follows:
 
-_TODO(paulberry)_
-
-- It is a compile-time error if the expression chain does not have access to
-  `this`.
+_TODO(paulberry): specify this._
 
 ### Type instantiation
 
-If the expression chain consists of _<typeName> <typeArguments>_, and
-_<typeName>_ can be resolved to a type in the program, then the result of
-selector chain type inference in context `K` is the elaborated expression `m`,
-with static type `T`, and no null shorting clauses, where `m` and `T` are
-determined as follows:
+If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_,
+and _&lt;typeName&gt;_ can be resolved to a type in the program, then the result
+of selector chain type inference in context `K` is the elaborated expression
+`m`, with static type `T`, where `m` and `T` are determined as follows:
 
-_TODO(paulberry)_
+_TODO(paulberry): specify this._
+
+### Explicit extension index operation
+
+If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
+followed by _&lt;argumentPart&gt;_ `[` _&lt;expression&gt;_ `]`, and the 1 or 2
+_&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
+extension in the program, then the result of selector chain type inference in
+context `K` is the elaborated expression `m`, with static type `T`, where `m`
+and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
 
 ### Super index operation
 
-If the selector chain consists of `super` `[` _<expression>_ `]`, then the
+If the selector chain consists of `super` `[` _&lt;expression&gt;_ `]`, then the
 result of selector chain type inference in context `K` is the elaborated
 expression `m`, with static type `T`, where `m` and `T` are determined as
 follows:
@@ -2126,15 +2144,16 @@ _TODO(paulberry): don't forget to end null shorting._
 
 ### Index operation
 
-If the expression chain ends with `?`? `[` _<expression>_ `]`, then the result
-of selector chain type inference in context `K` is the elaborated expression
-`m`, with static type `T`, where `m` and `T` are determined as follows:
+If the selector chain ends with `?`? `[` _&lt;expression&gt;_ `]`, then the
+result of selector chain type inference in context `K` is the elaborated
+expression `m`, with static type `T`, where `m` and `T` are determined as
+follows:
 
 _TODO(paulberry): specify this._
 
 ### Null check
 
-If the expression chain ends with `!`, then the result of selector chain type
+If the selector chain ends with `!`, then the result of selector chain type
 inference in context `K` is the elaborated expression `m`, with static type `T`,
 where `m` and `T` are determined as follows:
 
@@ -2148,7 +2167,8 @@ Any selector chain that doesn't match one of the above cases is an illegal
 selector chain, and constitutes a compile-time error.
 
 _The only possible selector chains that don't match any of the above cases are
-selector chains that end in <typeArguments>. One such example is `x[y]<T>`._
+selector chains that end in &lt;typeArguments&gt;. One such example is
+`x[y]<T>`._
 
 ## Expression inference rules
 
