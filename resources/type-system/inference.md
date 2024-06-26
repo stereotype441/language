@@ -1306,7 +1306,8 @@ The procedure for argument part inference is as follows:
 
     - Let `C` be an empty list of type constraints, and let `{U_1, U_2, ...}` be
       the same as `{T_1, T_2, ...}`. _This covers the case of dynamic
-      invocation; the user-supplied type arguments are accepted verbatim._
+      invocation; the user-supplied type arguments are accepted without
+      modification._
 
   - Otherwise, `F` must be a function type. If the number of formal type
     parameters of `F` (which could be zero) matches the number of type arguments
@@ -1321,7 +1322,7 @@ The procedure for argument part inference is as follows:
     compile-time error (_wrong number of type arguments supplied_).
 
   - Otherwise, `F` must have at least one formal type parameter, and there must
-    be zero type arguments `T` (_in other words, type arguments must be
+    be zero type arguments `T` (_in other words, type arguments will be
     inferred_). Then:
 
     - Initialize `C` to an empty list of type constraints.
@@ -1350,8 +1351,8 @@ The procedure for argument part inference is as follows:
     U_2, ...}` for `{X_1, X_2, ...}` in `P_i`.
 
   - For each `e_i` in stage _k_ that _does not_ take the form of a
-    _<functionExpression>_ enclosed in zero or more parentheses, in order of
-    increasing _i_:
+    _&lt;functionExpression&gt;_ enclosed in zero or more parentheses, in order
+    of increasing _i_:
 
     - Let `m_i` be the result of performing expression inference on `e_i`, in
       context `K_i`.
