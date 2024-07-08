@@ -2405,41 +2405,6 @@ are guaranteed to be a subtype of `bool`, it follows that the the logical
 boolean expression will evaluate to an instance satisfying type `bool`, so
 soundness is satisfied._
 
-### Instance creation
-
-_TODO(paulberry): rework to be more similar to the "Implicit instance creation"
-section._
-
-Expression inference of an explicit instance creation expression (`new`
-_<constructorDesignation> <arguments>_, `const` _<constructorDesignation>
-<arguments>_, or simply _<constructorDesignation> <arguments>_), in context `K`,
-produces an elaborated expression `m` with static type `T`, and no null shorting
-clauses, where `m` and `T` are determined as follows:
-
-- Let `c` be the constructor referred to by _<constructorDesignation>_. If
-  _<constructorDesignation>_ cannot be resolved to a constructor, it is a
-  compile-time error.
-
-- Let `F` be the function type of `c`. _Note that if the type containing `c` is
-  generic, this will be a generic function type._ If _<constructorDesignation>_
-  cannot be resolved to a constructor, it is a compile-time error.
-
-- Let `{e_1, e_2, ...}` be the sequence of expressions in _<arguments>_, `{n_1,
-  n_2, ...}` be the sequence of optional names in _<arguments>_, and `{T_1, T_2,
-  ...}` be the sequence of zero or more type arguments in
-  _<constructorDesignation>_.
-
-- Invoke argument part inference using `F`, `{e_1, e_2, ...}`, `{n_1, n_2,
-  ...}`, `{T_1, T_2, ...}`, and `K`. Designate the result by `{m_1, m_2, ...}`,
-  `{U_1, U_2, ...}`, and `R`.
-
-- Let `m` be an instance creation expression that applies type arguments `{U_1,
-  U_2, ...}` and expression arguments `{e_1, e_2, ...}` to `c`, using `{n_1,
-  n_2, ...}` as named argument names.
-
-- Let `T` be `R`. _Soundness follows from the fact that `R` is the result of
-  substituting `{U_1, U_2, ...}` into the return type of `F`._
-
 ### Await expressions
 
 Expression inference of an await expression `await e_1`, in context `K`,
