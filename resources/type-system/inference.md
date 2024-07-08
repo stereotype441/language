@@ -1823,7 +1823,7 @@ guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
 ### Explicit extension invocation
 
 If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
-followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;
+followed by _&lt;argumentPart&gt;_ (`.` | `?.`) _&lt;identifier&gt;
 &lt;argumentPart&gt;_, and the 1 or 2 _&lt;identifier&gt;s_ before the first
 _&lt;argumentPart&gt;_ can be resolved to an extension in the program, then the
 result of selector chain type inference in context `K` is the elaborated
@@ -1942,9 +1942,9 @@ _TODO(paulberry): specify this._
 ### Explicit extension tearoff or property get
 
 If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
-followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;_, and the 1 or 2
-_&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
-extension in the program, then the result of selector chain type inference in
+followed by _&lt;argumentPart&gt;_ (`.` | `?.`) _&lt;identifier&gt;_, and the 1
+or 2 _&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to
+an extension in the program, then the result of selector chain type inference in
 context `K` is the elaborated expression `m`, with static type `T`, and no null
 shorting clauses, where `m` and `T` are determined as follows:
 
@@ -1991,9 +1991,9 @@ _TODO(paulberry): specify this._
 ### Explicit extension index operation
 
 If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
-followed by _&lt;argumentPart&gt;_ `[` _&lt;expression&gt;_ `]`, and the 1 or 2
-_&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
-extension in the program, then the result of selector chain type inference in
+followed by _&lt;argumentPart&gt;_ `?`? `[` _&lt;expression&gt;_ `]`, and the 1
+or 2 _&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to
+an extension in the program, then the result of selector chain type inference in
 context `K` is the elaborated expression `m`, with static type `T`, and no null
 shorting clauses, where `m` and `T` are determined as follows:
 
