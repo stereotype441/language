@@ -1150,7 +1150,7 @@ succintly, the syntax of Dart is extended to allow the following forms:
     evaluate to the result of evaluating `m`.
 
   - _The notation was deliberately chosen to resemble the `Maybe` monad in
-    Haskell, with has similar semantics._
+    Haskell, which has similar semantics._
 
 - `@VARIABLE_GET(v)` _TODO(paulberry)_
 
@@ -1249,14 +1249,14 @@ non-normative, so they are typeset in italics._
 ## Null shorting
 
 The process of elaborating an expression involving `?.` is complicated by the
-presence of null shorting, a process in which a subexpression evaluating to
-`null` may terminate evaluation not just of the immediately enclosing
-expression, but also one or more larger containing expressions. In circumstances
-where this may occur, we say that null shorting _may be extended_ from the
-smaller expression to the larger one. _For example, in `y = a?.b.f()`, if `a`
-evaluates to `null`, then the remainder of both `a?.b` and its enclosing
+presence of null shorting, a language feature in which a subexpression
+evaluating to `null` may terminate evaluation not just of the immediately
+enclosing expression, but also one or more larger containing expressions. In
+circumstances where this may occur, we say that null shorting _is extended_ from
+the smaller expression to the larger one. _For example, in `y = a?.b.f()`, if
+`a` evaluates to `null`, then the remainder of both `a?.b` and its enclosing
 expression `a?.b.f()` will be skipped, and `null` will immediately be assigned
-to `y`. So we say that null shorting may be extended from `a?.b` to `a?.b.f()`._
+to `y`. So we say that null shorting is extended from `a?.b` to `a?.b.f()`._
 
 When expression inference acts on an expression from which null shorting may be
 extended, the expression inference process produces both an elaborated
@@ -1266,16 +1266,17 @@ and `m_i` is an elaborated expression whose static type is a subtype of
 `T_i?`. Each `v_i` may appear in `m`, and in all `m_j` where `j > i`; when it
 does so, it is considered to have static type `T_i`.
 
-In the text below, all recursive invocations of expression inference will be
-specified as taking place either with _deferred_ null shorting or with
-_resolved_ null shorting.
+In the remainder of this document, all recursive invocations of expression
+inference will be specified as taking place either with _deferred_ null shorting
+or with _resolved_ null shorting.
 
 Deferred null shorting is used for cases where the type inference process for an
 expression `e_1` recursively invokes expression inference for subexpression
-`e_2`, and null shorting may be extended from `e_2` to `e_1`. When deferred null
-shorting is used, any null shorting clauses produced by the inference of `e_2`
-are considered to be an output of the recursive invocation, and may be further
-acted upon by the remainder of the type inference algorithm for `e_1`.
+`e_2`, and any null shorting that occurs in `e_2` will be extended to
+`e_1`. When deferred null shorting is used, any null shorting clauses produced
+by the inference of `e_2` are considered to be an output of the recursive
+invocation, and may be further acted upon by the remainder of the type inference
+logic for `e_1`.
 
 Resolved null shorting is used for all other cases where expression type
 inference is invoked on an expression `e`. The following process is used to
@@ -1298,13 +1299,13 @@ _For example, the type inference process for `f(a?.b.c)` works as
 follows. Assume that `f` is a top level function, `a` is a local variable with
 static type `T?`, `T.b` has static type `U`, and `U.c` has static type `V`:_
 
-- _Since null shorting may not be extended from `a?.b.c` to `f(a?.b.c)`, type
+- _Since null shorting is not extended from `a?.b.c` to `f(a?.b.c)`, type
   inference is recursively invoked on `a?.b.c`, with resolved null shorting:_
 
-  - _Since null shorting may be extended from `a?.b` to `a?.b.c`, type inference
-    is recursively invoked on `a?.b`, with deferred null shorting:_
+  - _Since null shorting is extended from `a?.b` to `a?.b.c`, type inference is
+    recursively invoked on `a?.b`, with deferred null shorting:_
 
-    - _Since null shorting may be extended from `a` to `a?.b`, type inference is
+    - _Since null shorting is extended from `a` to `a?.b`, type inference is
       recursively invoked on `a`, with deferred null shorting:_
 
       - _Type inference of `a` produces elaborated expression
@@ -1320,8 +1321,8 @@ static type `T?`, `T.b` has static type `U`, and `U.c` has static type `V`:_
     `v_1.b.c`, with static type `V`._
 
   - _Since type inference of `a?.b.c` was invoked with resolved null shorting,
-    these are combined together to produce `@RESOLVED_NULL_SHORT(T v_1 <-
-    @VARIABLE_GET(a); v_1.b.c)`._
+    the null shorting clause and elaborated expression are combined together to
+    produce `@RESOLVED_NULL_SHORT(T v_1 <- @VARIABLE_GET(a); v_1.b.c)`._
 
 - _Type inference of `f(a?.b.c)` now proceeds, producing
   `@STATIC_INVOKE(f(@RESOLVED_NULL_SHORT(T v_1 <- @VARIABLE_GET(a);
@@ -1881,7 +1882,7 @@ guaranteed to be an instance satisfying `T_0`. So soundness is satisfied._
 ### Explicit extension invocation
 
 If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
-followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;
+followed by _&lt;argumentPart&gt;_ (`.` | `?.`) _&lt;identifier&gt;
 &lt;argumentPart&gt;_, and the 1 or 2 _&lt;identifier&gt;s_ before the first
 _&lt;argumentPart&gt;_ can be resolved to an extension in the program, then the
 result of selector chain type inference in context `K` is the elaborated
@@ -1914,7 +1915,8 @@ shorting clauses `C`, where `m`, `T`, and `C` are determined as follows:
 
 - Let `C` and `m_1` be determined as follows:
 
-  - If the token preceding the _<identifier>_ is `?.`, then:
+  - If the token preceding the _<identifier>_ is `?.` (meaning the method
+    invocation is null-aware), then:
 
     - Let `U` be `NonNull(T_0)`.
 
@@ -1924,7 +1926,8 @@ shorting clauses `C`, where `m`, `T`, and `C` are determined as follows:
 
     - Let `m_1` be `v`, with static type `U`.
 
-  - Otherwise (the token preceding the _<identifier>_ is `.`):
+  - Otherwise (the token preceding the _<identifier>_ is `.`, meaning the method
+    invocation is not null-aware):
 
     - Let `C` be `C_0`.
 
@@ -2035,9 +2038,9 @@ clauses, where `m` and `T` are determined as follows:
 ### Explicit extension tearoff or property get
 
 If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
-followed by _&lt;argumentPart&gt;_ `.` _&lt;identifier&gt;_, and the 1 or 2
-_&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
-extension in the program, then the result of selector chain type inference in
+followed by _&lt;argumentPart&gt;_ (`.` | `?.`) _&lt;identifier&gt;_, and the 1
+or 2 _&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to
+an extension in the program, then the result of selector chain type inference in
 context `K` is the elaborated expression `m`, with static type `T`, and no null
 shorting clauses, where `m` and `T` are determined as follows:
 
@@ -2124,9 +2127,9 @@ _TODO(paulberry): specify this._
 ### Explicit extension index operation
 
 If the selector chain consists of 1 or 2 _&lt;identifier&gt;s_ separated by `.`,
-followed by _&lt;argumentPart&gt;_ `[` _&lt;expression&gt;_ `]`, and the 1 or 2
-_&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to an
-extension in the program, then the result of selector chain type inference in
+followed by _&lt;argumentPart&gt;_ `?`? `[` _&lt;expression&gt;_ `]`, and the 1
+or 2 _&lt;identifier&gt;s_ before the _&lt;argumentPart&gt;_ can be resolved to
+an extension in the program, then the result of selector chain type inference in
 context `K` is the elaborated expression `m`, with static type `T`, and no null
 shorting clauses, where `m` and `T` are determined as follows:
 
@@ -2178,7 +2181,19 @@ Dart expression.
 
 ### Parenthesized expression
 
-_TODO(paulberry): specify, and make sure it resolves null shorting._
+Expression inference of a parenthesized expression `(e_1)`, in context `K`,
+produces an elaborated expression `m` with static type `T`, and no null shorting
+clauses, where `m` and `T` are determined as follows:
+
+- Let `m` be the result of performing expression inference on `e_1`, in context
+  `K`, with resolved null shorting, and let `T` be its static type.
+
+_Note that wrapping a subexpression in parentheses forces null shorting to be
+resolved. So, for example, `a?.b.toString()` has a different meaning than
+`(a?.b).toString()`. In the former case, if `a` evaluates to `null`, `toString`
+will not be invoked, so the entire expression will evaluate to `null`. In the
+latter case, if `a` evaluates to `null`, `toString` __will__ be invoked, so the
+entire expression will evaluate to the __string__ "`null`"._
 
 ### Null
 
