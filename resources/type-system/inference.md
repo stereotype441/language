@@ -1154,7 +1154,8 @@ succintly, the syntax of Dart is extended to allow the following forms:
 
 In addition, the following forms are added to allow constructor invocations,
 dynamic method invocations, function object invocations, instance method
-invocations, and static/toplevel method invocations to be distinguished:
+invocations, local function invocations, and static/toplevel method invocations
+to be distinguished:
 
 - `@DYNAMIC_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
 
@@ -1162,12 +1163,15 @@ invocations, and static/toplevel method invocations to be distinguished:
 
 - `@INSTANCE_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
 
+- `@LOCAL_INVOKE(l<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
+
 - `@STATIC_INVOKE(f<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
 
 In each of these forms, each `m_i` represents an elaborated expression, each
 `T_i` represents a type, and each `n_i` represents an optional argument name
-identifier. When present, `id` represents an identifier or operator name, and
-`f` represents a static method or top level function.
+identifier. When present, `id` represents an identifier or operator name, `l`
+represents a local function, and `f` represents a static method or top level
+function.
 
 The semantics of each of these forms is to evaluate the `m_i` in sequence, then
 perform the appropriate kind of method or function call.
@@ -1735,8 +1739,7 @@ At the core of the Dart expression grammar is the production rule
 _&lt;primary&gt; &lt;selector&gt;*_, which allows suffixes such as `!`,
 `.identifier`, _&lt;argumentPart&gt;_, and so on, to be chained to the right of
 a primary expression such as `this`. Any construct produced using this
-production rule, where _&lt;selector&gt;_ is invoked at least once, is known as
-a _selector chain_.
+production rule is known as a _selector chain_.
 
 The static semantics of a selector chain depends on both name resolution and
 static type analysis. _For example, `a.b()` could be a static method invocation
@@ -1763,6 +1766,25 @@ the method name identifier, and `()` as the &lt;argumentPart&gt;._
 
 The selector chain type inference rules are as follows.
 
+### Local function invocation
+
+If the selector chain consists of _&lt;identifier&gt; &lt;argumentPart&gt;_, and
+the _&lt;identifier&gt;_ can be resolved to a local function, then the result of
+selector chain type inference in context `K` is the elaborated expression `m`,
+with static type `T`, and no null shorting clauses, where `m` and `T` are
+determined as follows:
+
+- Let `f` be the local function referred to by the _&lt;identifier&gt;_, and let
+  `F` be its type.
+
+- Invoke [argument part inference](#Argument-part-inference) on
+  _&lt;argumentPart&gt;_, using `F` as the target function type and `K` as the
+  context. Designate the result by `{m_1, m_2, ...}`, `{U_1, U_2, ...}`, and
+  `R`.
+
+- Let `m` be `@LOCAL_INVOKE(f<U_1, U_2, ...>(n_1: m_1, n_2: m_2, ...))`, and let
+  `T` be `R`. _
+
 ### Static method invocation
 
 If the selector chain is a sequence of 1 to 3 _&lt;identifier&gt;s_ separated by
@@ -1786,13 +1808,14 @@ where `m` and `T` are determined as follows:
   let `T` be `R`. _This is sound because `R` is the result of substituting
   `<U_1, U_2, ...>` for the type arguments of `f` in the return type of `f`._
 
-### Implicit instance creation
+### Constructor invocation
 
-If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_? (`.`
-_&lt;identifierOrNew&gt;_)? _&lt;arguments&gt;_, and _&lt;typeName&gt;_ can be
-resolved to a type in the program, then the result of selector chain type
-inference in context `K` is the elaborated expression `m`, with static type `T`,
-and no null shorting clauses, where `m` and `T` are determined as follows:
+If the selector chain consists of (`new` | `const`)? _&lt;typeName&gt;
+&lt;typeArguments&gt;_? (`.`  _&lt;identifierOrNew&gt;_)? _&lt;arguments&gt;_,
+and _&lt;typeName&gt;_ can be resolved to a type in the program, then the result
+of selector chain type inference in context `K` is the elaborated expression
+`m`, with static type `T`, and no null shorting clauses, where `m` and `T` are
+determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -1918,6 +1941,16 @@ determined as follows:
   `m_0` as the target elaborated expression, `call` as the method name
   identifier, and `K` as the type schema.
 
+### Local function tearoff or variable get
+
+If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
+and the _&lt;identifier&gt;_ can be resolved to a local function or variable,
+then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, and no null shorting clauses,
+where `m` and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
+
 ### Static method tearoff
 
 If the selector chain is a sequence of 1 to 3 _&lt;identifier&gt;s_ separated by
@@ -1936,6 +1969,16 @@ _&lt;identifierOrNew&gt;_, and _&lt;typeName&gt;_ can be resolved to a type in
 the program, then the result of selector chain type inference in context `K` is
 the elaborated expression `m`, with static type `T`, and no null shorting
 clauses, where `m` and `T` are determined as follows:
+
+_TODO(paulberry): specify this._
+
+### Implicit this method tearoff or property get
+
+If the selector chain consists of _&lt;identifier&gt;_ _&lt;typeArguments&gt;_?,
+and _&lt;identifier&gt;_ __cannot__ be resolved using local scope resolution
+rules, then the result of selector chain type inference in context `K` is the
+elaborated expression `m`, with static type `T`, and no null shorting clauses,
+where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
 
@@ -1968,19 +2011,9 @@ expression `m`, with static type `T`, and null shorting clauses `C`, where `m`,
 
 _TODO(paulberry): specify this._
 
-### Implicit this method tearoff with type arguments
+### Type reference
 
-If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
-and _&lt;identifier&gt;_ __cannot__ be resolved to the name of a local variable,
-then the result of selector chain type inference in context `K` is the
-elaborated expression `m`, with static type `T`, and no null shorting clauses,
-where `m` and `T` are determined as follows:
-
-_TODO(paulberry): specify this._
-
-### Type instantiation
-
-If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_, and
+If the selector chain consists of _&lt;typeName&gt; &lt;typeArguments&gt;_?, and
 _&lt;typeName&gt;_ can be resolved to a type in the program, then the result of
 selector chain type inference in context `K` is the elaborated expression `m`,
 with static type `T`, and no null shorting clauses, where `m` and `T` are
@@ -2024,20 +2057,6 @@ inference in context `K` is the elaborated expression `m`, with static type `T`,
 and no null shorting clauses, where `m` and `T` are determined as follows:
 
 _TODO(paulberry): specify this._
-
-### Illegal selector chains
-
-Any selector chain that doesn't match one of the above cases is an illegal
-selector chain, and constitutes a compile-time error.
-
-_The only possible selector chains that don't match any of the above cases are
-selector chains that end in &lt;typeArguments&gt;. One such example is
-`x[y]<T>`._
-
-## Expression inference rules
-
-The following sections detail the specific type inference rules for each valid
-Dart expression.
 
 ### Parenthesized expression
 
@@ -2164,6 +2183,43 @@ clauses.
 _The runtime behavior of a symbol literal is to evaluate to an instance of the
 type `Symbol`, so soundness is satisfied._
 
+### This
+
+Expression inference of `this`, regardless of context, produces the elaborated
+expression `this` with static type `T`, and no null shorting clauses, where `T`
+is the interface type of the immediately enclosing class, enum, mixin, or
+extension type, or the "on" type of the immediately enclosing extension.
+
+_The runtime behavior of `this` is to evaluate to the target of the current
+instance member invocation, which is guaranteed to be an instance satisfying
+this type. So soundness is satisfied._
+
+### Function expression
+
+_TODO(paulberry): specify this._
+
+### List literal
+
+_TODO(paulberry): specify this._
+
+### Set or map literal
+
+_TODO(paulberry): specify this._
+
+### Illegal selector chains
+
+Any selector chain that doesn't match one of the above cases is an illegal
+selector chain, and constitutes a compile-time error.
+
+_The only possible selector chains that don't match any of the above cases are
+selector chains that end in &lt;typeArguments&gt;. One such example is
+`x[y]<T>`._
+
+## Expression inference rules
+
+The following sections detail the specific type inference rules for each valid
+Dart expression.
+
 ### Throw
 
 Expression inference of a throw expression `throw e_1`, regardless of context,
@@ -2178,17 +2234,6 @@ shorting clauses, where `m` is determined as follows:
 
 - Let `m` be `throw m_1`. _Soundness follows from the fact that `throw m_1`
   never evaluates to a value._
-
-### This
-
-Expression inference of `this`, regardless of context, produces the elaborated
-expression `this` with static type `T`, and no null shorting clauses, where `T`
-is the interface type of the immediately enclosing class, enum, mixin, or
-extension type, or the "on" type of the immediately enclosing extension.
-
-_The runtime behavior of `this` is to evaluate to the target of the current
-instance member invocation, which is guaranteed to be an instance satisfying
-this type. So soundness is satisfied._
 
 ### Logical boolean expressions
 
