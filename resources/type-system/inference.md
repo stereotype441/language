@@ -1217,14 +1217,14 @@ non-normative, so they are typeset in italics._
 ## Null shorting
 
 The process of elaborating an expression involving `?.` is complicated by the
-presence of null shorting, a process in which a subexpression evaluating to
-`null` may terminate evaluation not just of the immediately enclosing
-expression, but also one or more larger containing expressions. In circumstances
-where this may occur, we say that null shorting _is extended_ from the smaller
-expression to the larger one. _For example, in `y = a?.b.f()`, if `a` evaluates
-to `null`, then the remainder of both `a?.b` and its enclosing expression
-`a?.b.f()` will be skipped, and `null` will immediately be assigned to `y`. So
-we say that null shorting is extended from `a?.b` to `a?.b.f()`._
+presence of null shorting, a language feature in which a subexpression
+evaluating to `null` may terminate evaluation not just of the immediately
+enclosing expression, but also one or more larger containing expressions. In
+circumstances where this may occur, we say that null shorting _is extended_ from
+the smaller expression to the larger one. _For example, in `y = a?.b.f()`, if
+`a` evaluates to `null`, then the remainder of both `a?.b` and its enclosing
+expression `a?.b.f()` will be skipped, and `null` will immediately be assigned
+to `y`. So we say that null shorting is extended from `a?.b` to `a?.b.f()`._
 
 When expression inference acts on an expression from which null shorting may be
 extended, the expression inference process produces both an elaborated
@@ -1287,8 +1287,8 @@ static type `T?`, `T.b` has static type `U`, and `U.c` has static type `V`:_
     static type `V`._
 
   - _Since type inference of `a?.b.c` was invoked with resolved null shorting,
-    these are combined together to produce `@RESOLVED_NULL_SHORT(T v_1 <- a;
-    v_1.b.c)`._
+    the null shorting clause and elaborated expression are combined together to
+    produce `@RESOLVED_NULL_SHORT(T v_1 <- a; v_1.b.c)`._
 
 - _Type inference of `f(a?.b.c)` now proceeds, producing
   `@STATIC_INVOKE(f(@RESOLVED_NULL_SHORT(T v_1 <- a; v_1.b.c)))`._
@@ -2049,7 +2049,7 @@ clauses, where `m` and `T` are determined as follows:
   `K`, with resolved null shorting, and let `T` be its static type.
 
 _Note that wrapping a subexpression in parentheses forces null shorting to be
-resolved. For example, `a?.b.toString()` has a different meaning than
+resolved. So, for example, `a?.b.toString()` has a different meaning than
 `(a?.b).toString()`. In the former case, if `a` evaluates to `null`, `toString`
 will not be invoked, so the entire expression will evaluate to `null`. In the
 latter case, if `a` evaluates to `null`, `toString` __will__ be invoked, so the
