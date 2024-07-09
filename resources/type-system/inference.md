@@ -2045,7 +2045,7 @@ determined as follows:
 
 ### Local function tearoff or variable get
 
-If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
+If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_?,
 and the _&lt;identifier&gt;_ can be resolved to a local function or variable,
 then the result of selector chain type inference in context `K` is the
 elaborated expression `m`, with static type `T`, and no null shorting clauses,
@@ -2240,9 +2240,10 @@ _TODO(paulberry): don't forget about null shorting syntax_
 
 ### Parenthesized expression
 
-Expression inference of a parenthesized expression `(e_1)`, in context `K`,
-produces an elaborated expression `m` with static type `T`, and no null shorting
-clauses, where `m` and `T` are determined as follows:
+If the selector chain is a parenthesized expression `(e_1)`, then the result of
+selector chain type inference, in context `K`, is an elaborated expression `m`
+with static type `T`, and no null shorting clauses, where `m` and `T` are
+determined as follows:
 
 - Let `m` be the result of performing expression inference on `e_1`, in context
   `K`, with resolved null shorting, and let `T` be its static type.
@@ -2256,18 +2257,19 @@ entire expression will evaluate to the __string__ "`null`"._
 
 ### Null
 
-Expression inference of the literal `null`, regardless of context, produces the
-elaborated expression `null`, with static type `Null`, and no null shorting
-clauses.
+If the selector chain is the literal `null`, then the result of selector chain
+type inference, regardless of context, is the elaborated expression `null`, with
+static type `Null`, and no null shorting clauses.
 
 _The runtime behavior of `null` is to evaluate to an instance of the type
 `Null`, so soundness is satisfied._
 
 ### Integer literals
 
-Expression inference of an integer literal `l`, in context `K`, produces an
-elaborated expression `m` with static type `T`, and no null shorting clauses,
-where `m` and `T` are determined as follows:
+If the selector chain is an integer literal `l`, then the result of selector
+chain type inference, in context `K`, is an elaborated expression `m` with
+static type `T`, and no null shorting clauses, where `m` and `T` are determined
+as follows:
 
 - Let `i` be the numeric value of `l`.
 
@@ -2300,27 +2302,29 @@ where `m` and `T` are determined as follows:
 
 ### Double literals
 
-Expression inference of a double literal `l`, regardless of context, produces
-the elaborated expression `l`, with static type `double`, and no null shorting
-clauses.
+If the selector chain is a double literal `l`, then the result of selector chain
+type inference, regardless of context, is the elaborated expression `l`, with
+static type `double`, and no null shorting clauses.
 
 _The runtime behavior of a double literal is to evaluate to an instance of the
 type `double`, so soundness is satisfied._
 
 ### Booleans
 
-Expression inference of a boolean literal `e` (`true` or `false`), regardless of
-context, produces the elaborated expression `e`, with static type `bool`, and no
-null shorting clauses.
+If the selector chain is a boolean literal `e` (`true` or `false`), then the
+result of selector chain type inference, regardless of context, is the
+elaborated expression `e`, with static type `bool`, and no null shorting
+clauses.
 
 _The runtime behavior of a boolean literal is to evaluate to an instance of the
 type `bool`, so soundness is satisfied._
 
 ### Strings
 
-Expression inference of a string literal `s`, regardless of context, produces an
-elaborated expression `m` with static type `String`, and no null shorting
-clauses, where `m` is determined as follows:
+If the selector chain is a string literal `s`, then the result of selector chain
+type inference, regardless of context, is an elaborated expression `m` with
+static type `String`, and no null shorting clauses, where `m` is determined as
+follows:
 
 - If `s` contains no _stringInterpolations_, then let `m` be `s`. _The runtime
   behavior of a string literal with no _stringInterpolations_ is to evaluate to
@@ -2356,19 +2360,20 @@ clauses, where `m` is determined as follows:
 
 ### Symbol literal
 
-Expression inference of a symbol literal `e`, regardless of context, produces
-the elaborated expression `e`, with static type `Symbol`, and no null shorting
-clauses.
+If the selector chain is a symbol literal `e`, then the result of selector chain
+type inference, regardless of context, is the elaborated expression `e`, with
+static type `Symbol`, and no null shorting clauses.
 
 _The runtime behavior of a symbol literal is to evaluate to an instance of the
 type `Symbol`, so soundness is satisfied._
 
 ### This
 
-Expression inference of `this`, regardless of context, produces the elaborated
-expression `this` with static type `T`, and no null shorting clauses, where `T`
-is the interface type of the immediately enclosing class, enum, mixin, or
-extension type, or the "on" type of the immediately enclosing extension.
+If the selector chain is `this`, then the result of selector chain type
+inference, regardless of context, is the elaborated expression `this` with
+static type `T`, and no null shorting clauses, where `T` is the interface type
+of the immediately enclosing class, enum, mixin, or extension type, or the "on"
+type of the immediately enclosing extension.
 
 _The runtime behavior of `this` is to evaluate to the target of the current
 instance member invocation, which is guaranteed to be an instance satisfying
@@ -2395,10 +2400,10 @@ _The only possible selector chains that don't match any of the above cases are
 selector chains that end in &lt;typeArguments&gt;. One such example is
 `x[y]<T>`._
 
-## Expression inference rules
+## Remaining expression inference rules
 
-The following sections detail the specific type inference rules for each valid
-Dart expression.
+The following sections detail the specific type inference rules for Dart
+expressions whose grammar is lower precedence than a selector chain.
 
 ### Throw
 
