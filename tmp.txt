@@ -1,0 +1,59 @@
+# mermaid.live
+# Problem: super<typeArgs>() and Extension(...)<typeArgs>() aren't supported
+stateDiagram-v2
+    state n1 <<choice>>
+    state n2 <<choice>>
+    state n3 <<choice>>
+    state n4 <<choice>>
+    [*] --> n1: (new | const)?
+    n1 --> n2: &ltidentifier&gt
+    n2 --> Prefix
+    n2 --> TopGetter
+    n2 --> TopFunction
+    n2 --> Type
+    n2 --> Extension
+    n2 --> Method
+    n2 --> Getter
+    n2 --> LocalFunction
+    n2 --> LocalVariable
+    [*] --> Super: super
+    Prefix --> n3: . &ltidentifier&gt
+    n3 --> TopGetter
+    n3 --> TopFunction
+    n3 --> Type
+    n3 --> Extension
+    Type --> n4: . &ltidentifier&gt
+    Extension --> n4: . &ltidentifier&gt
+    n4 --> Method
+    n4 --> Getter
+    n4 --> Constructor
+    Type --> Constructor: . new
+    Super --> SuperMember: . &ltidentifier&gt
+    InstantiatedType --> Constructor: . (&ltidentifier&gt | new)
+    ExtensionOverride --> ExtensionMember: . &ltidentifier&gt
+    TopFunction --> InstantiatedTopFunction: &lttypeArguments&gt
+    Method --> InstantiatedMethod: &lttypeArguments&gt
+    LocalFunction --> InstantiatedLocalFunction: &lttypeArguments&gt
+    Type --> InstantiatedType: &lttypeArguments&gt
+    Extension --> InstantiatedExtension: &lttypeArguments&gt
+    SuperMember --> InstantiatedSuperMember: &lttypeArguments&gt
+    ExtensionMember --> InstantiatedExtensionMember: &lttypeArguments&gt
+    TopFunction --> TopFunctionInvocation: &ltarguments&gt
+    InstantiatedTopFunction --> TopFunctionInvocation: &ltarguments&gt
+    Type --> ConstructorInvocation: &ltarguments&gt
+    InstantiatedType --> ConstructorInvocation: &ltarguments&gt
+    Constructor --> ConstructorInvocation: &ltarguments&gt
+    Extension --> ExtensionOverride: &ltarguments&gt
+    InstantiatedExtension --> ExtensionOverride: &ltarguments&gt
+    Method --> MethodInvocation: &ltarguments&gt
+    InstantiatedMethod --> MethodInvocation: &ltarguments&gt
+    LocalFunction --> LocalFunctionInvocation: &ltarguments&gt
+    InstantiatedLocalFunction --> LocalFunctionInvocation: &ltarguments&gt
+    SuperMember --> SuperMemberInvocation: &ltarguments&gt
+    InstantiatedSuperMember --> SuperMemberInvocation: &ltarguments&gt
+    ExtensionMember --> ExtensionMemberInvocation: &ltarguments&gt
+    InstantiatedExtensionMember --> ExtensionMemberInvocation: &ltarguments&gt
+    Super --> SuperCallInvocation: &ltarguments&gt
+    ExtensionOverride --> ExtensionCallInvocation: &ltarguments&gt
+    Super --> SuperIndexOperation: [ &ltexpression&gt ]
+    ExtensionOverride --> ExtensionIndexOperation: [ &ltexpression&gt ]
