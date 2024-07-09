@@ -1,62 +1,54 @@
 # mermaid.live
 stateDiagram-v2
-    state n1 <<choice>>
-    state n2 <<choice>>
-    state n3 <<choice>>
-    state n4 <<choice>>
-    [*] --> n1: (new | const)?
-    n1 --> n2: &ltidentifier&gt
-    n2 --> Prefix
-    n2 --> TopGetter
-    n2 --> TopFunction
-    n2 --> Type
-    n2 --> Extension
-    n2 --> Method
-    n2 --> Getter
-    n2 --> LocalFunction
-    n2 --> LocalVariable
+    direction LR
+    state n0 <<choice>>
+    [*] --> n0: &ltidentifier&gt
+    n0 --> Local
+    n0 --> TypeVar
+    n0 --> Member
+    n0 --> Type
+    n0 --> Prefix
+    n0 --> Extension
     [*] --> Super: super
-    Prefix --> n3: . &ltidentifier&gt
-    n3 --> TopGetter
-    n3 --> TopFunction
-    n3 --> Type
-    n3 --> Extension
-    Type --> n4: . &ltidentifier&gt
-    Extension --> n4: . &ltidentifier&gt
-    n4 --> Method
-    n4 --> Getter
-    n4 --> Constructor
-    Type --> Constructor: . new
-    Super --> SuperMember: . &ltidentifier&gt
-    InstantiatedType --> Constructor: . (&ltidentifier&gt | new)
-    ExtensionOverride --> ExtensionMember: . &ltidentifier&gt
-    TopFunction --> InstantiatedTopFunction: &lttypeArguments&gt
-    Method --> InstantiatedMethod: &lttypeArguments&gt
-    LocalFunction --> InstantiatedLocalFunction: &lttypeArguments&gt
-    Type --> InstantiatedType: &lttypeArguments&gt
-    Extension --> InstantiatedExtension: &lttypeArguments&gt
-    SuperMember --> InstantiatedSuperMember: &lttypeArguments&gt
-    ExtensionMember --> InstantiatedExtensionMember: &lttypeArguments&gt
-    Super --> InstantiatedSuper: &lttypeArguments&gt
-    ExtensionOverride --> InstantiatedExtensionOverride: &lttypeArguments&gt
-    TopFunction --> TopFunctionInvocation: &ltarguments&gt
-    InstantiatedTopFunction --> TopFunctionInvocation: &ltarguments&gt
-    Type --> ConstructorInvocation: &ltarguments&gt
-    InstantiatedType --> ConstructorInvocation: &ltarguments&gt
-    Constructor --> ConstructorInvocation: &ltarguments&gt
-    Extension --> ExtensionOverride: &ltarguments&gt
-    InstantiatedExtension --> ExtensionOverride: &ltarguments&gt
-    Method --> MethodInvocation: &ltarguments&gt
-    InstantiatedMethod --> MethodInvocation: &ltarguments&gt
-    LocalFunction --> LocalFunctionInvocation: &ltarguments&gt
-    InstantiatedLocalFunction --> LocalFunctionInvocation: &ltarguments&gt
-    SuperMember --> SuperMemberInvocation: &ltarguments&gt
-    InstantiatedSuperMember --> SuperMemberInvocation: &ltarguments&gt
-    ExtensionMember --> ExtensionMemberInvocation: &ltarguments&gt
-    InstantiatedExtensionMember --> ExtensionMemberInvocation: &ltarguments&gt
-    Super --> SuperCallInvocation: &ltarguments&gt
-    InstantiatedSuper --> SuperCallInvocation: &ltarguments&gt
-    ExtensionOverride --> ExtensionCallInvocation: &ltarguments&gt
-    InstantiatedExtensionOverride --> ExtensionCallInvocation: &ltarguments&gt
-    Super --> SuperIndexOperation: [ &ltexpression&gt ]
-    ExtensionOverride --> ExtensionIndexOperation: [ &ltexpression&gt ]
+    Local --> LocalInvocation: &ltargumentPart&gt
+    state n1 <<choice>>
+    Member --> n1: &ltargumentPart&gt
+    n1 --> staticInvocation
+    n1 --> implicitThisInvocation
+    Type --> ConstructorInvocation: &ltargumentPart&gt
+    Extension --> ExtensionOverride: &ltargumentPart&gt
+    ExtensionOverride --> ExtensionCallInvocation: &ltargumentPart&gt
+    Super --> SuperCallInvocation: &ltargumentPart&gt
+    Constructor --> ConstructorInvocation: &ltargumentPart&gt
+    ExtensionMember --> ExtensionInvocation: &ltargumentPart&gt
+    SuperMember --> SuperInvocation: &ltargumentPart&gt
+    Local --> LocalTearoff: &lttypeArguments&gt
+    state n2 <<choice>>
+    Member --> n2: &lttypeArguments&gt
+    n2 --> StaticTearoff
+    n2 --> ImplicitThisTearoff
+    Type --> TypeInstantiation: &lttypeArguments&gt
+    ExtensionOverride --> ExtensionCallTearoff: &lttypeArguments&gt
+    Super --> SuperCallTearoff: &lttypeArguments&gt
+    Constructor --> ConstructorTearoff: &lttypeArguments&gt
+    ExtensionMember --> ExtensionTearoff: &lttypeArguments&gt
+    SuperMember --> SuperTearoff: &lttypeArguments&gt
+    state n3 <<choice>>
+    Type --> n3: `.` &ltidentifier&gt
+    n3 --> Member
+    n3 --> Constructor
+    state n4 <<choice>>
+    Prefix --> n4: `.` &ltidentifier&gt
+    n4 --> Member
+    n4 --> Type
+    n4 --> Extension
+    state n5 <<choice>>
+    TypeInstantiation --> n5: `.` &ltidentifier&gt
+    n5 --> Constructor
+    Extension --> Member: `.` &ltidentifier&gt
+    ExtensionOverride --> ExtensionMember: (`.` | `?.`) &ltidentifier&gt
+    Super --> SuperMember: `.` &ltidentifier&gt
+    ExtensionOverride --> ExtensionIndexInvocation: `?`? `[` &ltexpression&gt `]`
+    Super --> SuperIndexInvocation: `[` &ltexpression&gt `]`
+    classDef notAccepting fill:#f88
+    class Prefix, Extension, ExtensionOverride, Super notAccepting
