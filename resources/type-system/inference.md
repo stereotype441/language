@@ -591,7 +591,7 @@ replaced with `Never`, and every covariant occurrence of `Xi` replaced with
     - `Ui` is the greatest closure of `Ti` with respect to `L`
 
 
-### Type schema elimination (least and greatest closure of a type schema)
+### Type schema elimination (least and greatest closure of a type schema with respect to `_`)
 
 We define the greatest and least closure of a type schema `P` with respect to
 `_` in the same way as we define the greatest and least closure with respect to
@@ -601,6 +601,21 @@ a type variable `X` above, where `_` is treated as a type variable in the set
 Note that the least closure of a type schema is always a subtype of any type
 which matches the schema, and the greatest closure of a type schema is always a
 supertype of any type which matches the schema.
+
+
+### Full type variable elimination (least and greatest closure of a type schema with respect to all type variables)
+
+We define the greatest and least closure of a type schema `P` with respect to
+_all type variables_ in the same way as we define the greatest and least closure
+with respect to a type variable `X` above, where all type variables are treated
+as though they are in the set `L`, but `_` is treated as though it is _not_ in
+the set `L`.
+
+_So, for example, the greatest closure of `Map<T, _>` with respect to all type
+variables is `Map<Object?, _>`._
+
+Note that any type that matches a type schema `P` also matches its greatest
+closure with respect to all type variables.
 
 
 ## Upper bound
@@ -1159,6 +1174,9 @@ to be distinguished:
 
 - `@DYNAMIC_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
 
+- `@CONSTRUCTOR_INVOKE(KEYWORD T_0.id(n_1: m_1, n_2: m_2, ...))`, where
+  `KEYWORD` is either `new` or `const`.
+
 - `@FUNCTION_INVOKE(m_0.call<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
 
 - `@INSTANCE_INVOKE(m_0.id<T_1, T_2, ...>(n_1: m_1, n_2: m_2, ...))`
@@ -1169,9 +1187,9 @@ to be distinguished:
 
 In each of these forms, each `m_i` represents an elaborated expression, each
 `T_i` represents a type, and each `n_i` represents an optional argument name
-identifier. When present, `id` represents an identifier or operator name, `l`
-represents a local function, and `f` represents a static method or top level
-function.
+identifier. When present, `id` represents an identifier or operator name (or
+`new` in the case of `@CONSTRUCTOR_INVOKE`), `l` represents a local function,
+and `f` represents a static method or top level function.
 
 The semantics of each of these forms is to evaluate the `m_i` in sequence, then
 perform the appropriate kind of method or function call.
@@ -1400,6 +1418,11 @@ The procedure for argument part inference is as follows:
 - Let `R_F` be the return type of `F`. Or, if `F` is `∅`, then let `R_F` be
   `dynamic`.
 
+- If argument part inference is being performed for a constant constructor
+  invocation (TODO(paulberry): fix this reference), let `R_F_2` be the result of
+  applying full type variable elimination (TODO(paulberry): fix this reference)
+  to `R_F`. Otherwise, let `R_F_2` be `R_F`.
+
 - Produce an initial list of type constraints `C`, and an initial list of type
   schemas `{U_1, U_2, ...}`, as follows:
 
@@ -1431,7 +1454,7 @@ The procedure for argument part inference is as follows:
     - Initialize `{U_1, U_2, ...}` to a list of type schemas, of the same length
       as `{X_1, X_2, ...}`, each of which is `_`.
 
-    - Using subtype constraint generation, attempt to match `R_F` as a subtype
+    - Using subtype constraint generation, attempt to match `R_F_2` as a subtype
       of `K` with respect to the list of type variables `{X_1, X_2, ...}`.
 
       - If this succeeds, then accumulate the resulting list of type constraints
@@ -1817,7 +1840,43 @@ of selector chain type inference in context `K` is the elaborated expression
 `m`, with static type `T`, and no null shorting clauses, where `m` and `T` are
 determined as follows:
 
-_TODO(paulberry): specify this._
+- Let `C` be the type named by _&lt;typeName&gt;_.
+
+- Let `id` be the identifier named by _&lt;identifierOrNew&gt;_, or `new` if it
+  was omitted.
+
+- Let `f` be the constructor named `id` in `C`. If there is no such constructor,
+  it is a compile-time error.
+
+- Let `F` be the function type of `f`. _Note that if `C` is generic, this will
+  be a generic function type._
+
+- Determine whether this is a constant constructor invocation, using the
+  following logic:
+
+  - If the _&lt;typeName&gt;_ is preceded by `const`, this is a constant
+    constructor invocation.
+
+  - Otherwise, if the _&lt;typeName&gt;_ is preceded by `new`, this is _not_ a
+    constant constructor invocation.
+
+  - Otherwise, this is a constant constructor invocation if and only if the
+    selector chain is in a constant context.
+
+  It is a compile-time error if this is a constant constructor invocation, but
+  `f` is not a const constructor.
+
+- Invoke argument part inference on _&lt;argumentPart&gt;_, using `F` as the
+  target function type and `K` as the context. Designate the result by `{m_1,
+  m_2, ...}`, `{U_1, U_2, ...}`, and `R`.
+
+- If this is a constant constructor invocation, let `KEYWORD` be
+  `const`. Otherwise let it be `new`.
+
+- Let `m` be `@CONSTRUCTOR_INVOKE(KEYWORD C<U_1, U_2, ...>.id(n_1: m_1, n_2:
+  m_2, ...))`, and let `T` be `R`. _This is sound because `R` is the result of
+  substituting `<U_1, U_2, ...>` for the type arguments of `f` in the return
+  type of `f`, which is the same as `C`._
 
 ### Implicit this invocation
 
