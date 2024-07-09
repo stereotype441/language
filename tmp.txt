@@ -1,5 +1,4 @@
 # mermaid.live
-# Problem: super<typeArgs>() and Extension(...)<typeArgs>() aren't supported
 stateDiagram-v2
     state n1 <<choice>>
     state n2 <<choice>>
@@ -38,6 +37,8 @@ stateDiagram-v2
     Extension --> InstantiatedExtension: &lttypeArguments&gt
     SuperMember --> InstantiatedSuperMember: &lttypeArguments&gt
     ExtensionMember --> InstantiatedExtensionMember: &lttypeArguments&gt
+    Super --> InstantiatedSuper: &lttypeArguments&gt
+    ExtensionOverride --> InstantiatedExtensionOverride: &lttypeArguments&gt
     TopFunction --> TopFunctionInvocation: &ltarguments&gt
     InstantiatedTopFunction --> TopFunctionInvocation: &ltarguments&gt
     Type --> ConstructorInvocation: &ltarguments&gt
@@ -54,6 +55,8 @@ stateDiagram-v2
     ExtensionMember --> ExtensionMemberInvocation: &ltarguments&gt
     InstantiatedExtensionMember --> ExtensionMemberInvocation: &ltarguments&gt
     Super --> SuperCallInvocation: &ltarguments&gt
+    InstantiatedSuper --> SuperCallInvocation: &ltarguments&gt
     ExtensionOverride --> ExtensionCallInvocation: &ltarguments&gt
+    InstantiatedExtensionOverride --> ExtensionCallInvocation: &ltarguments&gt
     Super --> SuperIndexOperation: [ &ltexpression&gt ]
     ExtensionOverride --> ExtensionIndexOperation: [ &ltexpression&gt ]
