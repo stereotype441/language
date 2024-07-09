@@ -2003,7 +2003,7 @@ determined as follows:
 
 ### Local function tearoff or variable get
 
-If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_,
+If the selector chain consists of _&lt;identifier&gt; &lt;typeArguments&gt;_?,
 and the _&lt;identifier&gt;_ can be resolved to a local function or variable,
 then the result of selector chain type inference in context `K` is the
 elaborated expression `m`, with static type `T`, and no null shorting clauses,
