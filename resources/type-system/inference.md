@@ -1418,9 +1418,10 @@ The procedure for argument part inference is as follows:
 - Let `R_F` be the return type of `F`. Or, if `F` is `∅`, then let `R_F` be
   `dynamic`.
 
-- If argument part inference is being performed for a constant constructor
-  invocation (TODO(paulberry): fix this reference), let `R_F_2` be the result of
-  applying full type variable elimination (TODO(paulberry): fix this reference)
+- If argument part inference is being performed for a [constant constructor
+  invocation](#Constructor-invocation), let `R_F_2` be the result of applying
+  [full type variable
+  elimination](#full-type-variable-elimination-least-and-greatest-closure-of-a-type-schema-with-respect-to-all-type-variables)
   to `R_F`. Otherwise, let `R_F_2` be `R_F`.
 
 - Produce an initial list of type constraints `C`, and an initial list of type
