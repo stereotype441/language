@@ -11,10 +11,7 @@ stateDiagram-v2
     n0 --> Extension
     [*] --> Super: super
     Local --> LocalInvocation: &ltargumentPart&gt
-    state n1 <<choice>>
-    Member --> n1: &ltargumentPart&gt
-    n1 --> staticInvocation
-    n1 --> implicitThisInvocation
+    Member --> StaticOrImplicitThisInvocation: &ltargumentPart&gt
     Type --> ConstructorInvocation: &ltargumentPart&gt
     Extension --> ExtensionOverride: &ltargumentPart&gt
     ExtensionOverride --> ExtensionCallInvocation: &ltargumentPart&gt
@@ -23,10 +20,7 @@ stateDiagram-v2
     ExtensionMember --> ExtensionInvocation: &ltargumentPart&gt
     SuperMember --> SuperInvocation: &ltargumentPart&gt
     Local --> LocalTearoff: &lttypeArguments&gt
-    state n2 <<choice>>
-    Member --> n2: &lttypeArguments&gt
-    n2 --> StaticTearoff
-    n2 --> ImplicitThisTearoff
+    Member --> StaticOrImplicitThisTearoff: &lttypeArguments&gt
     Type --> TypeInstantiation: &lttypeArguments&gt
     ExtensionOverride --> ExtensionCallTearoff: &lttypeArguments&gt
     Super --> SuperCallTearoff: &lttypeArguments&gt
@@ -42,9 +36,7 @@ stateDiagram-v2
     n4 --> Member
     n4 --> Type
     n4 --> Extension
-    state n5 <<choice>>
-    TypeInstantiation --> n5: `.` &ltidentifier&gt
-    n5 --> Constructor
+    TypeInstantiation --> Constructor: `.` &ltidentifier&gt
     Extension --> Member: `.` &ltidentifier&gt
     ExtensionOverride --> ExtensionMember: (`.` | `?.`) &ltidentifier&gt
     Super --> SuperMember: `.` &ltidentifier&gt
