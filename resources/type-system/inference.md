@@ -1775,6 +1775,51 @@ an instance get (if `a` is an expression whose type contains a getter called
 inferring a selector chain requires interleaving the rules for type inference
 with the name resolution process.
 
+This is accomplished by processing the selector chain in three steps:
+
+- First, the &lt;primary&gt; and the &lt;selector&gt;s (if present) are examined
+  from left to right in order to identify an initial subexpression consisting of
+  the &lt;primary&gt; and zero or more (possibly all) of the
+  &lt;selector&gt;s. This initial subexpression is known as the _head_ of the
+  selector chain. _The algorithm for finding the head is given precisely below
+  (TODO(paulberry): where?), but it can be loosely understood to be smallest
+  leftmost part of the selector chain that is both (a) a syntactically valid
+  expression, and (b) a subexpression of the full selector chain. For example,
+  the root of the selector chain `int.parse('1').abs().toString()` is
+  `int.parse('1')`, because although `int` and `int.parse` are both
+  syntactically valid expressions, they are not subexpressions of
+  `int.parse('1').abs().toString()`, whereas `int.parse('1')` __is__ a
+  subexpression of `int.parse('1').abs().toString()`._
+
+- Second, the selector chain is interpreted as an expression tree, with the head
+  as its leftmost subexpression, and with each selector that follows
+  contributing to a larger subexpression that acts as its parent. _For example,
+  in `int.parse('1').abs().toString()`, `int.parse('1')` is the leftmost
+  subexpression, and then `int.parse('1').abs()` is a parent subexpression whose
+  leftmost child is `int.parse('1')`, and finally
+  `int.parse('1').abs().toString()` (the whole selector chain) is a grandparent
+  subexpression, whose leftmost child is `int.parse('1').abs()`._
+
+  _Note that the head might itself contain subexpressions; for example the head
+  `int.parse('1')` contains the subexpression `'1'`. But no subexpressions of
+  the head are "leftmost", meaning none of them start at the same token as the
+  head._
+
+- Finally, the tree is traversed as usual, using the [expression inference
+  rules](#Expression-inference-rules) described below.
+
+These steps are interleaved into the full expression inference process, so the
+identification of the root (TODO(paulberry): replace with a section link) occurs
+as soon as type inference reaches the selector chain. _Note, however, that as an
+optimization, the implementation may choose to make a heuristic guess at parsing
+time as to what the head of the selector chain is, so that it can represent the
+result of parsing as an expression tree. If the implementation does this, it
+needs to be prepared to modify the tree at the time of type analysis, if the
+heuristic guess turns out to be incorrect. This is the strategy used by the
+analyzer._
+
+TODO(paulberry): I am here
+
 This is accomplished by pattern matching the selector chain against each of the
 rules below in turn. The first matching rule is chosen, and is used to type
 infer the selector chain.
