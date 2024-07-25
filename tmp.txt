@@ -3,12 +3,13 @@ stateDiagram-v2
     direction LR
     state n0 <<choice>>
     [*] --> n0: &ltidentifier&gt
-    n0 --> Local
-    n0 --> TypeVar
-    n0 --> Member
-    n0 --> Type
-    n0 --> Prefix
-    n0 --> Extension
+    n0 --> Local: local
+    n0 --> TypeVar: typeVar
+    n0 --> Member: member
+    n0 --> Member: (unresolved)
+    n0 --> Type: type
+    n0 --> Prefix: prefix
+    n0 --> Extension: extension
     [*] --> Super: super
     Local --> LocalInvocation: &ltargumentPart&gt
     Member --> StaticOrImplicitThisInvocation: &ltargumentPart&gt
@@ -29,13 +30,13 @@ stateDiagram-v2
     SuperMember --> SuperTearoff: &lttypeArguments&gt
     state n3 <<choice>>
     Type --> n3: `.` &ltidentifier&gt
-    n3 --> Member
-    n3 --> Constructor
+    n3 --> Member: member
+    n3 --> Constructor: constructor
     state n4 <<choice>>
     Prefix --> n4: `.` &ltidentifier&gt
-    n4 --> Member
-    n4 --> Type
-    n4 --> Extension
+    n4 --> Member: member
+    n4 --> Type: type
+    n4 --> Extension: extension
     TypeInstantiation --> Constructor: `.` &ltidentifier&gt
     Extension --> Member: `.` &ltidentifier&gt
     ExtensionOverride --> ExtensionMember: (`.` | `?.`) &ltidentifier&gt
