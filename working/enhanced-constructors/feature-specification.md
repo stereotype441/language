@@ -9,15 +9,12 @@ Version 1.0 (see [CHANGELOG](#CHANGELOG) at end)
 ## Summary
 
 This proposal extends the set of actions that can be performed in the body of a
-non-redirecting generative constructor to include:
-
-- Writing to non-late final fields and
-
-- Explicitly invoking super constructors.
+non-redirecting generative constructor to include writing to non-late final
+fields, and explicitly invoking super constructors.
 
 This makes constructors more flexible, avoids the need for constructor
 initializer lists, and simplifies the interaction between augmentations and
-constructors.
+constructors (TODO: talk about augmentations).
 
 To preserve soundness, flow analysis is enhanced to ensure that a reference to
 `this` cannot escape from a constructor body before the object has been
@@ -310,10 +307,6 @@ main() {
 }
 ```
 
-TODO: back-end consequences: it must be possible to access `this` on an
-incomplete object. E.g. prior to the call to `super()`, a closure could be
-created that reads from a variable in `this`.
-
 ### Scoping differences with `super.`
 
 As with `this.NAME.`, a `super.NAME` parameter is considered to introduce a
@@ -372,8 +365,6 @@ class C extends B {
   }
 }
 ```
-
-TODO: fully specify `super.` behvaior.
 
 ## Details
 
@@ -604,9 +595,22 @@ reporting, which could create a lot of user confusion._
 
 ## Const constructors
 
-It is still a compile time error for a `const` constructor to have a
-body. Therefore, `const` constructors must still initialize their fields using
-initializer lists, as they do today.
+To allow const constructors to be written in the new style, the restriction that
+a const constructor must not have a body is dropped. Instead, a const
+constructor is allowed to have a block body, but all statements in the block
+must take one of the following forms, or there is a compile-time error:
+
+- A write to a non-late final field (`this.FIELDNAME = VALUE` or `FIELDNAME =
+  VALUE`), where `VALUE` is a potentially constant expression.
+
+- A call to a super constructor (`super(ARGUMENTS)` or `super.NAME(ARGUMENTS)`),
+  where all the expressions in `ARGUMENTS` are potentially constant expressions.
+
+- An assert statement (`assert(CONDITION)` or `assert(CONDITION, MESSAGE)`),
+  where `CONDITION` and `MESSAGE` are potentially constant expressions.
+
+These conditions ensure that it will still be tractable for the constant
+evaluator to analyze constants that invoke const constructors.
 
 ## Backward compatibility
 
@@ -697,6 +701,10 @@ Extract method should determine whether to extract a static method or not
   constructor call, if unsafely writing to fields is permissible, or at the
   point of the super call, if we need to compile to a lower lever representation
   with its own soundness requirements).
+
+TODO: back-end consequences: it must be possible to access `this` on an
+incomplete object. E.g. prior to the call to `super()`, a closure could be
+created that reads from a variable in `this`.
 
 ## Breakingness
 
