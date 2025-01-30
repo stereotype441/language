@@ -9,13 +9,11 @@ Version 1.0 (see [CHANGELOG](#CHANGELOG) at end)
 ## Summary
 
 This proposal extends the set of actions that can be performed in the body of a
-constructor to include:
+non-redirecting generative constructor to include:
 
-- Writing to non-late final fields,
+- Writing to non-late final fields and
 
-- Explicitly invoking super constructors,
-
-- And explicitly invoking generative constructors in the same class.
+- Explicitly invoking super constructors.
 
 This makes constructors more flexible, avoids the need for constructor
 initializer lists, and simplifies the interaction between augmentations and
@@ -32,10 +30,9 @@ constructor invocations and final field assignments to occur prior to the
 constructor body, in a so-called "initializer list". For example, in the code
 below, the constructor for class `C` performs three actions: the assignment `j =
 x + 1`, the super constructor invocation `super(x * 2)`, and the ordinary method
-invocation `m()`. But the first two of those actions must be performed using
-initializer list syntax, prior to the `{` that begins the constructor body,
-whereas the third action can be written as an ordinary statement, inside the
-constructor body (indeed, it must, since it implicitly refers to `this`).
+invocation `m()`. The first two of those actions are done using initializer list
+syntax, prior to the `{` that begins the constructor body, and the third action
+is an ordinary statement, inside the constructor body.
 
 ```dart
 class B {
@@ -68,54 +65,69 @@ class C extends B {
 }
 ```
 
-The reason we require the user to use an initializer list to initialize `j` and
-to call the super constructor is because initializer lists are restricted in a
-way that ensures soundness. In particular, in an initializer list:
+The reason is because if we allowed arbitrary super calls and final field
+assignments in a constructor body, the user could break the language's soundness
+guarantees by doing one of the following things:
 
-- It is not permissible to refer to `this` either explicitly or implicitly,
+- Reading from a field beore its initial value has been written.
 
-- And all final fields in the class must be initialized prior to invoking the
-  super constructor. (If there is no explicit super constructor invocation in
-  the initializer list, an implicit `super()` invocation is appended to the
-  initializer list.)
+- Calling a superclass method, getter, or setter before calling a super
+  constructor (this could break soundness by causing the superclass to read from
+  a field before its initial value has been written).
 
-These two restrictions together ensure that it is not possible to refer to
-`this` before _all_ fields have been initialized. Therefore, even though object
-construction is a multi-step process, it's never possible for a program to try
-to read from an uninitialized field.
+- Writing to a non-late final field more than once.
 
-However, these restrictions come at a cost, both in terms of making the language
-less approachable (since they require the user to learn a special syntax that's
-used only in constructors), and in terms of flexibility, since they require any
-given constructor to always initialize fields in the same order, and always call
-the same super constructor. Also, these restrictions have complicated our
-efforts to allow augmentations to apply to constructors.
+- Calling a super constructor more than once on the same object (this could
+  break soundness by causing the base class to write to a non-late final field
+  more than once).
+
+However, there is another way we could guarantee soundness, without forcing the
+user to use a different syntax for initializers and statements: by using flow
+analysis to track the progress of initialization through the constructor
+body. That's what this proposal aims to do.
 
 ## Proposal
 
-This proposal addresses these costs by allowing the following kinds of
-expressions to appear within the body of a generative constructor:
+The following kinds of expressions will become legal within the body of a
+non-redirecting generative constructor:
 
-- A write to a non-late final field, either via an implicit `this` reference
+- A write to a non-late final field, either via an explicit `this` reference
   (`this.FIELDNAME = VALUE`) or an implicit `this` reference (`FIELDNAME =
   VALUE`). _Note that in this document, all-caps names are metasyntactic
   variables._
 
+  - These are the only two syntaxes that are recognized as a valid write to a
+    non-late final field. Other syntaxes that are semantically equivalent
+    (e.g. `(this).FIELDNAME = VALUE`) are not permitted.
+
 - A call to a super constructor, using the syntax `super(ARGUMENTS)` (for an
-  unnamed constructor) or `super.NAME(ARGUMENTS)` (for a named constructor).
+  unnamed constructor) or `super.NAME(ARGUMENTS)` (for a named constructor). For
+  the rest of this document, such an expression is called a "`super` constructor
+  invocation expression".
 
-- A call to another generative constructor in the same class, using the syntax
-  `this(ARGUMENTS)` (for an unnamed constructor) or `this.NAME(ARGUMENTS)` (for
-  a named constructor).
+With the restriction that `super` constructor invocation expressions may only
+appear as the top level expression within an expression statement. _Rationale:
+this simplifies ambiguity resolution (see TODO), and doesn't significantly
+reduce expressive power. It may also simplify the implementation._
 
-To ensure soundness, flow analysis will be modified in order to ensure, at
-compile time, that all control flow paths in a generative constructor either:
+To ensure soundness, flow analysis will be modified to ensure, at compile time,
+that all reachable control flow paths through a generative constructor:
 
-- Invoke another generative constructor exactly once, prior to accessing `this`,
+- Contain exactly one invocation of either another generative constructor or of
+  a super constructor.
 
-- Or invoke a super constructor exactly once, after writing to every non-late
-  final field exactly once, and prior to accessing `this`. (Exception: a
-  constructor can read from fields of `this` that it has already initialized.)
+- Write to every non-late final field exactly once prior to invoking a super
+  constructor.
+
+- Do not write to any non-late final field after invoking a super constructor.
+
+- Do not explicitly or implicitly access `this` in any way prior to invoking a
+  super constructor, except:
+
+  - To perform the required writes to non-late final fields prior to invoking a
+    super constructor.
+
+  - To read from fields that have already been written to.
 
 This allows the vast majority of constructor initializer lists to be rewritten
 as ordinary statements in the constructor body. For example, this constructor
@@ -132,7 +144,7 @@ from the analyzer's `VariableDeclarationImpl` class:
   }
 ```
 
-could be rewritten to:
+can now be rewritten to:
 
 ```dart
   VariableDeclarationImpl({
@@ -151,7 +163,7 @@ could be rewritten to:
 To avoid a "syntactic cliff" between the old and new styles of coding generative
 constructors, it is allowed to mix the two styles. That is, even in a generative
 constructor that has an initializer list, the body is allowed to contain writes
-to non-late final fields, or invocations of super constructors.
+to non-late final fields, or `super` constructor invocation expressions.
 
 For example, here is the same `VariableDeclarationImpl` constructor again,
 written in a mixed style:
@@ -177,17 +189,37 @@ of a generative constructor (and allows for the entire initializer list to be
 elided, if it contains nothing else). To preserve backwards compatibility, and
 to avoid making new style constructors more verbose than old style ones,
 enhanced constructors support the same feature. The precise rules are specified
-below, but in a nutshell (TODO: link), if neither the body nor the initializer
-list of a generative constructor contains an explicit super constructor
-invocation, then an implicit call to `super()` is considered to occur at the
-earliest point (or points) in the construtcor body at which all non-late final
-fields have been definitely assigned.
+below (TODO: link), but in a nutshell, if neither the body nor the initializer
+list of a generative constructor contains an explicit `super` constructor
+invocation expression, then an implicit call to `super()` is considered to occur
+at the earliest point(s) in the constructor body at which it would be sound to
+do so.
 
-TODO: example
+For example, this constructor from the analyzer's `AwaitExpressionImpl` class:
 
-TODO: make an issue to discuss alternatives
+```dart
+  AwaitExpressionImpl({
+    required this.awaitKeyword,
+    required ExpressionImpl expression,
+  }) : _expression = expression {
+    _becomeParentOf(_expression);
+  }
+```
 
-TODO: specify fully
+could be rewritten to:
+
+```dart
+  AwaitExpressionImpl({
+    required this.awaitKeyword,
+    required ExpressionImpl expression,
+  }) {
+    _expression = expression;
+    _becomeParentOf(_expression);
+  }
+```
+
+With the implicit call to `super()` occurring right after the assignment
+`_expression = expression;`.
 
 ### Interaction with `this.` and `super.` parameters
 
@@ -243,7 +275,7 @@ class C {
   C(this.i)
     : f = (() { print(i); }) // prints the value passed to `C()`
   {
-    g = () { print(i); }; // prints the current vlaue of `this.i`
+    g = () { print(i); }; // prints the current value of `this.i`
   }
 }
 
@@ -341,188 +373,185 @@ class C extends B {
 }
 ```
 
-TODO(paulberry): would it be better to change the scoping rules to make super
-parameters in scope for the whole constructor body?
-
 TODO: fully specify `super.` behvaior.
-
-### Interaction with augmentations
-
-TODO(paulberry): spell out details here
 
 ## Details
 
 ### Parser support
 
 No additional parser support is needed to support this feature, since the two
-new pieces of syntax (writes to final fields and super constructor invocations)
-are already accepted by the parser.
+new pieces of syntax (writes to final fields and super/this constructor
+invocations) are already accepted by the parser.
 
 ### Flow analysis enhancements
 
-When flow analysis is used on a generative constructor, it tracks the following
-additional pieces of boolean state, for every control flow path:
+#### New boolean state
 
-TODO: explanatory text saying the effect of each.
+When flow analysis is used on a non-redirecting generative constructor, it
+tracks the following additional pieces of boolean state, for every control flow
+path:
 
-- For each final field in the containing class, a boolean indicating whether the
-  field is definitely assigned (initial state: `true` if the field is
-  initialized at the site of its declaration or via a `this.` parameter;
-  otherwise `false`). _These booleans are used to ensure that no control flow
-  path calls a super constructor before all non-late final fields have been
-  initialized._
+- For each non-late field in the containing class, an `assigned` boolean that, if true,
+  indicates that the field is definitely assigned.
 
-- For each final field in the containing class, whether the field is definitely
-  unassigned (initial state: `false` if the field is initialized at the site of
-  its declaration or in the initializer list, otherwise `true`). _These booleans
-  are used to ensure that no control flow path attempts to write to a particular
-  non-late final field more than once._
+- For each non-late final field in the containing class, an `unassigned` boolean
+  that, if true, indicates that the field is definitely unassigned.
 
-- Whether a constructor invocation has definitely occurred (initial state:
-  `true` if the initializer list contains a super constructor invocation,
-  otherwise `false`). _This boolean is used to ensure that no reference to
-  `this` occurs before the super constructor has been invoked._
+- A single `constructed` boolean that, if true, indicates that a constructor
+  invocation has definitely occurred.
 
-- Whether a constructor invocation has definitely _not_ occurred (initial state:
-  `false` if the initializer list contains a super constructor invocation,
-  otherwise `true`). _This boolean is used to ensure that no control flow path
-  attempts to call a super constructor more than once._
+- A single `unconstructed` boolean that, if true, indicates that a constructor
+  invocation has definitely _not_ occurred.
 
 The behavior of all these boolean variables in the presence of a flow analysis
 `join` operation is the same as it is for the other boolean variables tracked by
-flow analysis, namely:
+flow analysis. _These rules are:_
 
-- When joining two reachable control flow paths `A` and `B` to form a joined
+- _When joining two reachable control flow paths `A` and `B` to form a joined
   control flow path `C`, any given boolean variable is true in `C` if and only
-  if it is true in both `A` and `B`.
+  if it is true in both `A` and `B`._
 
-- When joining a reachable control flow path `A` with an unreachable control
+- _When joining a reachable control flow path `A` with an unreachable control
   flow path `B` to form a joined control flow path `C`, all boolean variables
   take on the same values in `C` as they do in `A`. (And vice versa with the
-  roles of `A` and `B` reversed.)
+  roles of `A` and `B` reversed.)_
 
-- When joining two unreachable control flow paths `A` and `B` to form a joined
+- _When joining two unreachable control flow paths `A` and `B` to form a joined
   control flow path `C`, if there exists a split point from which `A` is
   reachable but `B` is not, all boolean variables take on the same values in `C`
-  as they do in `A`. (And vice versa with the roles of `A` and `B` reversed.)
+  as they do in `A`. (And vice versa with the roles of `A` and `B` reversed.)_
 
-- When joining two unreachable control flow paths `A` and `B` to form a joined
+- _When joining two unreachable control flow paths `A` and `B` to form a joined
   control flow path `C`, if there is no difference in the reachability of `A`
   and `B` from prior split points, then any given boolean variable is true in
-  `C` if and only if it is true in both `A` and `B`.
+  `C` if and only if it is true in both `A` and `B`._
 
-_Note that only the first two bullet items are necessary for soundness, since
-they are the only two bullet items that deal with reachable control flow
-paths. The remaining two bullet points exist solely to help avoid spurious
-errors from occurring in unreachable code._
+_Note that it's possible for a field's `unassigned` and `assigned` booleans to
+both be `false`; this indicates that control flow has reached a point where flow
+analysis cannot tell whether the field has been assigned. This is no different
+from how local variables are handled. Similarly, it's possible for the
+`constructed` and `unconstructed` booleans to both be `false`; this indicates
+that control flow has reached a point where flow analysis cannot tell whether a
+constructor invocation has occurred._
+
+#### New state initialization
+
+At the start of analyzing a constructor (prior to analyzing the initializer
+list, if there is one), these new state variables are initialized as follows:
+
+- `constructed` is initialized to `false`.
+
+- `unconstructed` is initialized to `true`.
+
+- For each non-late field in the class:
+
+  - If the field's declaration has an initializer, then the field's `assigned`
+    boolean is initialized to `true` and its `unassigned` boolean is initialized
+    to `false`.
+
+  - Otherwise, if the constructor has a `this.NAME` parameter corresponding to
+    the field, then the field's `assigned` boolean is initialized to `true` and
+    its `unassigned` boolean is initialized to `false`.
+
+  - Otherwise, if the field is non-final and has a nullable type, then the
+    field's `assigned` boolean is initialized to `true` and its `unassigned`
+    boolean is initialized to `false`, and the field is considered to take on an
+    initial value of `null`.
+
+  - Otherwise, the field's `assigned` boolean is initialized to `false` and its
+    `unassigned` boolean is initialized to `true`.
+
+#### New state updates
+
+When flow analysis encounters a write to a non-final field (either in an
+initializer or in the constructor body), it updates the field's `assigned`
+boolean to `true` and its `unassigned` boolean to `false`, and updates the
+`thisUnused` boolean to `false`.
+
+When flow analysis encounters a `super` initializer or a `super` constructor
+invocation expression, or it inserts an implicit `super` constructor invocation
+expression (see TODO: link), after processing the arguments, it updates the
+`constructed` boolean to `true`, the `unconstructed` boolean to `false`, and the
+`thisUnused` boolean to `false`.
+
+#### New flow analysis errors
+
+If a write to a non-late final field occurs at a point in control flow where the
+field's `unassigned` boolean is `false`, there is a compile-time error (_final
+field possibly initialized twice_).
+
+If a write to a non-late final field occurs inside a nested function or closure,
+there is a compile-time error (_final field cannot be initialized inside a
+nested function or closure_).
+
+If a read of a non-late field occurs at a point in control flow where the
+field's `assigned` boolean is `false`, there is a compile-time error (_read of
+possibly uninitialized field_).
+
+If a `super` constructor invocation expression occurs at a point in control flow
+where any non-late field's `assigned` boolean is `false`, there is a
+compile-time error (_field uninitialized at time of super call_).
+
+If a `super` constructor invocation expression occurs at a point in control flow
+where the `unconstructed` boolean is `false`, there is a compile-time error
+(_super constructor possibly called twice_).
+
+If a `super` constructor invocation expression occurs inside a nested function
+or closure, there is a compile-time error (_super constructor invocation
+expression cannot occur inside a nested function or closure_).
+
+If the `constructed` boolean is `false` at the point where control flow reaches
+the end of the constructor body, there is a compile-time error (_a control path
+failed to invoke a super constructor_).
+
+If any explicit or implicit use of `this` is made that is not a read or write of
+a field declared in the class itself, at a point in control flow where the
+`constructed` boolean is `false`, then there is a compile-time error (_instance
+is not fully constructed yet_). _Examples include:_
+
+- _A method or operator invocation on `this`._
+
+- _A call to an explicitly declared getter, setter, or method (possibly
+  abstract) either in the class or one of its superclasses._
+
+- _A read or write of a field declared in a superclass._
+
+- _A read or write of an abstract field._
+
+- _A call to a setter, getter, or method that is part of the class's interface
+  due to the presence of an `implements` clause, and not backed by a field
+  declared in the class.
+
+- _Any other use of `this` that is not syntactically part of a read or write of
+  a field._
+
+If any explicit or implicit use of `this` is made that does not resolve to an
+invocation of a super constructor, at a point in control flow where the
+`constructed` boolean is `false`, then there is a compile-time error (_instance
+is not fully constructed yet_).
 
 ### Insertion of implicit super constructor invocations
 
 Prior to type inference of a constructor, the constructor's initializer list and
-body are scanned to determine whether they already contain at least one of the
-following:
+body are scanned to determine whether they already contain an initializer or an
+expression statement of the form `super(ARGUMENTS)`, where the superclass
+contains an unnamed constructor, or of the form `super.NAME(ARGUMENTS)`, where
+the superclass contains a constructor with a name matching `NAME`.
 
-- An initializer or an expression of the form `this(ARGUMENTS)`, where the
-  current class contains an unnamed constructor, or of the form
-  `this.NAME(ARGUMENTS)`, where the current class contains a constructor with a
-  name matching `NAME`.
+If neither of these forms is found, an implicit super constructor invocation
+will be inserted at the first statement boundary in any control flow path which
+(a) is inside the constructor body, and (b) has a `true` value for the
+`assigned` booleans of all non-late fields. (_This is the earliest point at
+which the user could have written the super constructor invocation explicitly._)
 
-- An initializer or an expression of the form `super(ARGUMENTS)`, where the
-  superclass contains an unnamed constructor, or of the form
-  `super.NAME(ARGUMENTS)`, where the superclass contains a constructor with a
-  name matching `NAME`.
+_Note that expressions of the above forms that do not constitute a complete
+initializer or the top level expression in an expression statement do not
+prevent an implicit super constructor invocation from being inserted, because
+they cannot represent super constructor invocations._
 
-If none of these forms is found, an implicit super constructor invocation needs
-to be inserted.
-
-_The precise rules for when to insert an implicit super constructor invocation
-are specified below. Informally, the super constructor invocation will be
-inserted at the earliest point or points in the constructor body at which all
-non-late final fields have been definitely assigned._
-
-### Semantic analysis of field writes
-
-Expression inference of `this.f = e_1` (where `f` is the name of a final field
-in the containing class), in context `K`, produces an elaborated expression `m`
-with static type `T`, where `m` and `T` are determined as follows:
-
-- If the field is non-late, then:
-
-  - It is a compile time error if the expression is not contained within the
-    body of a generative constructor. _Non-late final fields can only be set at
-    construction time._
-
-  - It is a compile time error if the expression is contained within a function
-    expression or a local function. _Flow analysis conservatively assumes that
-    any given function expression or local function might be invoked any number
-    of times (including zero) any time after it is created. Under this
-    assumption there is no way to prove that the field will be initialized
-    exactly once._
-
-- Let `T_1` be the static type of the field `f`.
-
-- Let `m_1` be the result of performing expression inference on `e_1`, in
-  context `T_1`, and coercing the result to type `T_1`. _This mimics the
-  existing semantics of field initializers, as well as the semantics of a write
-  to a field that is either non-final or late._
-
-- If `f` is definitely assigned at the point in control flow after execution of
-  `m_1`, then it is a compile time error. _This mimics the existing semantics of
-  writes to final local variables._
-
-- If `f` is not a late field, and `f` is not definitely unassigned at the point
-  in control flow after execution of `e_1`, then it is a compile-time
-  error. _This mimics the existing semantics of writes to non-late final local
-  variables._
-
-- Let `m` be `this.f = m_1`, and let `T` be the static type of `m_1`.
-
-- In the control flow path leaving `m`, set `f`'s "definitely assigned" boolean
-  to `true` and set `f`'s "definitely unassigned" boolean to `false`.
-
-- If it was previously determined (TODO: link) that an implicit super
-  constructor needs to be inserted, and `f` not a late field, and all non-late
-  fields are definitely assigned in the control path leaving `m`, and the
-  expression is inside the constructor body (rather than the initializer list),
-  then an implicit invocation of `super()` is inserted after `m`. _This does not
-  change the fact that `m` evaluates to the same value as `m_1`._
-
-It is a compile-time error for the target of a compound assignment or pre/post
-increment/decrement to take the form `this.f`, where `f` is the name of a final
-field in the containing class. _This was previously allowed if the field was
-late, but it was guaranteed to fail at runtime, so it seems sensible to prohibit
-it._
-
-The same error applies if the target of a compound assignment or pre/post
-increment/decrement takes the form `f`, where scope resolution rules resolve `f`
-to a final field in the containing class.
-
-It is a compile-time error for the target of an if-null assignment (`??=`) to
-take the form `this.f`, where `f` is the name of a final field in the containing
-class. _This was previously allowed if the field was late, but it was not
-useful, since it would either fail at runtime or have no effect, so it seems
-sensible to prohibit it._
-
-The same error applies if the target of a compound assignment or pre/post
-increment/decrement takes the form `f`, where scope resolution rules resolve `f`
-to a final field in the containing class.
-
-An expression or initializer of the form `f = e_1` (where scope resolution rules
-resolve `f` to a final field in the containing class) is treated as equivalent
-to the expression `this.f = e_1`.
-
-### Semantic analysis at the end of a constructor initializer list
-
-When type inference reaches the end of a generative constructor's initializer
-list, the following check is made: If the flow analysis state indicates that all
-of the class's final fields are definitely assigned, and if it was previously
-determined (TODO: link) that an implicit super constructor needs to be inserted,
-then an implicit invocation of `super()` is inserted just before the top of the
-constructor body.
-
-If the generative constructor has no initializer list, this check is performed
-at the beginning of type inference of the constructor, before visiting the
-constructor body (if any).
+_Note that the only points where a super constructor invocation might be
+inserted are at the top of the constructor body, and immediately after a
+statement that includes an assignment to a non-late field._
 
 ### Disambiguation of super constructor invocations from super method invocations
 
@@ -537,248 +566,117 @@ ambiguous:
   constructor named `NAME` in the superclass, or the invocation of an instance
   method or getter named `NAME` in the superclass or one of its ancestors.
 
-- `this(ARGUMENTS)` could be either an invocation of an unnamed constructor in
-  the current class, or the invocation of an instance method `call` in the
-  interface of the current class.
+These forms are all disambiguated as follows:
 
-- `this.NAME(ARGUMENTS)` could be either an invocation of an accessible
-  constructor named `NAME` in the current class, or the invocation of an
-  instance method or getter named `NAME` in the interface of the current class.
+- If the expression is the top level expression in an expression statement, and
+  the `constructed` boolean maintained by flow analysis is `false` at the point
+  in control flow where the expression appears, it is treated as a constructor
+  invocation.
 
-If one of these forms is found during type inference, then before any of the
-`ARGUMENTS` are visited, the expression is disambiguated using the following
-algorithm.
+- Otherwise it is treated as a method or getter invocation.
 
-- The appropriate named or unnamed constructor is looked up, in either the
-  current class or the superclass.
+_To see why this disambiguation rule makes sense, consider the fact that a
+`super` constructor invocation expression can only legally occur when the
+`constructed` boolean is `false`, whereas an invocation of an instance method or
+getter in the superclass can only legally occur when the `constructed` boolean
+is `true`. Therefore, if there is an interpretation in which the program is
+legal, this disambiguation rule is sufficient to find it._
 
-- The appropriate instance method or getter is looked up, in either the
-  superclass or one of its ancestors, or in the interface of the current
-  class. For this lookup, the forms `super(ARGUMENTS)` and `this(ARGUMENTS)` are
-  only considered to match a method named `call`; they do not match a getter
-  named `call`.
+_Implementation note: it is likely that the analyzer will want to adopt a more
+complex disambiguation rule in the case of erroneous code, so that the resulting
+error messages are more meaningful. For example, if `NAME` is the name of a
+superclass constructor, and not the name of a superclass getter or method, then
+it would be beneficial for the analyzer to interpret `super.NAME(ARGUMENTS)` as
+a super-constructor invocation even if the `constructed` boolean is `true`; that
+way, the error message will be "super constructor called twice" rather than "no
+such method"._
 
-- If a constructor was found but an instance method or getter was not, then the
-  expression is disambiguated to a constructor invocation.
+_Note that this disambiguation process needs to occur before any of the
+`ARGUMENTS` are visited, since the type of the constructor, method, or function
+object being invoked affects the downward inference contexts that will be
+supplied when analyzing `ARGUMENTS`. But the point at which the "super
+constructor called twice" error is detected is after visiting `ARGUMENTS`. This
+is the reason for the restriction that `super` and `this` constructor invocation
+expressions may only appear as the top level expression within an expression
+statement; it ensures that the `constructed` and `unconstructed` booleans won't
+change state between the point of disambiguation and the point of error
+reporting, which could create a lot of user confusion._
 
-- If an instance method or getter was found but a constructor was not, then the
-  expression is disambiguated to an instance method or getter invocation, and is
-  handled as it would have been prior to the introduction of enhanced
-  constructors.
+## Const constructors
 
-- If neither a constructor nor an instance method or getter was found, then it
-  is a compile-time error. _This is consistent with the behavior of Dart in the
-  absence of enhanced constructors._
+It is still a compile time error for a `const` constructor to have a
+body. Therefore, `const` constructors must still initialize their fields using
+initializer lists, as they do today.
 
-- If both a constructor _and_ an instance method or getter were found, then the
-  ambiguity is resolved according to whether a constructor has definitely been
-  invoked at the current point in the flow control path. If it has, then the
-  expression is disambiguated to an instance method or getter invocation;
-  otherwise it is disambiguated to a constructor invocation.
+## Backward compatibility
 
-_In principle, it would be better to perform this disambiguation after visiting
-`ARGUMENTS`, but this is not possible, because in order to visit `ARGUMENTS`,
-the target of the invocation must be known, so that the appropriate context
-schemas can be computed._
-
-_Since it's a compile-time error to call a constructor twice in the same control
-flow path, and it's a compile-time error to reference `this` before a
-constructor has been called, only one of the two possible interpretations can
-possibly be correct. These heuristics will find the correct interpretation
-nearly all the time. The two circumstances in which they won't are as follows:_
-
-- _Nested ambiguous invocations. If one ambiguous invocation appears inside
-  another, e.g. `super(super())`, then a valid interpretation might be that the
-  inner invocation is a super constructor invocation, and the outer invocation
-  is an instance method or getter invocation. But these heuristics won't find
-  that interpretation, because they are run prior to visiting arguments, so they
-  will consider both invocations to be super constructor invocations. This is
-  unlikely to crop up in practice, because a constructor invocation has static
-  type `void`, and hence is unlikely to be nested inside another invocation._
-
-- _Implicit `super()`. If the user intends to take advantage of an implicit call
-  to `super()`, but the constructor body contains an ambiguous invocation that
-  looks like it could be a super-constructor invocation, or a call to a
-  constructor in the current class, then the algorithm in (TODO: reference) will
-  have already decided that no implicit super constructor invocation should be
-  inserted, and so the ambiguous invocation will be interpreted as a
-  super-constructor invocation. In the rare event that this happens, the user
-  can work around it by adding an explicit call to `super()` at the top of the
-  constructor body._
-
-TODO: implicit `this` calls can still be virtually dispatched.
-
-, an expression of the form `super(arguments)` could
-be either an invocation of an unnamed super constructor or an invocation of the
-instance method `call` (defined somewhere in the superclass chain). Similarly,
-an expression of the form `this(arguments)` could be either an invocation of the
-unnamed constructor of the current class or an invocation of the instance method
-`call` (defined in the class itself or in the superclass chain).
-
-By the same token, an expression of the form `super.name(arguments)` could be
-either an invocation of a named super constructor or an invocation of an
-instance method (or getter) named `name` in the superclass chain; and an
-expression of the form `this.name(arguments)` could be either an invocation of a
-named constructor in the current class or an invocation of an instance method
-(or getter) named `name` in the class itself or in the superclass chain.
-
-A two-step process is used to resolve such ambiguities:
-
-- First, an attempt is made to locate an accessible constructor with the appropriate name in the appropriate class. In the case of `super.name(arguments)` and `this.name(arguments)`
-
-The following heuristics are used to resolve any such ambiguities:
-
-- If an accessible constructor with the appropriate name can be found in the
-  appropriate class, and there is no matching instance method (or getter, if
-  applicable), then the ambiguity is resolved in favor of the constructor. _(For
-  example, if the superclass is `Object`, then `super()` always refers to the
-  unnamed constructor of `Object`, since `Object` has no instance method
-  `call`.)_
-
-- If an accessible instance method (or getter, if applicable) with the
-  appropriate name can be found in the superclass chain (or in the class itself,
-  in the case of `this(arguments)` or `this.name(arguments)`), and there is no
-  matching constructor, then the ambiguity is resolved in favor of the instance
-  method or getter. _(For example, if the superclass is `Object`, then
-  `super.noSuchMethod(...)` always refers to the instance method
-  `Object.noSuchMethod`, since `Object` has no constructor `noSuchMethod`.)_
-
-- If neither an accessible constructor with the appropriate name _nor_ an instance method (or getter, if applicable) can be found, then 
-
-TODO: explain about noSuchMethod calls
-
-TODO: rewrite with justification first.
-
-If an expression of the form `super(arguments)` appears inside a generative
-constructor, it is disambiguated during type inference, just prior to visiting
-any arguments, using the first of the following heuristics that applies:
-
-- If the superclass does not contain an unnamed constructor, and no class in the
-  superclass chain defines an instance method named `call`, then it is a
-  compile-time error.
-
-- If the superclass contains an unnamed constructor, and no class in the
-  superclass chain defines an instance method named `call`, then the expression
-  is considered an invocation of the unnamed super constructor.
-
-- If a class in the superclass chain defines an instance method named `call`,
-  and the superclass does not contain an unnamed constructor, then the
-  expression is considered an invocation of the instance method `super.call`.
-
-- If a super constructor invocation has definitely occurred, then the expression
-  is considered an invocation of the instance method `super.call`.
-
-- Otherwise, the expression is considered an invocation of the unnamed
-  super constructor.
-
-If an expression of the form `super.name(arguments)` appears inside a generative
-constructor, it is disambiguated during type inference, just prior to visiting
-any arguments, using the first of the following heuristics that applies:
-
-- If the superclass does not contain an accessible constructor named `name`, and
-  no class in the superclass chain defines an accessible instance method named
-  `name`, then it is a compile-time error.
-
-- If the superclass contains an accessible constructor named `name`, and no
-  class in the superclass chain defines an accessible instance method named
-  `name`, then the expression is considered an invocation of the
-  super constructor named `name`.
-
-- If a class in the superclass chain defines an accessible instance method named
-  `name`, and the superclass does not contain an accessible constructor named
-  `name`, then the expression is considered an invocation of the instance method
-  `super.name`.
-
-- If a super constructor invocation has definitely occurred, then the expression
-  is considered an invocation of the instance method `super.name`.
-
-- Otherwise, the expression is considered an invocation of the super constructor
-  named `name`.
-
-_These ambiguities should be pretty rare, since most classes don't contain a
-`call` method, and users don't typically give the constructor the same name as
-an instance method. However, when they occur, these heuristics should still be
-fairly reliable at determining what the user means, since it's illegal for a
-code path to contain multiple super constructor invocations, and it's illegal
-for a code path to invoke an instance method before a super constructor
-invocation. The only places the heuristics might fail are as follows:_
-
-- _TODO: `class B { void call() {} } class C { C() { super(); } }`. Is this an
-  explicit super constructor call? Or is the super constructor call implicit and
-  it's a call to `call`?_
-
-- _TODO: `class B { void call(void v) {} } class C { C() { super(super()); }
-  }`. The outer super will be mis-classified as a constructor call._
-
-### Semantic analysis of super constructor invocations
-
-Expression inference of a super `super(arguments)` or `super.name(arguments)` is
-performed as follows:
-
-TODO: write
-
-TODO: explain that it's void.
-
-TODO: it can't be invoked from a callback
-
-### Soundness
-
-To preserve the soundness guarantees that were previously 
-
-### Mixed style and backward compatibility
-
-To avoid a "syntactic cliff" between the new style 
-
-To minimize breakage of existing Dart programs, any constructor that does not contain an expression of the form `super(arguments)` or `super.name(arguments)` (where `name` matches the name of an accessible super constructor) 
-
-### Ambiguities
-
-#### Method/constructor ambiguity
-
-Currently, it is allowed for a class to declare an instance method and a
-constructor with the same name. 
-
-### Ambiguity with `call`
-
-Previously, if the superclass declared a `call` method, the syntax
-`super(arguments)` would refer implicitly to `super.call`. For example:
+If a constructor is written in the "old style" (that is, it would be accepted
+by the current Dart compiler and analyzer), then I believe it is is fairly
+straightforward to show that none of the new flow analysis errors will fire,
+with one exception: if there is no explicit `super` initializer, and there is a
+failure in the heuristic for determining whether a super constructor invocation
+needs to be inserted, then the constructor might have an unintended change in
+meaning. This could happen either because the constructor contains a call to a
+`call` method defined in the superclass, for example:
 
 ```dart
 class B {
-  void call(int i) {
-    print('B.call($i)');
-  }
+  void call() { ... }
 }
 
-class C extends B {
+class C {
   C() {
-    super(123); // Prints `B.call(123)`
+    // Today this is interpreted as a call to `B.call`; with enhanced
+    // constructors it will be interpreted as a call to the unnamed constructor
+    // of `B`.
+    super();
   }
 }
 ```
 
-Under this proposal, the syntax `super(arguments)`, if it appears inside a generative constructor, is always interpreted to 
+Or because the constructor contains a call to a superclass method that shares
+its name with a superclass constructor, for example:
 
-### Flow analysis
+```dart
+class B {
+  B();
+  B.m();
+  void m() { ... }
+}
 
-To ensure soundness, flow analysis is extended to enforce following
-restrictions:
+class C {
+  C() {
+    // Today this is interpreted as a call to the `B.m()` method; with enhanced
+    // constructors it will be interpreted as a call to the `B.m()` constructor.
+    super.m();
+  }
+}
+```
 
-- No code path may write to a non-late final field more than once.
+These backward incompatibilities should be exceptionally rare.
 
-- No code path may invoke a super constructor more than once.
+## Back-end consequences
 
-- No code path 
+### Constructors are less tightly bound to super constructors
 
-- No code path may refer to `this`, either implicitly or explicitly, 
+With today's dart, each non-redirecting generative constructor is statically
+bound to a single super constructor. With enhanced constructors, it is possible
+for a generative constructor to choose at runtime which super constructor to
+invoke. For example:
 
-## Grammar
+```dart
+class C {
+  C(bool b) {
+    if (b) {
+      super.foo();
+    } else {
+      super.bar();
+    }
+  }
+}
+```
 
-Note ambiguity between super instructor invocation and `super.call` invocation.
-
-## Semantics
-
-## Consts
+TODO I AM HERE
 
 ## CFE implementation details
 
@@ -792,3 +690,36 @@ Extract method should determine whether to extract a static method or not
 ## Backend consequences
 
 - Need to be able to insert calls to `super` after any expression
+
+- Need to be able to access partially initialized objects
+
+- Talk about strategies for when the allocation happens (at the beginning of the
+  constructor call, if unsafely writing to fields is permissible, or at the
+  point of the super call, if we need to compile to a lower lever representation
+  with its own soundness requirements).
+
+## Breakingness
+
+- Breaking if `this(ARGUMENTS)` or `this.NAME(ARGUMENTS)` exists in a
+  constructor that the user intends to be old-style.
+
+- Ambiguity with `super.NAME`.
+
+TODO: what about const constructors?
+
+TODO: document how implicit super constructor invocations might be added inside
+loops.
+
+TODO: document that one of the consequences of the flow analysis rules is that
+super constructor invocations can't be added inside loops (and verify that this
+is in fact the case).
+
+TODO: _Implicit `super()`. If the user intends to take advantage of an implicit
+call to `super()`, but the constructor body contains an ambiguous invocation
+that looks like it could be a super-constructor invocation, or a call to a
+constructor in the current class, then the algorithm in (TODO: reference) will
+have already decided that no implicit super constructor invocation should be
+inserted, and so the ambiguous invocation will be interpreted as a
+super-constructor invocation. In the rare event that this happens, the user can
+work around it by adding an explicit call to `super()` at the top of the
+constructor body._
