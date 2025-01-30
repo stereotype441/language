@@ -4,8 +4,6 @@ Author: Paul Berry
 
 Status: Under review
 
-Version 1.0 (see [CHANGELOG](#CHANGELOG) at end)
-
 ## Summary
 
 This proposal extends the set of actions that can be performed in the body of a
@@ -66,7 +64,7 @@ The reason is because if we allowed arbitrary super calls and final field
 assignments in a constructor body, the user could break the language's soundness
 guarantees by doing one of the following things:
 
-- Reading from a field beore its initial value has been written.
+- Reading from a field before its initial value has been written.
 
 - Calling a superclass method, getter, or setter before calling a super
   constructor (this could break soundness by causing the superclass to read from
@@ -530,19 +528,21 @@ contains an unnamed constructor, or of the form `super.NAME(ARGUMENTS)`, where
 the superclass contains a constructor with a name matching `NAME`.
 
 If neither of these forms is found, an implicit super constructor invocation
-will be inserted at the first statement boundary in any control flow path which
-(a) is inside the constructor body, and (b) has a `true` value for the
-`assigned` booleans of all non-late fields. (_This is the earliest point at
-which the user could have written the super constructor invocation explicitly._)
+will be inserted at the first statement boundary within the block that
+constitutes the constructor body that has a `true` value for the `assigned`
+booleans of all non-late fields. (_This is the earliest point within the
+constructor body block at which the user could have written the super
+constructor invocation explicitly._)
 
 _Note that expressions of the above forms that do not constitute a complete
 initializer or the top level expression in an expression statement do not
 prevent an implicit super constructor invocation from being inserted, because
 they cannot represent super constructor invocations._
 
-_Note that the only points where a super constructor invocation might be
-inserted are at the top of the constructor body, and immediately after a
-statement that includes an assignment to a non-late field._
+_The rationale for always inserting the implicit super constructor invocation
+within the block that constitutes the constructor body is that this avoids the
+danger of trying to insert it inside the body of a loop, which would be
+unsound._
 
 ### Disambiguation of super constructor invocations from super method invocations
 
@@ -592,6 +592,18 @@ expressions may only appear as the top level expression within an expression
 statement; it ensures that the `constructed` and `unconstructed` booleans won't
 change state between the point of disambiguation and the point of error
 reporting, which could create a lot of user confusion._
+
+### Runtime semantics
+
+In today's Dart, the sequence of operations performed by a constructor is:
+
+- Evaluate all initializers, in order.
+
+When a constructor begins executing, all of its final 
+
+Back-ends are of course free to optimize this as they see fit.
+
+TODO I AM HERE; write this and then return to "Interaction with augmentations".
 
 ## Const constructors
 
@@ -702,8 +714,8 @@ class C {
 
 With today's Dart, any closure that accesses a field of `this` is guaranteed to
 be operating on an instance that is fully initialized. With enhanced
-constructors, it will be possible for a closure to access fields in an instance
-that isn't fully initialized. For example:
+constructors, a closure could access fields in an instance that may or not have
+been fully initialized. For example:
 
 ```dart
 f(String Function(String) callback) {
@@ -712,73 +724,101 @@ f(String Function(String) callback) {
 }
 
 class C {
-  String s1;
-  final int i;
+  String accumulatedMessage;
+  final String Function(String) callback;
   C() {
-    s1 = '';
-    f((s2) {
-      s1 += s2; // Writes to field `s1`
-      return s1; // Reads from field `s1`
-    });
-    i = 0;
+    accumulatedMessage = '';
+    String appendMessage(String message) {
+      // Even though `this` might not be fully initialized yet, flow analysis
+      // permits the `accumulatedMessage` field to be accessed, because that
+      // field is already initialized.
+      accumulatedMessage += message;
+      return accumulatedMessage;
+    }
+    f(appendMessage);
+    callback = appendMessage;
+    // `this` is fully initialized now.
   }
 }
 
 main() {
-  C(); // Prints `foo`, then `foobar`.
+  var c = C(); // Prints `foo`, then `foobar`.
+  print(c.callback('baz')); // Prints `foobarbaz`.
 }
 ```
 
-It's even possible that a single closure might access fields that are
+## Interaction with augmentations
 
-TODO I AM HERE
+One of the more complex areas in the "augmentation libraries" proposal (TODO:
+link) concerns the augmentation of existing constructors. The extra complexity
+comes about in part because it is not clear when initializers of the augmented
+constructor should be run, nor is it always obvious how constructor arguments
+should be threaded from the augmenting constructor to the augmented constructor.
 
-## CFE implementation details
+With enhanced constructors, an `augmented` expression appearing inside a constructor would behave exactly like a `super` constructor invocation expression. 
 
-What happens during phase 1? Do we need to know what exists on super before
-running flow analysis? Before running the body builder?
+## Open questions
 
-## Analysis server consequences
+### Should super invocations be confined to top level?
 
-Extract method should determine whether to extract a static method or not
+We might consider restricting `super` constructor invocation expressions so that
+they can only appear in a top level statement (i.e., a direct descendant of the
+constructor body block).
 
-## Backend consequences
+This change would have the following consequences.
 
-- Need to be able to insert calls to `super` after any expression
+- Flow analysis would be slightly simpler, because it would not be necessary to
+  track separate `constructed` and `unconstructed` booleans.
 
-- Need to be able to access partially initialized objects
+- Some error messages might be easier for the user to understand (e.g., without
+  this change, placing a `super` constructor invocation expression inside a loop
+  would yield an error explaining that the `super` constructor invocation might
+  have already executed; with the change, the error would simply say that
+  `super` constructor invocation expressions must go at top level).
 
-- Talk about strategies for when the allocation happens (at the beginning of the
-  constructor call, if unsafely writing to fields is permissible, or at the
-  point of the super call, if we need to compile to a lower lever representation
-  with its own soundness requirements).
+- It's possible that this might simplify back-end implementations, since it
+  would no longer be possible for a constructor to decide which
+  super-constructor to invoke using an `if` or `switch` statement. It's possible
+  that this might simplify back-end implementations.
 
-TODO: back-end consequences: it must be possible to access `this` on an
-incomplete object. E.g. prior to the call to `super()`, a closure could be
-created that reads from a variable in `this`.
+- Some users might find the restriction limiting or surprising.
 
-## Breakingness
+### Should field writes be confined to top level prior to super invocation?
 
-- Breaking if `this(ARGUMENTS)` or `this.NAME(ARGUMENTS)` exists in a
-  constructor that the user intends to be old-style.
+We might consider restricting field writes so that they can only occur as the
+top-level expression in an expression statement which is itself a direct
+descendant of the constructor body block.
 
-- Ambiguity with `super.NAME`.
+This change would have the following consequences.
 
-TODO: what about const constructors?
+- Flow analysis would be slightly simpler, because it would not be necessary to
+  track separate `assigned` and `unassigned` booleans for each field. (Note,
+  however, that flow analysis already tracks separate `assigned` and
+  `unassigned` booleans for each local variable, and the complexity burden of
+  doing so is not very high.)
 
-TODO: document how implicit super constructor invocations might be added inside
-loops.
+- Some error messages might be easier for the user to understand (e.g., without
+  this change, assigning to a final field inside a loop would yield an error
+  explaining that the field might already be assigned; with the change, the
+  error would simply say that prior to invoking `super`, field writes must go at
+  top level).
 
-TODO: document that one of the consequences of the flow analysis rules is that
-super constructor invocations can't be added inside loops (and verify that this
-is in fact the case).
+- It's possible that this might simplify back-end implementations.
 
-TODO: _Implicit `super()`. If the user intends to take advantage of an implicit
-call to `super()`, but the constructor body contains an ambiguous invocation
-that looks like it could be a super-constructor invocation, or a call to a
-constructor in the current class, then the algorithm in (TODO: reference) will
-have already decided that no implicit super constructor invocation should be
-inserted, and so the ambiguous invocation will be interpreted as a
-super-constructor invocation. In the rare event that this happens, the user can
-work around it by adding an explicit call to `super()` at the top of the
-constructor body._
+- Some users might find the restriction limiting or surprising.
+
+### Should field reads be prohibited inside closures created prior to super invocation?
+
+We might consider restricting field reads so that they can't occur inside
+closures until after invoking `super`.
+
+This change would have the following consequences.
+
+- It's possible that this might simplify back-end implementations, since it
+  would mean that closures created prior to super invocation would not need to
+  be able to access fields of a partially initialized object.
+
+- Some users might find the restriction limiting or surprising.
+
+# Changelog
+
