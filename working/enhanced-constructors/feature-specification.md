@@ -492,8 +492,8 @@ or closure, there is a compile-time error (_super constructor invocation
 expression cannot occur inside a nested function or closure_).
 
 If the `constructed` boolean is `false` at the point where control flow reaches
-the end of the constructor body, there is a compile-time error (_a control path
-failed to invoke a super constructor_).
+a `return` statement, or the end of the constructor body, then there is a
+compile-time error (_a control path failed to invoke a super constructor_).
 
 If any explicit or implicit use of `this` is made that is not a read or write of
 a field declared in the class itself, at a point in control flow where the
@@ -661,9 +661,27 @@ These backward incompatibilities should be exceptionally rare.
 
 ## Back-end consequences
 
+### Super-constructor calls can occur in the middle of flow control
+
+With today's Dart, it is impossible for the call to a super constructor will
+never occur inside of a flow control construct (e.g., a loop, `if` statement,
+`try` statement, etc.). With enhanced constructors, it will be possible to call
+a super constructor inside of a control flow construct, subject to the
+constraint that flow analysis needs to be able to prove that the super
+constructor call occurs exactly once in all code paths.
+
+If enhanced constructors are implemented today, with no further changes to flow
+analysis, it will become possible to call a super constructor from inside an
+`if`, `try`, or `switch` statement, but not from inside a loop (because flow
+analysis isn't sophisticated enough to recognize parts of loops that are
+guaranteed to only execute once). But it's possible that future improvements to
+flow analysis will make it possible for a super constructor call to occur inside
+a loop (e.g. right before a `break` statement). So back-ends should be prepared
+for this possibility.
+
 ### Constructors are less tightly bound to super constructors
 
-With today's dart, each non-redirecting generative constructor is statically
+With today's Dart, each non-redirecting generative constructor is statically
 bound to a single super constructor. With enhanced constructors, it is possible
 for a generative constructor to choose at runtime which super constructor to
 invoke. For example:
@@ -679,6 +697,39 @@ class C {
   }
 }
 ```
+
+### Closures may need to access partially initialized instances
+
+With today's Dart, any closure that accesses a field of `this` is guaranteed to
+be operating on an instance that is fully initialized. With enhanced
+constructors, it will be possible for a closure to access fields in an instance
+that isn't fully initialized. For example:
+
+```dart
+f(String Function(String) callback) {
+  print(callback('foo'));
+  print(callback('bar'));
+}
+
+class C {
+  String s1;
+  final int i;
+  C() {
+    s1 = '';
+    f((s2) {
+      s1 += s2; // Writes to field `s1`
+      return s1; // Reads from field `s1`
+    });
+    i = 0;
+  }
+}
+
+main() {
+  C(); // Prints `foo`, then `foobar`.
+}
+```
+
+It's even possible that a single closure might access fields that are
 
 TODO I AM HERE
 
