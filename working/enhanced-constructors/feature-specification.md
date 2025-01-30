@@ -11,8 +11,8 @@ non-redirecting generative constructor to include writing to non-late final
 fields, and explicitly invoking super constructors.
 
 This makes constructors more flexible, avoids the need for constructor
-initializer lists, and simplifies the interaction between augmentations and
-constructors (TODO: talk about augmentations).
+initializer lists, and allows constructor augmentations to behave more
+consistently with function augmentations.
 
 To preserve soundness, flow analysis is enhanced to ensure that a reference to
 `this` cannot escape from a constructor body before the object has been
@@ -60,26 +60,30 @@ class C extends B {
 }
 ```
 
-The reason is because if we allowed arbitrary super calls and final field
-assignments in a constructor body, the user could break the language's soundness
-guarantees by doing one of the following things:
+In addition to making the language more approachable for programmers unfamiliar
+with initializer lists, allowing field initialization and super constructor
+invocation to be ordinary statements makes constructors a lot more flexible,
+allowing the user to perform arbitrary manipulation of the constructor arguments
+prior to initializing fields and calling the super-constructor.
 
-- Reading from a field before its initial value has been written.
+However, with this extra flexibility comes the need to preserve soundness. In
+particular, we must statically ensure that the user cannot:
 
-- Calling a superclass method, getter, or setter before calling a super
-  constructor (this could break soundness by causing the superclass to read from
-  a field before its initial value has been written).
+- Read from a field before its initial value has been written.
 
-- Writing to a non-late final field more than once.
+- Call a superclass method, getter, or setter before calling a super constructor
+  (this could break soundness by causing the superclass to read from a field
+  before its initial value has been written).
 
-- Calling a super constructor more than once on the same object (this could
-  break soundness by causing the base class to write to a non-late final field
-  more than once).
+- Write to a non-late final field more than once.
 
-However, there is another way we could guarantee soundness, without forcing the
-user to use a different syntax for initializers and statements: by using flow
-analysis to track the progress of initialization through the constructor
-body. That's what this proposal aims to do.
+- Call a super constructor more than once on the same object (this could break
+  soundness by causing the base class to write to a non-late final field more
+  than once).
+
+In today's Dart, these soundness requirements are met automatically by virtue of
+the rigid structure and limited capabilities of initializer lists. In this
+proposal, they are met using flow analysis.
 
 ## Proposal
 
@@ -595,15 +599,65 @@ reporting, which could create a lot of user confusion._
 
 ### Runtime semantics
 
-In today's Dart, the sequence of operations performed by a constructor is:
+In today's Dart, the sequence of operations performed by a non-redirecting
+generative constructor is as follows (see the "Execution of Generative
+Constructors" heading in the spec, in the "Generative Constructors" section):
 
-- Evaluate all initializers, in order.
+- The field declarations are visited in the order in which they appear in
+  program text; each initializer is evaluated and the resulting value is bound
+  to the corresponding field in the instance being initailized.
 
-When a constructor begins executing, all of its final 
+- Next, any initializing formals (_`this.` parameters_) are executed, causing
+  additional values to be bound to their corresponding fields.
 
-Back-ends are of course free to optimize this as they see fit.
+- Then, the initializers in the generative constructor's initializer list are
+  executed in the order in which they appear in program text; each initializer
+  is evaluated and the resulting value is bound to the corresponding field.
 
-TODO I AM HERE; write this and then return to "Interaction with augmentations".
+- Then, any fields that are not yet bound to an object are initialized to
+  `null`.
+
+- Then, unless the enclosing class is `Object`, the super-constructor is
+  executed to further initialize the instance.
+
+- Finally, the body of the constructor is executed in a scope where `this` is
+  bound to the new instance.
+
+_Note that since recursion to the superclass happens in the second-to-last step,
+just before execution of the body of the constructor, the consequence is that
+all the initializers will be executed first, starting with those declared at the
+bottom of the class hierarchy and moving up, before any code can access
+`this`. Then, the constructor bodies will all be executed, starting at the top
+of the class hierarchy and moving down._
+
+With enhanced constructors, the sequence changes to this (differences in **bold**):
+
+- The field declarations are visited in the order in which they appear in
+  program text; each initializer is evaluated and the resulting value is bound
+  to the corresponding field in the instance being initailized.
+
+- Next, any initializing formals (_`this.` parameters_) are executed, causing
+  additional values to be bound to their corresponding fields.
+
+- Then, the initializers in the generative constructor's initializer list are
+  executed in the order in which they appear in program text; each initializer
+  is evaluated and the resulting value is bound to the corresponding field.
+
+- Then, any fields **whose static type is nullable**, that are not yet bound to
+  an object, are initialized to `null`.
+
+- Finally, the body of the constructor is executed in a scope where `this` is
+  bound to the new instance. **Unless the enclosing class is `Object`, the
+  super-constructor is executed at the point where it appears (or was implicitly
+  added) within the body of the constructor.**
+
+_Since the recursive step now happens within the body of the constructor, it is
+no longer guaranteed that all initializers will run before any constructor
+bodies. However, it is still the case that all fields will be initialized,
+starting with those declared at the bottom of the class hierarchy and moving up,
+before any code can access `this`. Then, the **remainder** of all constructor
+bodies will all be executed, starting at the top of the class hierarchy and
+moving down._
 
 ## Const constructors
 
@@ -749,13 +803,31 @@ main() {
 
 ## Interaction with augmentations
 
-One of the more complex areas in the "augmentation libraries" proposal (TODO:
-link) concerns the augmentation of existing constructors. The extra complexity
-comes about in part because it is not clear when initializers of the augmented
-constructor should be run, nor is it always obvious how constructor arguments
-should be threaded from the augmenting constructor to the augmented constructor.
+The current "augmentation libraries" proposal (TODO: link) specifies that the
+`augmented` keyword has no special meaning in non-redirecting generative
+constructors. This means that unlike function augmentations, constructor
+augmentations can't run arbitrary code before the augmented code, and they can't
+change the values of arguments. They can only add initializers and/or asserts
+and possibly a `super` call, and additional code to be run _after_ the augmented
+constructor. Then everything is run in a prescribed order that preserves the
+appropriate soundness guarantees.
 
-With enhanced constructors, an `augmented` expression appearing inside a constructor would behave exactly like a `super` constructor invocation expression. 
+Once enhanced constructors are implemented, we will have the opportunity to
+revisit how augmentation applies to non-redirecting generative constructors,
+making them work a lot more like function augmentations. In particular, we
+should be able to allow a constructor augmentation to either contain an
+`augmented(ARGUMENTS)` expression instead of a `super` constructor invocation
+expression, or to simply invoke the `super` constructor directly. This will
+allow constructor augmentations to run arbitrary code before, after, or instead
+of the augmented code, and the order in which code executes will be
+straightforward, since it will follow the same pattern that function
+augmentations follow.
+
+Not all of the complexity of constructor augmentations goes away, though. We
+will probably need some extra flow analysis rules to ensure that the augmenting
+constructor initializes any new fields that have been introduced through the
+augmentation process, but doesn't try to initialize any fields that the
+augmented constructor initializes.
 
 ## Open questions
 
@@ -819,6 +891,3 @@ This change would have the following consequences.
   be able to access fields of a partially initialized object.
 
 - Some users might find the restriction limiting or surprising.
-
-# Changelog
-
