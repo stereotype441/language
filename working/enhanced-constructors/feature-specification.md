@@ -106,8 +106,10 @@ non-redirecting generative constructor:
 
 With the restriction that `super` constructor invocation expressions may only
 appear as the top level expression within an expression statement. _Rationale:
-this simplifies ambiguity resolution (see TODO), and doesn't significantly
-reduce expressive power. It may also simplify the implementation._
+this simplifies [ambiguity
+resolution](#disambiguation-of-super-constructor-invocations-from-super-method-invocations)
+(TODO: check link), and doesn't significantly reduce expressive power. It may
+also simplify the implementation._
 
 To ensure soundness, flow analysis will be modified to ensure, at compile time,
 that all reachable control flow paths through a generative constructor:
@@ -188,11 +190,11 @@ of a generative constructor (and allows for the entire initializer list to be
 elided, if it contains nothing else). To preserve backwards compatibility, and
 to avoid making new style constructors more verbose than old style ones,
 enhanced constructors support the same feature. The precise rules are specified
-below (TODO: link), but in a nutshell, if neither the body nor the initializer
-list of a generative constructor contains an explicit `super` constructor
-invocation expression, then an implicit call to `super()` is considered to occur
-at the earliest point(s) in the constructor body at which it would be sound to
-do so.
+[below](#insertion-of-implicit-super-constructor-invocations) (TODO: check
+link), but in a nutshell, if neither the body nor the initializer list of a
+generative constructor contains an explicit `super` constructor invocation
+expression, then an implicit call to `super()` is considered to occur at the
+earliest point(s) in the constructor body at which it would be sound to do so.
 
 For example, this constructor from the analyzer's `AwaitExpressionImpl` class:
 
@@ -462,10 +464,11 @@ boolean to `true` and its `unassigned` boolean to `false`, and updates the
 `thisUnused` boolean to `false`.
 
 When flow analysis encounters a `super` initializer or a `super` constructor
-invocation expression, or it inserts an implicit `super` constructor invocation
-expression (see TODO: link), after processing the arguments, it updates the
-`constructed` boolean to `true`, the `unconstructed` boolean to `false`, and the
-`thisUnused` boolean to `false`.
+invocation expression, or it
+[inserts](#insertion-of-implicit-super-constructor-invocations) an implicit
+`super` constructor invocation expression (TODO: check link), after processing
+the arguments, it updates the `constructed` boolean to `true`, the
+`unconstructed` boolean to `false`, and the `thisUnused` boolean to `false`.
 
 #### New flow analysis errors
 
@@ -803,14 +806,16 @@ main() {
 
 ## Interaction with augmentations
 
-The current "augmentation libraries" proposal (TODO: link) specifies that the
-`augmented` keyword has no special meaning in non-redirecting generative
-constructors. This means that unlike function augmentations, constructor
-augmentations can't run arbitrary code before the augmented code, and they can't
-change the values of arguments. They can only add initializers and/or asserts
-and possibly a `super` call, and additional code to be run _after_ the augmented
-constructor. Then everything is run in a prescribed order that preserves the
-appropriate soundness guarantees.
+The current [augmentation
+libraries](https://github.com/dart-lang/language/blob/main/working/augmentation-libraries/feature-specification.md)
+proposal (TODO: check link) specifies that the `augmented` keyword has no
+special meaning in non-redirecting generative constructors. This means that
+unlike function augmentations, constructor augmentations can't run arbitrary
+code before the augmented code, and they can't change the values of
+arguments. They can only add initializers and/or asserts and possibly a `super`
+call, and additional code to be run _after_ the augmented constructor. Then
+everything is run in a prescribed order that preserves the appropriate soundness
+guarantees.
 
 Once enhanced constructors are implemented, we will have the opportunity to
 revisit how augmentation applies to non-redirecting generative constructors,
