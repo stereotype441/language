@@ -62,9 +62,9 @@ class C extends B {
 
 In addition to making the language more approachable for programmers unfamiliar
 with initializer lists, allowing field initialization and super constructor
-invocation to be ordinary statements makes constructors a lot more flexible,
-allowing the user to perform arbitrary manipulation of the constructor arguments
-prior to initializing fields and calling the super-constructor.
+invocation to be ordinary statements would make constructors a lot more
+flexible, allowing the user to perform arbitrary manipulation of the constructor
+arguments prior to initializing fields and calling the super-constructor.
 
 However, with this extra flexibility comes the need to preserve soundness. In
 particular, we must statically ensure that the user cannot:
@@ -95,9 +95,12 @@ non-redirecting generative constructor:
   VALUE`). _Note that in this document, all-caps names are metasyntactic
   variables._
 
-  - These are the only two syntaxes that are recognized as a valid write to a
-    non-late final field. Other syntaxes that are semantically equivalent
-    (e.g. `(this).FIELDNAME = VALUE`) are not permitted.
+  - These are the only two syntaxes for writing to a field that are given
+    special treatment by this proposal. _For example, `(this).FIELDNAME = VALUE`
+    cannot be used to initialize a final field; it would be treated as a setter
+    invocation applied to an ordinary `this` expression, and the ordinary `this`
+    expression would be forbidden by flow analysis if the field has not yet been
+    initialized._
 
 - A call to a super constructor, using the syntax `super(ARGUMENTS)` (for an
   unnamed constructor) or `super.NAME(ARGUMENTS)` (for a named constructor). For
@@ -193,7 +196,7 @@ enhanced constructors support the same feature. The precise rules are specified
 [below](#insertion-of-implicit-super-constructor-invocations), but in a
 nutshell, if neither the body nor the initializer list of a generative
 constructor contains an explicit `super` constructor invocation expression, then
-an implicit call to `super()` is considered to occur at the earliest point(s) in
+an implicit call to `super()` is considered to occur at the earliest point in
 the constructor body at which it would be sound to do so.
 
 For example, this constructor from the analyzer's `AwaitExpressionImpl` class:
@@ -313,11 +316,11 @@ main() {
 
 ### Scoping differences with `super.`
 
-As with `this.NAME.`, a `super.NAME` parameter is considered to introduce a
-final variable named `NAME` into the formal parameter initializer scope, but not
-into the constructor body. This leads to the somewhat counterintuitive situation
-wherein a super parameter that can be referred to from an initializer list can't
-be referred to from a constructor body. For example:
+As with `this.NAME`, a `super.NAME` parameter is considered to introduce a final
+variable named `NAME` into the formal parameter initializer scope, but not into
+the constructor body. This leads to a somewhat counterintuitive situation: a
+super parameter can be referred to from an initializer list, but can't be
+referred to from a constructor body. For example:
 
 ```dart
 class B {
@@ -544,7 +547,21 @@ constructor invocation explicitly._)
 _Note that expressions of the above forms that do not constitute a complete
 initializer or the top level expression in an expression statement do not
 prevent an implicit super constructor invocation from being inserted, because
-they cannot represent super constructor invocations._
+they cannot represent super constructor invocations. For example, this is valid:_
+
+```dart
+class B {
+  int call() => 0;
+}
+class C extends B {
+  C() {
+    // Implicit super constructor invocation inserted here.
+    print(super()); // `super()` is not the top level expression in an
+                    // expression statement, so it is understood to be an
+                    // invocation of `super.call()`; therefore it doesn't block
+                    // implicit insertion of a super constructor invocation.
+  }
+```
 
 _The rationale for always inserting the implicit super constructor invocation
 within the block that constitutes the constructor body is that this avoids the
