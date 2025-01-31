@@ -8,7 +8,7 @@ Status: Under review
 
 This proposal extends the set of actions that can be performed in the body of a
 non-redirecting generative constructor to include writing to non-late final
-fields, and explicitly invoking super constructors.
+fields and explicitly invoking super constructors.
 
 This makes constructors more flexible, avoids the need for constructor
 initializer lists, and allows constructor augmentations to behave more
@@ -115,10 +115,10 @@ and doesn't significantly reduce expressive power. It may also simplify the
 implementation._
 
 To ensure soundness, flow analysis will be modified to ensure, at compile time,
-that all reachable control flow paths through a generative constructor:
+that all reachable control flow paths through a non-redirecting generative
+constructor:
 
-- Contain exactly one invocation of either another generative constructor or of
-  a super constructor.
+- Contain exactly one invocation of a super constructor.
 
 - Write to every non-late final field exactly once prior to invoking a super
   constructor.
@@ -132,6 +132,13 @@ that all reachable control flow paths through a generative constructor:
     super constructor.
 
   - To read from fields that have already been written to.
+
+_The current Dart spec contains several exceptions for the built-in class
+`Object`, which doesn't have a supertype, and therefore can't have a super
+constructor. Keeping track of these exceptions is cumbersome, so for
+simplicitly, in this proposal, we simply consider the invocation of a super
+constructor to be a no-op; this way we can treat the built-in class `Object` as
+non-exceptional._
 
 This allows the vast majority of constructor initializer lists to be rewritten
 as ordinary statements in the constructor body. For example, this constructor
@@ -164,10 +171,11 @@ can now be rewritten to:
 
 ### Mixed style
 
-To avoid a "syntactic cliff" between the old and new styles of coding generative
-constructors, it is allowed to mix the two styles. That is, even in a generative
-constructor that has an initializer list, the body is allowed to contain writes
-to non-late final fields, or `super` constructor invocation expressions.
+To avoid a "syntactic cliff" between the old and new styles of coding
+non-redirecting generative constructors, it is allowed to mix the two
+styles. That is, even in a non-redirecting generative constructor that has an
+initializer list, the body is allowed to contain writes to non-late final
+fields, or `super` constructor invocation expressions.
 
 For example, here is the same `VariableDeclarationImpl` constructor again,
 written in a mixed style:
@@ -189,15 +197,16 @@ constructors also ensures soundness in mixed style constructors.
 ### Implicit super invocation
 
 Today, Dart allows an implicit `super()` to be elided from an initializer list
-of a generative constructor (and allows for the entire initializer list to be
-elided, if it contains nothing else). To preserve backwards compatibility, and
-to avoid making new style constructors more verbose than old style ones,
-enhanced constructors support the same feature. The precise rules are specified
+of a non-redirecting generative constructor (and allows for the entire
+initializer list to be elided, if it contains nothing else). To preserve
+backwards compatibility, and to avoid making new style constructors more verbose
+than old style ones, enhanced constructors support the same feature. The precise
+rules are specified
 [below](#insertion-of-implicit-super-constructor-invocations), but in a
-nutshell, if neither the body nor the initializer list of a generative
-constructor contains an explicit `super` constructor invocation expression, then
-an implicit call to `super()` is considered to occur at the earliest point in
-the constructor body at which it would be sound to do so.
+nutshell, if neither the body nor the initializer list of a non-redirecting
+generative constructor contains an explicit `super` constructor invocation
+expression, then an implicit call to `super()` is considered to occur at the
+earliest point in the constructor body at which it would be sound to do so.
 
 For example, this constructor from the analyzer's `AwaitExpressionImpl` class:
 
@@ -463,15 +472,14 @@ list, if there is one), these new state variables are initialized as follows:
 
 When flow analysis encounters a write to a non-final field (either in an
 initializer or in the constructor body), it updates the field's `assigned`
-boolean to `true` and its `unassigned` boolean to `false`, and updates the
-`thisUnused` boolean to `false`.
+boolean to `true` and its `unassigned` boolean to `false`.
 
 When flow analysis encounters a `super` initializer or a `super` constructor
 invocation expression, or it
 [inserts](#insertion-of-implicit-super-constructor-invocations) an implicit
 `super` constructor invocation expression, after processing the arguments, it
-updates the `constructed` boolean to `true`, the `unconstructed` boolean to
-`false`, and the `thisUnused` boolean to `false`.
+updates the `constructed` boolean to `true` and the `unconstructed` boolean to
+`false`.
 
 #### New flow analysis errors
 
@@ -506,7 +514,7 @@ compile-time error (_a control path failed to invoke a super constructor_).
 If any explicit or implicit use of `this` is made that is not a read or write of
 a field declared in the class itself, at a point in control flow where the
 `constructed` boolean is `false`, then there is a compile-time error (_instance
-is not fully constructed yet_). _Examples include:_
+may not be fully constructed yet_). _Examples include:_
 
 - _A method or operator invocation on `this`._
 
@@ -519,7 +527,7 @@ is not fully constructed yet_). _Examples include:_
 
 - _A call to a setter, getter, or method that is part of the class's interface
   due to the presence of an `implements` clause, and not backed by a field
-  declared in the class.
+  declared in the class._
 
 - _Any other use of `this` that is not syntactically part of a read or write of
   a field._
@@ -527,51 +535,22 @@ is not fully constructed yet_). _Examples include:_
 If any explicit or implicit use of `this` is made that does not resolve to an
 invocation of a super constructor, at a point in control flow where the
 `constructed` boolean is `false`, then there is a compile-time error (_instance
-is not fully constructed yet_).
+may not be fully constructed yet_).
 
-### Insertion of implicit super constructor invocations
-
-Prior to type inference of a constructor, the constructor's initializer list and
-body are scanned to determine whether they already contain an initializer or an
-expression statement of the form `super(ARGUMENTS)`, where the superclass
-contains an unnamed constructor, or of the form `super.NAME(ARGUMENTS)`, where
-the superclass contains a constructor with a name matching `NAME`.
-
-If neither of these forms is found, an implicit super constructor invocation
-will be inserted at the first statement boundary within the block that
-constitutes the constructor body that has a `true` value for the `assigned`
-booleans of all non-late fields. (_This is the earliest point within the
-constructor body block at which the user could have written the super
-constructor invocation explicitly._)
-
-_Note that expressions of the above forms that do not constitute a complete
-initializer or the top level expression in an expression statement do not
-prevent an implicit super constructor invocation from being inserted, because
-they cannot represent super constructor invocations. For example, this is valid:_
-
-```dart
-class B {
-  int call() => 0;
-}
-class C extends B {
-  C() {
-    // Implicit super constructor invocation inserted here.
-    print(super()); // `super()` is not the top level expression in an
-                    // expression statement, so it is understood to be an
-                    // invocation of `super.call()`; therefore it doesn't block
-                    // implicit insertion of a super constructor invocation.
-  }
-```
-
-_The rationale for always inserting the implicit super constructor invocation
-within the block that constitutes the constructor body is that this avoids the
-danger of trying to insert it inside the body of a loop, which would be
-unsound._
+_Implementation note: the fact that we have separate `assigned` and `unassigned`
+booleans makes it possible to distinguish three states for any given non-late
+field: definitely assigned, definitely unassigned, and indeterminate. We might
+want to consider having separate error messages for the definite and
+indeterminate cases. For example, if the code tries to write to a non-late final
+field at a point where the `unassigned` boolean is `false`, we could choose to
+issue either the error "final field initialized twice" or "final field
+**possibly** initialized twice" based on the state of the `assigned`
+boolean. The same goes for the `constructed` and `unconstructed` booleans._
 
 ### Disambiguation of super constructor invocations from super method invocations
 
-In a generative constructor, the following expressions are now potentially
-ambiguous:
+In a non-redirecting generative constructor, the following expressions are now
+potentially ambiguous:
 
 - `super(ARGUMENTS)` could be either an invocation of an unnamed constructor in
   the superclass, or the invocation of an instance method `call` in the
@@ -597,12 +576,12 @@ getter in the superclass can only legally occur when the `constructed` boolean
 is `true`. Therefore, if there is an interpretation in which the program is
 legal, this disambiguation rule is sufficient to find it._
 
-_Implementation note: it is likely that the analyzer will want to adopt a more
-complex disambiguation rule in the case of erroneous code, so that the resulting
-error messages are more meaningful. For example, if `NAME` is the name of a
-superclass constructor, and not the name of a superclass getter or method, then
-it would be beneficial for the analyzer to interpret `super.NAME(ARGUMENTS)` as
-a super-constructor invocation even if the `constructed` boolean is `true`; that
+_Implementation note: it is likely that we will want to adopt a more complex
+disambiguation rule in the case of erroneous code, so that the resulting error
+messages are more meaningful. For example, if `NAME` is the name of a superclass
+constructor, and not the name of a superclass getter or method, then it would be
+beneficial for the analyzer to interpret `super.NAME(ARGUMENTS)` as a
+super-constructor invocation even if the `constructed` boolean is `true`; that
 way, the error message will be "super constructor called twice" rather than "no
 such method"._
 
@@ -617,6 +596,46 @@ statement; it ensures that the `constructed` and `unconstructed` booleans won't
 change state between the point of disambiguation and the point of error
 reporting, which could create a lot of user confusion._
 
+### Insertion of implicit super constructor invocations
+
+Prior to type inference of a constructor, the constructor's initializer list and
+body are scanned to determine whether they already contain an initializer or an
+expression statement of the form `super(ARGUMENTS)` or `super.NAME(ARGUMENTS)`.
+
+If neither of these forms is found, an implicit super constructor invocation
+will be inserted at the first statement boundary within the block that
+constitutes the constructor body that has a `true` value for the `assigned`
+booleans of all non-late fields. (_This is the earliest point within the
+constructor body block at which the user could have written the super
+constructor invocation explicitly._)
+
+_Note that it's possible for this heuristic to go wrong; see the [backward
+compatibility](#backward-compatibility) section._
+
+_Note that expressions of the above forms that do not constitute a complete
+initializer or the top level expression in an expression statement do not
+prevent an implicit super constructor invocation from being inserted, because
+they cannot represent super constructor invocations. For example, this is valid:_
+
+```dart
+class B {
+  int call() => 0;
+}
+class C extends B {
+  C() {
+    // Implicit super constructor invocation inserted here.
+    print(super()); // `super()` is not the top level expression in an
+                    // expression statement, so it is understood to be an
+                    // invocation of `super.call()`; therefore it doesn't block
+                    // implicit insertion of a super constructor invocation.
+  }
+```
+
+_The rationale for always inserting the implicit super constructor invocation
+within the block that constitutes the constructor body is that this avoids the
+danger of trying to insert it inside the body of a loop, which would be
+unsound._
+
 ### Runtime semantics
 
 In today's Dart, the sequence of operations performed by a non-redirecting
@@ -630,9 +649,9 @@ Constructors" heading in the spec, in the "Generative Constructors" section):
 - Next, any initializing formals (_`this.` parameters_) are executed, causing
   additional values to be bound to their corresponding fields.
 
-- Then, the initializers in the generative constructor's initializer list are
-  executed in the order in which they appear in program text; each initializer
-  is evaluated and the resulting value is bound to the corresponding field.
+- Then, the initializers in the constructor's initializer list are executed in
+  the order in which they appear in program text; each initializer is evaluated
+  and the resulting value is bound to the corresponding field.
 
 - Then, any fields that are not yet bound to an object are initialized to
   `null`.
@@ -659,9 +678,9 @@ With enhanced constructors, the sequence changes to this (differences in **bold*
 - Next, any initializing formals (_`this.` parameters_) are executed, causing
   additional values to be bound to their corresponding fields.
 
-- Then, the initializers in the generative constructor's initializer list are
-  executed in the order in which they appear in program text; each initializer
-  is evaluated and the resulting value is bound to the corresponding field.
+- Then, the initializers in the constructor's initializer list are executed in
+  the order in which they appear in program text; each initializer is evaluated
+  and the resulting value is bound to the corresponding field.
 
 - Then, any fields **whose static type is nullable**, that are not yet bound to
   an object, are initialized to `null`.
@@ -678,6 +697,9 @@ starting with those declared at the bottom of the class hierarchy and moving up,
 before any code can access `this`. Then, the **remainder** of all constructor
 bodies will all be executed, starting at the top of the class hierarchy and
 moving down._
+
+_Note that for constructors written in the "old style", these semantics are 100%
+equivalent._
 
 ## Const constructors
 
@@ -700,50 +722,54 @@ evaluator to analyze constants that invoke const constructors.
 
 ## Backward compatibility
 
-If a constructor is written in the "old style" (that is, it would be accepted
-by the current Dart compiler and analyzer), then I believe it is is fairly
-straightforward to show that none of the new flow analysis errors will fire,
-with one exception: if there is no explicit `super` initializer, and there is a
-failure in the heuristic for determining whether a super constructor invocation
-needs to be inserted, then the constructor might have an unintended change in
-meaning. This could happen either because the constructor contains a call to a
-`call` method defined in the superclass, for example:
+### Incompatibility due to incorrect disambiguation
 
-```dart
-class B {
-  void call() { ... }
-}
+Any constructor accepted by the current Dart compiler and analyzer should be
+accepted as an enhanced constructor, and should behave the same way at runtime,
+with one exception: if the constructor's initializer list doesn't contain an
+explicit invocation of a `super` constructor, and the constructor body contains
+an
+[ambiguous](#disambiguation-of-super-constructor-invocations-from-super-method-invocations)
+use of `super`, then with enhanced constructors enabled, the compiler will
+disambiguate the first such ambiguity as a `super` constructor invocation
+expression, even though the user intended it to be a super method invocation.
 
-class C {
-  C() {
-    // Today this is interpreted as a call to `B.call`; with enhanced
-    // constructors it will be interpreted as a call to the unnamed constructor
-    // of `B`.
-    super();
-  }
-}
-```
+The fix is to add an explicit `super()`, either at the top of the constructor
+body or at the end of the initializer list.
 
-Or because the constructor contains a call to a superclass method that shares
-its name with a superclass constructor, for example:
+Most of the time this should lead to a compile-time error (_no such super
+constructor_), so the risk of this incompatibility leading to unexpected runtime
+behavior should be low. _Note that we should try to craft error messages that
+will be helpful to users who run into this situation. We might even consider
+adding an analysis server "quick fix" that corrects the problem by adding the
+appropriate explicit `super()` invocation._
 
-```dart
-class B {
-  B();
-  B.m();
-  void m() { ... }
-}
+There are two circumstances in which there might not be a "no such super
+constructor" error:
 
-class C {
-  C() {
-    // Today this is interpreted as a call to the `B.m()` method; with enhanced
-    // constructors it will be interpreted as a call to the `B.m()` constructor.
-    super.m();
-  }
-}
-```
+- If the superclass contains an unnamed constructor **and** its interface
+  contains a `call` method, then misinterpreting `super(ARGUMENTS)` as a `super`
+  constructor invocation expression might lead to some other compile-time error,
+  or possibly to no error at all.
 
-These backward incompatibilities should be exceptionally rare.
+- If the superclass contains both an unnamed constructor and a named
+  constructor, **and** its interface contains a method with the same name as the
+  named constructor, then misinterpreting `super.NAME(ARGUMENTS)` as a `super`
+  constructor invocation expression might lead to some other compile-time error,
+  or possibly to no error at all.
+
+These circumstances should be pretty rare, especially considering that they will
+only constitute a problem if they arise in a constructor that does not
+explicitly invoke `super` in its initializer list. However, if we're worried
+about this, we could add a lint that detects the upcoming incompatibility and
+encourages users to add a `super` invocation to their initializer lists to avoid
+it.
+
+### Other incompatibilities
+
+Provided that the ambiguity issue discussed above does not arise, it is fairly
+straightforward to show that an "old style" constructor will not trigger any of
+the new flow analysis errors. So there should be no other incompatibilities.
 
 ## Back-end consequences
 
@@ -769,8 +795,8 @@ for this possibility.
 
 With today's Dart, each non-redirecting generative constructor is statically
 bound to a single super constructor. With enhanced constructors, it is possible
-for a generative constructor to choose at runtime which super constructor to
-invoke. For example:
+for a constructor to choose at runtime which super constructor to invoke. For
+example:
 
 ```dart
 class C {
@@ -788,8 +814,10 @@ class C {
 
 With today's Dart, any closure that accesses a field of `this` is guaranteed to
 be operating on an instance that is fully initialized. With enhanced
-constructors, a closure could access fields in an instance that may or not have
-been fully initialized. For example:
+constructors, a closure could access in an instance that may or may not have
+been fully initialized. (Flow analysis still guarantees, however, that the
+closure will only access _fields_ that have been fully initialized). For
+example:
 
 ```dart
 f(String Function(String) callback) {
@@ -821,6 +849,18 @@ main() {
 }
 ```
 
+Note that in the above example, the first two uses of `callback` access an
+incompletely initialized instance of `C`, whereas the third use accesses the
+same instance of `C` after it's been completely initialized.
+
+_The reason I'm calling out this example in particular is that it might be
+tempting to try to implement this feature as a kernel transformation that
+rewrites "new style" constructors into their equivalent "old style"
+constructors, storing field values in hidden local variables until the `super`
+constructor invocation expression is encountered. If this implementation
+strategy is chosen, we would have to take special care with closures like the
+one above._
+
 ## Interaction with augmentations
 
 The current [augmentation
@@ -829,23 +869,23 @@ proposal specifies that the `augmented` keyword has no special meaning in
 non-redirecting generative constructors. This means that unlike function
 augmentations, constructor augmentations can't run arbitrary code before the
 augmented code, and they can't change the values of arguments. They can only add
-initializers and/or asserts and possibly a `super` call, and additional code to
-be run _after_ the augmented constructor. Then everything is run in a prescribed
+initializers and/or asserts, possibly a `super` call, and additional code to be
+run _after_ the augmented constructor. Then everything is run in a prescribed
 order that preserves the appropriate soundness guarantees.
 
-Once enhanced constructors are implemented, we will have the opportunity to
-revisit how augmentation applies to non-redirecting generative constructors,
-making them work a lot more like function augmentations. In particular, we
-should be able to allow a constructor augmentation to either contain an
-`augmented(ARGUMENTS)` expression instead of a `super` constructor invocation
-expression, or to simply invoke the `super` constructor directly. This will
-allow constructor augmentations to run arbitrary code before, after, or instead
-of the augmented code, and the order in which code executes will be
-straightforward, since it will follow the same pattern that function
-augmentations follow.
+If we decide to go ahead with enhanced constructors _before_ adding support for
+augmenting constructors, then we will have the opportunity to revisit how
+augmentation applies to non-redirecting generative constructors, making them
+work a lot more like function augmentations. In particular, we should be able to
+allow a constructor augmentation to either contain an `augmented(ARGUMENTS)`
+expression instead of a `super` constructor invocation expression, or to simply
+invoke the `super` constructor directly. This will allow constructor
+augmentations to run arbitrary code before, after, or instead of the augmented
+code, and the order in which code executes will be straightforward, since it
+will follow the same pattern that function augmentations follow.
 
-Not all of the complexity of constructor augmentations goes away, though. We
-will probably need some extra flow analysis rules to ensure that the augmenting
+Not all of the complexity of constructor augmentations would go away, though. We
+would probably need some extra flow analysis rules to ensure that the augmenting
 constructor initializes any new fields that have been introduced through the
 augmentation process, but doesn't try to initialize any fields that the
 augmented constructor initializes.
