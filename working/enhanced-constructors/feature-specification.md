@@ -137,8 +137,8 @@ _The current Dart spec contains several exceptions for the built-in class
 `Object`, which doesn't have a supertype, and therefore can't have a super
 constructor. Keeping track of these exceptions is cumbersome, so for
 simplicitly, in this proposal, we simply consider the invocation of a super
-constructor to be a no-op; this way we can treat the built-in class `Object` as
-non-exceptional._
+constructor from the constructor of `Object` to be a no-op; this way we can
+treat the built-in class `Object` as non-exceptional._
 
 This allows the vast majority of constructor initializer lists to be rewritten
 as ordinary statements in the constructor body. For example, this constructor
@@ -191,7 +191,7 @@ written in a mixed style:
   }
 ```
 
-The same flow analysis logic that ensures soundness in fully "new style"
+The same flow analysis logic that ensures soundness in fully new style
 constructors also ensures soundness in mixed style constructors.
 
 ### Implicit super invocation
@@ -348,9 +348,9 @@ class C extends B {
 }
 ```
 
-As a consequence of this, a user trying to rewrite a constructor from "old
-style" to "new style" may need to reduce their use of the `super.` parameter
-feature. For example, consider this code:
+As a consequence of this, a user trying to rewrite a constructor from old style
+to new style may need to reduce their use of the `super.` parameter feature. For
+example, consider this code:
 
 ```dart
 class B {
@@ -527,7 +527,8 @@ may not be fully constructed yet_). _Examples include:_
 
 - _A call to a setter, getter, or method that is part of the class's interface
   due to the presence of an `implements` clause, and not backed by a field
-  declared in the class._
+  declared in the class (the class might be abstract, or the call might forward
+  to `noSuchMethod`)._
 
 - _Any other use of `this` that is not syntactically part of a read or write of
   a field._
@@ -560,7 +561,7 @@ potentially ambiguous:
   constructor named `NAME` in the superclass, or the invocation of an instance
   method or getter named `NAME` in the superclass or one of its ancestors.
 
-These forms are all disambiguated as follows:
+These forms are disambiguated as follows:
 
 - If the expression is the top level expression in an expression statement, and
   the `constructed` boolean maintained by flow analysis is `false` at the point
@@ -604,18 +605,18 @@ expression statement of the form `super(ARGUMENTS)` or `super.NAME(ARGUMENTS)`.
 
 If neither of these forms is found, an implicit super constructor invocation
 will be inserted at the first statement boundary within the block that
-constitutes the constructor body that has a `true` value for the `assigned`
-booleans of all non-late fields. (_This is the earliest point within the
-constructor body block at which the user could have written the super
-constructor invocation explicitly._)
+constitutes the constructor body, such that the `assigned` booleans for all
+non-late fields are `true`. (_This is the earliest point within the constructor
+body block at which the user could have written the super constructor invocation
+explicitly._)
 
 _Note that it's possible for this heuristic to go wrong; see the [backward
 compatibility](#backward-compatibility) section._
 
 _Note that expressions of the above forms that do not constitute a complete
-initializer or the top level expression in an expression statement do not
-prevent an implicit super constructor invocation from being inserted, because
-they cannot represent super constructor invocations. For example, this is valid:_
+initializer or the top level expression in an expression statement are not
+counted by the heuristic, because they cannot represent super constructor
+invocations. For example, this is valid:_
 
 ```dart
 class B {
@@ -698,7 +699,7 @@ before any code can access `this`. Then, the **remainder** of all constructor
 bodies will all be executed, starting at the top of the class hierarchy and
 moving down._
 
-_Note that for constructors written in the "old style", these semantics are 100%
+_Note that for constructors written in the old style, these semantics are 100%
 equivalent._
 
 ## Const constructors
@@ -744,7 +745,7 @@ will be helpful to users who run into this situation. We might even consider
 adding an analysis server "quick fix" that corrects the problem by adding the
 appropriate explicit `super()` invocation._
 
-There are two circumstances in which there might not be a "no such super
+There are two circumstances in which there won't be a "no such super
 constructor" error:
 
 - If the superclass contains an unnamed constructor **and** its interface
@@ -768,7 +769,7 @@ it.
 ### Other incompatibilities
 
 Provided that the ambiguity issue discussed above does not arise, it is fairly
-straightforward to show that an "old style" constructor will not trigger any of
+straightforward to show that an old style constructor will not trigger any of
 the new flow analysis errors. So there should be no other incompatibilities.
 
 ## Back-end consequences
@@ -855,11 +856,10 @@ same instance of `C` after it's been completely initialized.
 
 _The reason I'm calling out this example in particular is that it might be
 tempting to try to implement this feature as a kernel transformation that
-rewrites "new style" constructors into their equivalent "old style"
-constructors, storing field values in hidden local variables until the `super`
-constructor invocation expression is encountered. If this implementation
-strategy is chosen, we would have to take special care with closures like the
-one above._
+rewrites new style constructors into old style equivalents, storing
+field values in hidden local variables until the `super` constructor invocation
+expression is encountered. If this implementation strategy is chosen, we would
+have to take special care with closures like the one above._
 
 ## Interaction with augmentations
 
@@ -869,9 +869,9 @@ proposal specifies that the `augmented` keyword has no special meaning in
 non-redirecting generative constructors. This means that unlike function
 augmentations, constructor augmentations can't run arbitrary code before the
 augmented code, and they can't change the values of arguments. They can only add
-initializers and/or asserts, possibly a `super` call, and additional code to be
-run _after_ the augmented constructor. Then everything is run in a prescribed
-order that preserves the appropriate soundness guarantees.
+initializers and/or asserts, a `super` call (if one is not already present), and
+additional code to be run _after_ the augmented constructor. Then everything is
+run in a prescribed order that preserves the appropriate soundness guarantees.
 
 If we decide to go ahead with enhanced constructors _before_ adding support for
 augmenting constructors, then we will have the opportunity to revisit how
