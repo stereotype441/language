@@ -726,29 +726,35 @@ TODO: Add missing expressions, handle cascades and left-hand sides accurately
 
 - **while statement**: If `N` is a while statement of the form `while
   (E) S` then:
-  - Let `before(E) = conservativeJoin(before(N), assignedIn(N), capturedIn(N))`.
-  - Let `before(S) = split(true(E))`.
-  - Let `after(N) = inheritTested(join(false(E), unsplit(break(S))), after(S))`.
+  - Let `before(E) = conservativeJoin(split(before(N)), assignedIn(N),
+    capturedIn(N))`.
+  - Let `before(S) = true(E)`.
+  - Let `after(N) = inheritTested(unsplit(join(false(E), break(S))), after(S))`.
 
 - **for statement**: If `N` is a for statement of the form `for (D; C; U) S`,
   then:
+  - If `C` is absent, it is handled as though it is the literal `true`.
   - Let `before(D) = before(N)`.
-  - Let `before(C) = conservativeJoin(after(D), assignedIn(N), capturedIn(N))`.
-  - Let `before(S) = split(true(C))`.
-  - Let `before(U) = merge(after(S), continue(S))`.
-  - Let `after(N) = inheritTested(join(false(C), unsplit(break(S))), after(U))`.
+  - Let `before(C) = conservativeJoin(split(after(D)), assignedIn(N),
+    capturedIn(N))`.
+  - Let `before(S) = true(C)`.
+  - Let `before(U) = join(after(S), continue(S))`.
+  - Let `after(N) = inheritTested(unsplit(join(false(C), break(S))), after(U))`.
 
 - **do while statement**: If `N` is a do while statement of the form `do S while
   (E)` then:
-  - Let `before(S) = conservativeJoin(before(N), assignedIn(N), capturedIn(N))`.
-  - Let `before(E) = join(after(S), continue(N))`
-  - Let `after(N) = join(false(E), break(S))`
+  - Let `before(S) = conservativeJoin(split(before(N)), assignedIn(N),
+    capturedIn(N))`.
+  - Let `before(E) = join(after(S), continue(N))`.
+  - Let `after(N) = unsplit(join(false(E), break(S)))`.
 
 - **for each statement**: If `N` is a for statement of the form `for (T X in E)
   S`, `for (var X in E) S`, or `for (X in E) S`, then:
-  - Let `before(E) = before(N)`
-  - Let `before(S) = conservativeJoin(after(E), assignedIn(N), capturedIn(N))`
-  - Let `after(N) = join(before(S), break(S))`
+  - Let `before(E) = before(N)`.
+  - Let `before(S) = conservativeJoin(split(after(E)), assignedIn(N),
+    capturedIn(N))`.
+  - Let `after(N) = inheritTested(unsplit(join(before(S), break(S))),
+    after(S))`.
 
   TODO(paulberry): this glosses over how we handle the implicit assignment to X.
   See https://github.com/dart-lang/sdk/issues/42653.
