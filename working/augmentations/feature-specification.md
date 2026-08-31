@@ -328,7 +328,7 @@ the variable's name in the surrounding code._
 Prior to this proposal, an entity like a class or function is introduced by a
 single syntactic declaration. With augmentations, an entity may be composed out
 of multiple declarations, the introductory one and any number of augmentations.
-We define a notion of a *augmentation context* to help us talk about the
+We define a notion of an *augmentation context* to help us talk about the
 location where we need to look to collect all of the declarations that define
 some entity.
 
@@ -870,7 +870,7 @@ signature *matches* an introductory signature if:
     *If an augmentation specifies `_` as the name of a parameter, a non-`_` name
     is not "inherited" from a preceding declaration for use in the
     augmentation's body. The name of the parameter for that augmentation is `_`,
-    which can't be accessed because it's a wildcard:
+    which can't be accessed because it's a wildcard:*
 
     ```dart
     f(int x);
@@ -1083,7 +1083,7 @@ ended by a single `;`, is not a complete declaration, and does not decide
 whether the factory constructor being defined is redirecting or not.
 Only the (single) complete declaration forces that decision._
 
-#### Generative constructor declarations.
+#### Generative constructor declarations
 
 A **primary constructor** declaration causes the constructor it defines
 to be a primary constructor, and the class to have a primary constructor.
@@ -1098,22 +1098,28 @@ in-body `this`-part which can contain an initializer list or body,
 and can have metadata attached (`this: super(x) { print('done'); }`)._
 
 A primary constructor declaration is an _initializing constructor declaration_.
+
 A primary constructor declaration is _complete_ if (any of):
-  * It has an initializing formal parameter (`this.name`).
-  * It has a super parameter (`super.name`).
-  * It has a declaring parameter (`final int name`).
-  * It has an in-body `this`-part that:
-      * has a body (`{...}`) and/or
-      * has an initializer list (`: ...`).
-  * It's in an extension type declaration.
+
+*   It has an initializing formal parameter (`this.name`).
+*   It has a super parameter (`super.name`).
+*   It has a declaring parameter (`final int name` or `var int name`).
+*   It has an in-body `this`-part that:
+    *   has a body (`{...}`) and/or
+    *   has an initializer list (`: ...`).
+*   It's in an extension type declaration.
+
 A primary constructor declaration is an _augmenting declaration_ if
 (either of):
-  * It has an in-body `this`-part with an `augment` keyword
+
+*   It has an in-body `this`-part with an `augment` keyword
     (`augment this ...`).
-  * It has no in-body `this`-part, and there is another constructor
+*   It has no in-body `this`-part, and there is another constructor
     declaration with the same name which occurs _before_ this
     constructor declaration.
+
 Otherwise it is an _introductory declaration_.
+
 _An augmenting primary constructor with no in-body `this`-part does not
 have a separate `augment` keyword. Such a constructor is necessarily part
 of an augmenting class or enum declaration,
