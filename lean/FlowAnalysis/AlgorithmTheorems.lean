@@ -223,7 +223,7 @@ theorem FlowModelA.refines.tryPromote
           by_cases hchain : isPromotionChain (vmI.promotedTypes ++ [T]) <;> simp_all
           case pos =>
             -- `T` was appended to `v`'s promotion chain, in both the algorithm and the spec.
-            exists ⟨fmA.env.insert v ⟨vmI.promotedTypes ++ [T]⟩⟩
+            exists ⟨fmA.env.insert v {vmI with promotedTypes := vmI.promotedTypes ++ [T]}⟩
             refine ⟨rfl, ?_⟩
             exact hrefines.insert v (hrefines_vm.promote hchain)
           case neg =>
@@ -490,14 +490,14 @@ theorem elabStmtA.correct.declare (n : String) (T : τ) :
     cases helab; case declare =>
       refine ⟨?_, ?_, ?_⟩; rotate_left
       · congr; rfl
-      · apply hrefines_fm₀.insert ⟨n, T⟩ (by simp)
+      · apply hrefines_fm₀.insert ⟨n, T⟩ VariableModelImpl.refines.declared
   case sound =>
     intro fm₀ m fmA fmA₀ hrefines_fm₀ hok; simp [elabStmtA] at hok
     rcases hok with ⟨rfl, rfl⟩
-    exists fm₀.set ⟨n, T⟩ ⟨∅⟩
+    exists fm₀.set ⟨n, T⟩ ⟨∅, ∅, true, false, some ⟨⟩⟩
     constructor
     · apply ElabStmt.declare fm₀ n T
-    · apply hrefines_fm₀.insert ⟨n, T⟩ VariableModelImpl.refines.empty
+    · apply hrefines_fm₀.insert ⟨n, T⟩ VariableModelImpl.refines.declared
 
 theorem elabStmtA.correct.exprStmt
     (e₁ : Expr) (hcorrect₁ : elabExprA.Correctness (cfg := cfg) e₁) :

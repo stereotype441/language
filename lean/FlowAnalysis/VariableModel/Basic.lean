@@ -1,6 +1,8 @@
 module
 public import FlowAnalysis.PromotionChain.Basic
 public import FlowAnalysis.PromotionChain.JoinImpl
+public import FlowAnalysis.SsaNode.Basic
+public import FlowAnalysis.VariableModel.JoinTestedImpl
 public import FlowAnalysis.Types
 
 namespace FlowAnalysis
@@ -15,6 +17,10 @@ local notation "PromotionChain" => PromotionChain (τ := τ)
 @[ext]
 public structure VariableModel where
   promotedTypes : PromotionChain
+  tested : Finset τ
+  assigned : Bool
+  unassigned : Bool
+  ssaNode? : Option SsaNode
 
 local notation "VariableModel" => VariableModel (τ := τ)
 
@@ -29,18 +35,57 @@ public def currentType (vm : VariableModel) (baseType : τ) :=
 @[expose]
 public def join (vm₁ vm₂ : VariableModel) :
     VariableModel :=
-  ⟨vm₁.promotedTypes.join vm₂.promotedTypes⟩
+  ⟨vm₁.promotedTypes.join vm₂.promotedTypes,
+    vm₁.tested ∪ vm₂.tested,
+    vm₁.assigned ∧ vm₂.assigned,
+    vm₁.unassigned ∧ vm₂.unassigned,
+    SsaNode.join vm₁.ssaNode? vm₂.ssaNode?⟩
+
+/-- The join operation is idempotent (`join vm vm = vm`). -/
+@[simp]
+public theorem join_self (vm : VariableModel) : vm.join vm = vm := by
+  rcases vm; simp [join]
+
+public instance join.instIdempotentOp :
+    Std.IdempotentOp (join (τ := τ)) where
+  idempotent := join_self
+
+/-- The join operation is commutative (`join vm₁ vm₂ = join vm₂ vm₁`). -/
+public theorem join_comm (vm₁ vm₂ : VariableModel) : vm₁.join vm₂ = vm₂.join vm₁ := by
+  simp [join, PromotionChain.join_comm, Finset.union_comm, Bool.and_comm, SsaNode.join_comm]
+
+public instance join.instCommutative : Std.Commutative (join (τ := τ)) where
+  comm := join_comm
+
+/-- The join operation is associative (`join (join vm₁ vm₂) vm₃ = join vm₁ (join vm₂ vm₃)`). -/
+public theorem join_assoc (vm₁ vm₂ vm₃ : VariableModel) :
+    (vm₁.join vm₂).join vm₃ = vm₁.join (vm₂.join vm₃) := by
+  simp [join, PromotionChain.join_assoc, Finset.union_assoc, Bool.and_assoc, SsaNode.join_assoc]
+
+public instance join.instAssociative : Std.Associative (join (τ := τ)) where
+  assoc := join_assoc
 
 end «VariableModel»
 
+open «VariableModel»
+
 public structure VariableModelImpl where
   promotedTypes : List τ
+  tested : List τ
+  assigned : Bool
+  unassigned : Bool
+  ssaNode? : Option SsaNode
 
 local notation "VariableModelImpl" => VariableModelImpl (τ := τ)
 
 @[expose]
 public def VariableModelImpl.join (vmI₁ vmI₂ : VariableModelImpl) : VariableModelImpl :=
-  ⟨(joinPromotedTypesImpl vmI₁.promotedTypes vmI₂.promotedTypes : Id _).run⟩
+  ⟨(joinPromotedTypesImpl vmI₁.promotedTypes vmI₂.promotedTypes : Id _).run,
+    joinTestedImpl vmI₁.tested vmI₂.tested,
+    vmI₁.assigned ∧ vmI₂.assigned,
+    vmI₁.unassigned ∧ vmI₂.unassigned,
+    SsaNode.join vmI₁.ssaNode? vmI₂.ssaNode?
+  ⟩
 
 @[expose]
 public def VariableModelImpl.promotedType? (vmI : VariableModelImpl) : Option τ :=
@@ -55,32 +100,64 @@ public def VariableModelImpl.currentType (vmI : VariableModelImpl) (baseType : �
 
 public structure VariableModelImpl.refines (vmI : VariableModelImpl) (vm : VariableModel) :
     Prop where
-  types : vmI.promotedTypes = vm.promotedTypes.val
+  promotedTypes : vmI.promotedTypes = vm.promotedTypes.val
+  tested : ∀ T, T ∈ vmI.tested ↔ T ∈ vm.tested
+  assigned : vmI.assigned = vm.assigned
+  unassigned : vmI.unassigned = vm.unassigned
+  ssaNode? : vmI.ssaNode? = vm.ssaNode?
+
+@[simp]
+public theorem VariableModelImpl.refines.promotedTypes' {vmI : VariableModelImpl}
+    {vm : VariableModel} (h : VariableModelImpl.refines vmI vm) :
+    (vmI.promotedTypes = vm.promotedTypes.val) ↔ True := by
+  simp [h.promotedTypes]
+
+@[simp]
+public theorem VariableModelImpl.refines.tested' {vmI : VariableModelImpl} {vm : VariableModel}
+    (h : VariableModelImpl.refines vmI vm) : (∀ T, T ∈ vmI.tested ↔ T ∈ vm.tested) ↔ True := by
+  simp [h.tested]
+
+@[simp]
+public theorem VariableModelImpl.refines.assigned' {vmI : VariableModelImpl} {vm : VariableModel}
+    (h : VariableModelImpl.refines vmI vm) : (vmI.assigned = vm.assigned) ↔ True := by
+  simp [h.assigned]
+
+@[simp]
+public theorem VariableModelImpl.refines.unassigned' {vmI : VariableModelImpl} {vm : VariableModel}
+    (h : VariableModelImpl.refines vmI vm) : (vmI.unassigned = vm.unassigned) ↔ True := by
+  simp [h.unassigned]
+
+@[simp]
+public theorem VariableModelImpl.refines.ssaNode?' {vmI : VariableModelImpl} {vm : VariableModel}
+    (h : VariableModelImpl.refines vmI vm) : (vmI.ssaNode? = vm.ssaNode?) ↔ True := by
+  simp [h.ssaNode?]
+
+/--
+The variable model that the algorithm creates for a freshly declared variable refines the variable
+model that the specification creates for it.
+-/
+@[simp]
+public theorem VariableModelImpl.refines.declared :
+    (⟨[], [], true, false, some ⟨⟩⟩ : VariableModelImpl).refines
+      ⟨∅, ∅, true, false, some ⟨⟩⟩ := by
+  constructor <;> simp
 
 public theorem VariableModelImpl.refines.unique {vmI : VariableModelImpl}
     {vm₁ vm₂ : VariableModel} :
     vmI.refines vm₁ → vmI.refines vm₂ → vm₁ = vm₂ := by
   intro h₁ h₂
-  ext
-  rw [←h₁.types, ←h₂.types]
-
-@[simp]
-public theorem VariableModelImpl.refines.empty :
-    (⟨[]⟩ : VariableModelImpl).refines ⟨∅⟩ := by
-  constructor
-  · simp
-
-@[simp]
-public theorem VariableModelImpl.refines.single {T : τ} :
-    (⟨[T]⟩ : VariableModelImpl).refines ⟨.single T⟩ := by
-  constructor
-  · simp
+  ext1
+  case promotedTypes => ext1; rw [←h₁.promotedTypes, ←h₂.promotedTypes]
+  case tested => ext; rw [←h₁.tested, ←h₂.tested]
+  case assigned => rw [←h₁.assigned, ←h₂.assigned]
+  case unassigned => rw [←h₁.unassigned, ←h₂.unassigned]
+  case ssaNode? => rw [←h₁.ssaNode?, ←h₂.ssaNode?]
 
 public theorem VariableModelImpl.refines.currentTypes {vmI : VariableModelImpl} {vm : VariableModel}
     {baseType : τ} : vmI.refines vm → vmI.currentType baseType = vm.currentType baseType := by
   intro hrefines
   simp [VariableModelImpl.currentType, VariableModelImpl.promotedType?, VariableModel.currentType]
-  rw [hrefines.types]
+  rw [hrefines.promotedTypes]
 
 /--
 Refinement implies that `vmI` and `vm` agree about whether a promotion to `T` is possible: appending
@@ -90,7 +167,7 @@ strictly bounds `T`.
 public theorem VariableModelImpl.refines.strictly_bounds_iff {vmI : VariableModelImpl}
     {vm : VariableModel} {T : τ} (hrefines : vmI.refines vm) :
     isPromotionChain (vmI.promotedTypes ++ [T]) ↔ vm.promotedTypes.strictly_bounds T := by
-  rw [PromotionChain.strictly_bounds, hrefines.types]
+  rw [PromotionChain.strictly_bounds, hrefines.promotedTypes]
 
 /--
 The algorithm promotes a variable to `T` by appending `T` to its list of promoted types, but only
@@ -99,10 +176,10 @@ when the resulting list is a valid promotion chain. This theorem shows that doin
 -/
 public theorem VariableModelImpl.refines.promote {vmI : VariableModelImpl} {vm : VariableModel}
     {T : τ} (hrefines : vmI.refines vm) (hchain : isPromotionChain (vmI.promotedTypes ++ [T])) :
-    (⟨vmI.promotedTypes ++ [T]⟩ : VariableModelImpl).refines ⟨vm.promotedTypes.tryPromote T⟩ := by
+    {vmI with promotedTypes := vmI.promotedTypes ++ [T]}.refines
+      {vm with promotedTypes := vm.promotedTypes.tryPromote T} := by
   have hbounds : vm.promotedTypes.strictly_bounds T := hrefines.strictly_bounds_iff.mp hchain
-  constructor
-  simp [hbounds, hrefines.types]
+  constructor <;> simp_all
 
 /--
 Conversely, in the circumstances in which the algorithm declines to promote a variable to `T` (that
@@ -121,8 +198,14 @@ public theorem VariableModelImpl.refines.join {vmI₁ vmI₂ : VariableModelImpl
     vmI₁.refines vm₁ → vmI₂.refines vm₂ → (vmI₁.join vmI₂).refines (vm₁.join vm₂) := by
   rintro hrefines₁ hrefines₂
   simp [VariableModelImpl.join, VariableModel.join]
-  simp [hrefines₁.types, hrefines₂.types]
-  rw [joinPromotedTypesImpl_pure_correct vm₁.promotedTypes vm₂.promotedTypes]
-  constructor; simp
+  constructor
+  case promotedTypes =>
+    simp [hrefines₁.promotedTypes, hrefines₂.promotedTypes]
+    rw [joinPromotedTypesImpl_pure_correct vm₁.promotedTypes vm₂.promotedTypes]
+  case tested =>
+    intro T; simp [joinTestedImpl, List.mem_union_iff, hrefines₁.tested, hrefines₂.tested]
+  case assigned => simp [hrefines₁.assigned, hrefines₂.assigned]
+  case unassigned => simp [hrefines₁.unassigned, hrefines₂.unassigned]
+  case ssaNode? => simp [hrefines₁.ssaNode?, hrefines₂.ssaNode?]
 
 end FlowAnalysis

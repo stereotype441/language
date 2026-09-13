@@ -85,7 +85,8 @@ public def tryPromoteA (ref : Option Reference) (T : τ) :
     match (<- get).env[v]? with
     | some vmI =>
       if T < vmI.currentType v.type ∧ isPromotionChain (vmI.promotedTypes ++ [T]) then
-        modify (fun s => { s with env := s.env.insert v ⟨vmI.promotedTypes ++ [T]⟩})
+        modify (fun s => {
+          s with env := s.env.insert v {vmI with promotedTypes := vmI.promotedTypes ++ [T]}})
     | none => pure ()
   | none => pure ()
 
@@ -118,7 +119,7 @@ public def elabStmtA (s : Stmt) :
     AlgM LoweredExpr := do
   match s with
   | .declare n T =>
-    modify (fun s => { s with env := s.env.insert ⟨n, T⟩ ⟨[]⟩ })
+    modify (fun s => { s with env := s.env.insert ⟨n, T⟩ ⟨[], [], true, false, some ⟨⟩⟩ })
     pure (LoweredExpr.declare ⟨n, T⟩ T)
   | .exprStmt e =>
     let (m, _) <- elabExprA e

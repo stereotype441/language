@@ -93,8 +93,6 @@ public theorem FlowModel.join_idempotent (fm : FlowModel) :
   apply extensionality; intro v
   simp [FlowModel.join]
   cases fm.env v <;> simp_all
-  case some vm =>
-    ext; simp [VariableModel.join]
 
 instance FlowModel.instIdempotentOpJoin : Std.IdempotentOp (FlowModel.join (τ := τ)) where
   idempotent := join_idempotent

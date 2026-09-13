@@ -27,7 +27,10 @@ public def FlowModel.tryPromote (ref : Option Reference) (T : τ)
   | some (Reference.var v) =>
     match fm.env v with
     | some vm =>
-      if T < vm.currentType v.type then fm.set v ⟨vm.promotedTypes.tryPromote T⟩ else fm
+      if T < vm.currentType v.type then
+        fm.set v {vm with promotedTypes := vm.promotedTypes.tryPromote T}
+      else
+        fm
     | none => fm
   | none => fm
 
@@ -60,7 +63,7 @@ public inductive ElabStmt : FlowModel → Stmt →
     LoweredExpr → FlowModel -> Prop where
   /-- Variable declaration statement. TODO: support more than one variable. -/
   | declare fm n T :
-      ElabStmt fm (.declare n T) (.declare ⟨n, T⟩ T) (fm.set ⟨n, T⟩ ⟨∅⟩)
+      ElabStmt fm (.declare n T) (.declare ⟨n, T⟩ T) (fm.set ⟨n, T⟩ ⟨∅, ∅, true, false, some ⟨⟩⟩)
   /-- Expression statement. -/
   | exprStmt {fm₀ e m em} :
       ElabExpr fm₀ e m em →
