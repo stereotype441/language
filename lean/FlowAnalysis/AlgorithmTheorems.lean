@@ -44,28 +44,32 @@ namespace FlowAnalysis
 
 open DartTypeRepr
 
-variable {τ : Type} [Γ : DartTypeRepr τ]
+variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ] [Inhabited ℓ]
 variable {cfg : Config}
 
-local notation "AlgM" => AlgM (τ := τ)
+local notation "AlgM" => AlgM (τ := τ) (ℓ := ℓ)
 local notation "Expr" => Expr (τ := τ)
-local notation "ExprModel" => ExprModel (τ := τ)
-local notation "ExprModelImpl" => ExprModelImpl (τ := τ)
-local notation "FlowModel" => FlowModel (τ := τ)
-local notation "FlowModelImpl" => FlowModelImpl (τ := τ)
+local notation "ExprModel" => ExprModel (τ := τ) (ℓ := ℓ)
+local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
+local notation "FlowModel" => FlowModel (τ := τ) (ℓ := ℓ)
+local notation "FlowModelImpl" => FlowModelImpl (τ := τ) (ℓ := ℓ)
 local notation "PromotionChain" => PromotionChain (τ := τ)
 local notation "Stmt" => Stmt (τ := τ)
-local notation "PromotionModel" => PromotionModel (τ := τ)
-local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ)
+local notation "PromotionModel" => PromotionModel (τ := τ) (ℓ := ℓ)
+local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
 
+-- These lemmas are about the shape of `AlgM`, so none of them need to know anything about labels.
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_get_eq {fm} :
+theorem AlgM_get_eq {fm : FlowModelImpl} :
   (get : AlgM _) cfg fm = Except.ok (fm, fm) := rfl
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_pure_eq {α fm} {a : α} :
+theorem AlgM_pure_eq {α} {fm : FlowModelImpl} {a : α} :
   (pure a : AlgM _) cfg fm = Except.ok (a, fm) := rfl
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
 theorem AlgM_bind_eq {α β : Type} {x : AlgM α} {fm : FlowModelImpl}
     {f : α → AlgM β} :
@@ -75,6 +79,7 @@ theorem AlgM_bind_eq {α β : Type} {x : AlgM α} {fm : FlowModelImpl}
   simp [bind, ReaderT.bind, StateT.bind]
   cases x cfg fm <;> rfl
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
 theorem AlgM_map_eq {α β : Type} {fm : FlowModelImpl} {f : α → β} {x : AlgM α} :
   (f <$> x) cfg fm = match x cfg fm with
@@ -83,16 +88,19 @@ theorem AlgM_map_eq {α β : Type} {fm : FlowModelImpl} {f : α → β} {x : Alg
   dsimp [Functor.map, StateT.instMonad, StateT.map, StateT.bind, StateT.pure, ExceptT.bind, ExceptT.pure, bind, pure]
   cases x cfg fm <;> trivial
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_modify_eq {f fm} :
+theorem AlgM_modify_eq {f} {fm : FlowModelImpl} :
     (modify : _ → AlgM _) f cfg fm = Except.ok ((), f fm) := rfl
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_set_eq {fm fm'} :
+theorem AlgM_set_eq {fm fm' : FlowModelImpl} :
     (set : _ → AlgM _) fm' cfg fm = Except.ok ((), fm') := rfl
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_throw_eq_ok_contra {α e fmI₀ x fmI} :
+theorem AlgM_throw_eq_ok_contra {α e x} {fmI₀ fmI : FlowModelImpl} :
     (throw e : AlgM α) cfg fmI₀ = Except.ok (x, fmI) ↔ False := by
   constructor
   case mp => intro h; contradiction
@@ -121,12 +129,14 @@ structure FlowModelImpl.refines (fmI : FlowModelImpl)
   /-- The two flow models' `promotionInfo` fields agree about every variable. -/
   promotionInfos (v : Variable) : fmI.PromotionInfoRefinesAt fm v
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 /-- The algorithm's initial flow model refines the specification's initial flow model. -/
 theorem FlowModelImpl.refines.empty :
     (.empty : FlowModelImpl).refines FlowModel.empty := by
   constructor; intro v
   exact .absent (by simp [FlowModelImpl.empty]) (by simp [FlowModel.empty])
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
 A flow model refined by `fmI` maps every variable to `none` precisely when `fmI`'s `promotionInfo` is empty.
 -/
@@ -144,6 +154,7 @@ theorem FlowModelImpl.refines.isEmpty {fmI : FlowModelImpl} {fm : FlowModel}
     intro v
     cases hrefines.promotionInfos v <;> simp_all
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
 An algorithmic flow model whose `promotionInfo` is empty refines the specification's empty flow model.
 
@@ -157,6 +168,7 @@ theorem FlowModelImpl.refines.empty_of_isEmpty {fmI : FlowModelImpl}
   constructor; intro v
   exact .absent (Std.HashMap.getElem?_of_isEmpty hempty) (by simp)
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
 A single algorithmic flow model can't refine two different specification flow models, since it
 determines each variable's variable model up to `PromotionModelImpl.refines`, which is itself unique.
@@ -176,6 +188,7 @@ theorem FlowModelImpl.refines.unique {fmI : FlowModelImpl} {fm₁ fm₂ : FlowMo
       subst hvmIs
       rw [hlookup₁, hlookup₂, hrefines_vm₁.unique hrefines_vm₂]
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
 Refinement is preserved by adding a variable to both flow models, provided the variable models
 being added are themselves related by `refines`.
@@ -196,6 +209,7 @@ theorem FlowModelImpl.refines.insert {fmI : FlowModelImpl} {fm : FlowModel}
     case present pmI' pm' hlookupI hlookup hrefines_vm' =>
       exact .present (by simp_all [Std.HashMap.getElem?_insert]) (by simp_all) hrefines_vm'
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
 Running the algorithm's `tryPromoteImpl` on a flow model that refines `fm` succeeds, and produces a
 flow model that refines the result of the specification's `FlowModel.tryPromote`.
@@ -254,6 +268,7 @@ theorem mergeMaps_some {k : α} {v₁ v₂ : β} :
 
 end
 
+omit [Inhabited ℓ] in
 /-- Refinement is preserved by joining the two flow models pointwise. -/
 theorem FlowModelImpl.refines.join {fmI₁ fmI₂ : FlowModelImpl}
     {fm₁ fm₂ : FlowModel} (hrefines₁ : fmI₁.refines fm₁) (hrefines₂ : fmI₂.refines fm₂) :
@@ -298,6 +313,7 @@ structure ExprModelImpl.refines (emI : ExprModelImpl)
   /-- The flow models that apply when the expression evaluates to `false` are related. -/
   fm_falses : (emI.boolInfo.getD (fmI, fmI)).snd.refines em.fm_false
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
 An algorithmic expression model that records no boolean information refines a specification
 expression model whose `true` and `false` flow models are both the flow model the algorithm reached.
@@ -316,7 +332,7 @@ structure elabExprImpl.Correctness (e : Expr) : Prop where
       ElabExpr fm₀ e m em ∧ fmI.refines em.fm_after ∧ emI.refines fmI em
 
 theorem elabExprImpl.correct.var (v : Variable) :
-    elabExprImpl.Correctness (cfg := cfg) (.var v : Expr) := by
+    elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.var v : Expr) := by
   constructor
   case complete =>
     intro fm₀ m em fmI₀ hrefines_fm₀ helab; simp [elabExprImpl]
@@ -341,8 +357,8 @@ theorem elabExprImpl.correct.var (v : Variable) :
           hrefines_fm₀ (pm.currentType v.type) (some (Reference.var v))
 
 theorem elabExprImpl.correct.nullCheck (e₁ : Expr) (hcorrect₁ :
-    elabExprImpl.Correctness (cfg := cfg) e₁) :
-    elabExprImpl.Correctness (cfg := cfg) e₁.nullCheck := by
+    elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁) :
+    elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁.nullCheck := by
   constructor
   case complete =>
     intro fm₀ m em fmI₀ hrefines_fm₀ helab; simp [elabExprImpl]
@@ -382,8 +398,8 @@ theorem elabExprImpl.correct.nullCheck (e₁ : Expr) (hcorrect₁ :
       · assumption
 
 theorem elabExprImpl.correct.asExpr (e₁ : Expr) T
-    (hcorrect₁ : elabExprImpl.Correctness (cfg := cfg) e₁) :
-    elabExprImpl.Correctness (cfg := cfg) (e₁.as T) := by
+    (hcorrect₁ : elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁) :
+    elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) (e₁.as T) := by
   constructor
   case complete =>
     intro fmI₀ fm₀ m em hrefines_fm₀ helab; simp [elabExprImpl]
@@ -423,7 +439,7 @@ theorem elabExprImpl.correct.asExpr (e₁ : Expr) T
       · assumption
 
 theorem elabExprImpl.correct.nullLiteral :
-    elabExprImpl.Correctness (cfg := cfg) (.null : Expr) := by
+    elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.null : Expr) := by
   constructor
   case complete =>
     intro fmI₀ fm₀ m em hrefines_fm₀ helab; simp [elabExprImpl]
@@ -441,7 +457,7 @@ theorem elabExprImpl.correct.nullLiteral :
     · exact ExprModelImpl.refines.noBoolInfo hrefines_fm₀ Γ.Null none
 
 theorem elabExprImpl.correct (e : Expr) :
-    elabExprImpl.Correctness (cfg := cfg) e := by
+    elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e := by
   constructor
   case complete =>
     intro fmI₀ fm₀ m em hrefines_fm₀ helab
@@ -483,25 +499,25 @@ structure elabStmtsImpl.Correctness (ss : List Stmt) : Prop where
       ∃ fm, ElabStmts fm₀ ss m fm ∧ fmI.refines fm
 
 theorem elabStmtImpl.correct.declare (n : String) (T : τ) :
-    elabStmtImpl.Correctness (cfg := cfg) (.declare n T) := by
+    elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.declare n T) := by
   constructor
   case complete =>
     intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtImpl]
     cases helab; case declare =>
       refine ⟨?_, ?_, ?_⟩; rotate_left
       · congr; rfl
-      · apply hrefines_fm₀.insert ⟨n, T⟩ PromotionModelImpl.refines.declared
+      · apply hrefines_fm₀.insert ⟨n, T⟩ (PromotionModelImpl.refines.declared _)
   case sound =>
     intro fm₀ m fmI fmI₀ hrefines_fm₀ hok; simp [elabStmtImpl] at hok
     rcases hok with ⟨rfl, rfl⟩
-    exists fm₀.set ⟨n, T⟩ ⟨∅, ∅, true, false, some ⟨⟩⟩
+    exists fm₀.set ⟨n, T⟩ ⟨∅, ∅, true, false, some ValueVersion.unspecified⟩
     constructor
     · apply ElabStmt.declare fm₀ n T
-    · apply hrefines_fm₀.insert ⟨n, T⟩ PromotionModelImpl.refines.declared
+    · apply hrefines_fm₀.insert ⟨n, T⟩ (PromotionModelImpl.refines.declared _)
 
 theorem elabStmtImpl.correct.exprStmt
-    (e₁ : Expr) (hcorrect₁ : elabExprImpl.Correctness (cfg := cfg) e₁) :
-    elabStmtImpl.Correctness (cfg := cfg) (.exprStmt e₁) := by
+    (e₁ : Expr) (hcorrect₁ : elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁) :
+    elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.exprStmt e₁) := by
   constructor
   case complete =>
     intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtImpl]
@@ -523,10 +539,10 @@ theorem elabStmtImpl.correct.exprStmt
 
 theorem elabStmtImpl.correct.ifStmt
     (e₁ : Expr) (s₂ s₃ : Stmt)
-    (hcorrect₁ : elabExprImpl.Correctness (cfg := cfg) e₁)
-    (hcorrect₂ : elabStmtImpl.Correctness (cfg := cfg) s₂)
-    (hcorrect₃ : elabStmtImpl.Correctness (cfg := cfg) s₃) :
-    elabStmtImpl.Correctness (cfg := cfg) (.ifStmt e₁ s₂ s₃) := by
+    (hcorrect₁ : elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁)
+    (hcorrect₂ : elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) s₂)
+    (hcorrect₃ : elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) s₃) :
+    elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.ifStmt e₁ s₂ s₃) := by
   constructor
   case complete =>
     intro fm₀ m em fmI₀ hrefines_fm₀ helab; simp [elabStmtImpl]
@@ -568,8 +584,8 @@ theorem elabStmtImpl.correct.ifStmt
     · exact FlowModelImpl.refines.join hrefines_fm₂ hrefines_fm₃
 
 theorem elabStmtImpl.correct.block
-    (ss₁ : List Stmt) (hcorrect₁ : elabStmtsImpl.Correctness (cfg := cfg) ss₁) :
-    elabStmtImpl.Correctness (cfg := cfg) (.block ss₁) := by
+    (ss₁ : List Stmt) (hcorrect₁ : elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) ss₁) :
+    elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.block ss₁) := by
   constructor
   case complete =>
     intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtImpl]
@@ -587,7 +603,8 @@ theorem elabStmtImpl.correct.block
     exists fm₁; simp_all
     exact ElabStmt.block helab₁
 
-theorem elabStmtsImpl.correct.nil : elabStmtsImpl.Correctness (cfg := cfg) ([] : List Stmt) := by
+theorem elabStmtsImpl.correct.nil :
+    elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) ([] : List Stmt) := by
   constructor
   case complete =>
     intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtsImpl]
@@ -601,9 +618,9 @@ theorem elabStmtsImpl.correct.nil : elabStmtsImpl.Correctness (cfg := cfg) ([] :
 
 theorem elabStmtsImpl.correct.cons
     (s₁ : Stmt) (ss₂ : List Stmt)
-    (hcorrect₁ : elabStmtImpl.Correctness (cfg := cfg) s₁)
-    (hcorrect₂ : elabStmtsImpl.Correctness (cfg := cfg) ss₂) :
-    elabStmtsImpl.Correctness (cfg := cfg) (s₁ :: ss₂) := by
+    (hcorrect₁ : elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) s₁)
+    (hcorrect₂ : elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) ss₂) :
+    elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) (s₁ :: ss₂) := by
   constructor
   case complete =>
     intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtsImpl]
@@ -627,7 +644,7 @@ theorem elabStmtsImpl.correct.cons
 
 mutual
 theorem elabStmtImpl.correct (s : Stmt) :
-    elabStmtImpl.Correctness (cfg := cfg) s := by
+    elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) s := by
   constructor
   case complete =>
     intro fm₀ m fm fmI₀ hrefines_fm₀ helab
@@ -657,7 +674,7 @@ theorem elabStmtImpl.correct (s : Stmt) :
       apply (elabStmtImpl.correct.block ss (elabStmtsImpl.correct ss)).sound hrefines_fm₀ hok
 
 theorem elabStmtsImpl.correct (ss : List Stmt) :
-    elabStmtsImpl.Correctness (cfg := cfg) ss := by
+    elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) ss := by
   constructor
   case complete =>
     intro fm₀ m fm fmI₀ hrefines_fm₀ helab

@@ -8,10 +8,10 @@ namespace FlowAnalysis
 
 open DartTypeRepr
 
-variable {τ : Type} [Γ : DartTypeRepr τ]
+variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ] [Inhabited ℓ]
 
-local notation "ExprModel" => ExprModel (τ := τ)
-local notation "FlowModel" => FlowModel (τ := τ)
+local notation "ExprModel" => ExprModel (τ := τ) (ℓ := ℓ)
+local notation "FlowModel" => FlowModel (τ := τ) (ℓ := ℓ)
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
 local notation "Reference" => Reference (τ := τ)
 
@@ -63,7 +63,8 @@ public inductive ElabStmt : FlowModel → Stmt →
     LoweredExpr → FlowModel -> Prop where
   /-- Variable declaration statement. TODO: support more than one variable. -/
   | declare fm n T :
-      ElabStmt fm (.declare n T) (.declare ⟨n, T⟩ T) (fm.set ⟨n, T⟩ ⟨∅, ∅, true, false, some ⟨⟩⟩)
+      ElabStmt fm (.declare n T) (.declare ⟨n, T⟩ T)
+        (fm.set ⟨n, T⟩ ⟨∅, ∅, true, false, some ValueVersion.unspecified⟩)
   /-- Expression statement. -/
   | exprStmt {fm₀ e m em} :
       ElabExpr fm₀ e m em →
@@ -94,7 +95,8 @@ end
 
 -- Theorems --
 
-public theorem ElabExpr.boolInfo_onlyIf_bool {fm e m em} :
+omit [Inhabited ℓ] in
+public theorem ElabExpr.boolInfo_onlyIf_bool {fm : FlowModel} {e m} {em : ExprModel} :
     ElabExpr fm e m em → em.fm_true ≠ em.fm_false → em.type = Γ.bool := by
   intro hDeriv hHasInfo
   induction hDeriv <;> simp_all

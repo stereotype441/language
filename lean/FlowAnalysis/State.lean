@@ -6,9 +6,9 @@ public import FlowAnalysis.PromotionModel.Basic
 
 namespace FlowAnalysis
 
-variable {τ : Type} [DartTypeRepr τ]
+variable {τ : Type} [DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ]
 
-local notation "PromotionModel" => PromotionModel (τ := τ)
+local notation "PromotionModel" => PromotionModel (τ := τ) (ℓ := ℓ)
 local notation "Variable" => Variable (τ := τ)
 
 /-- A part of the program being analyzed that is a candidate for type promotion. -/
@@ -26,7 +26,7 @@ public structure FlowModel where
   /-- Partial function mapping `Variable`s to type promotion information. -/
   promotionInfo : Variable → Option PromotionModel
 
-local notation "FlowModel" => FlowModel (τ := τ)
+local notation "FlowModel" => FlowModel (τ := τ) (ℓ := ℓ)
 
 /-- The initial state of flow analysis. -/
 @[expose]
@@ -50,6 +50,10 @@ public def FlowModel.join (fm₁ fm₂ : FlowModel) : FlowModel :=
          | some pm₂ => pm₁.join pm₂⟩
 
 -- FlowModel Theorems --
+
+-- Decidable equality of labels is only needed in order to join flow models, so omit it from the
+-- lemmas below; the declarations that do join reintroduce it explicitly.
+omit [DecidableEq ℓ]
 
 @[simp]
 public theorem FlowModel.promotionInfo_set {fm : FlowModel} {v v' T} :
@@ -88,13 +92,14 @@ public theorem FlowModel.set_self {fm : FlowModel} {v : Variable}
   split <;> simp_all
 
 @[simp]
-public theorem FlowModel.join_idempotent (fm : FlowModel) :
+public theorem FlowModel.join_idempotent [DecidableEq ℓ] (fm : FlowModel) :
     fm.join fm = fm := by
   apply extensionality; intro v
   simp [FlowModel.join]
   cases fm.promotionInfo v <;> simp_all
 
-instance FlowModel.instIdempotentOpJoin : Std.IdempotentOp (FlowModel.join (τ := τ)) where
+instance FlowModel.instIdempotentOpJoin :
+    Std.IdempotentOp (FlowModel.join (τ := τ) (ℓ := ℓ)) where
   idempotent := join_idempotent
 
 public structure ExprModel where
@@ -103,13 +108,13 @@ public structure ExprModel where
   fm_true : FlowModel
   fm_false : FlowModel
 
-local notation "ExprModel" => ExprModel (τ := τ)
+local notation "ExprModel" => ExprModel (τ := τ) (ℓ := ℓ)
 
 @[expose]
 public def ExprModel.fm_after (em : ExprModel) := em.fm_true.join em.fm_false
 
 @[simp]
-public theorem ExprModel.simple_after {ref? : Option Reference} {T : τ}
+public theorem ExprModel.simple_after [DecidableEq ℓ] {ref? : Option Reference} {T : τ}
     {fm : FlowModel} :
     (ExprModel.mk T ref? fm fm).fm_after = fm := by
   simp [ExprModel.fm_after]
