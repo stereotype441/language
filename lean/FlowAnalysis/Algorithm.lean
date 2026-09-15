@@ -19,13 +19,13 @@ namespace FlowAnalysis
 open DartTypeRepr
 open PromotionChain
 
-variable {τ : Type} [Γ : DartTypeRepr τ]
+variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ] [Inhabited ℓ]
 
 local notation "Expr" => Expr (τ := τ)
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
 local notation "Reference" => Reference (τ := τ)
 local notation "Stmt" => Stmt (τ := τ)
-local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ)
+local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
 local notation "Variable" => Variable (τ := τ)
 
 /-- Not exposed so that proofs can't rely on it -/
@@ -37,7 +37,7 @@ public structure FlowModelImpl where
   promotionInfo : Std.HashMap Variable PromotionModelImpl
 deriving Inhabited
 
-local notation "FlowModelImpl" => FlowModelImpl (τ := τ)
+local notation "FlowModelImpl" => FlowModelImpl (τ := τ) (ℓ := ℓ)
 
 @[expose]
 public def FlowModelImpl.empty : FlowModelImpl := ⟨∅⟩
@@ -64,7 +64,7 @@ public structure ExprModelImpl where
   ref? : Option Reference
   boolInfo : Option (FlowModelImpl × FlowModelImpl)
 
-local notation "ExprModelImpl" => ExprModelImpl (τ := τ)
+local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
 
 public structure Config where
 
@@ -75,7 +75,7 @@ state. This state is updated as we recursively traverse the code being analyzed.
 public abbrev AlgM :=
   ReaderT Config (StateT FlowModelImpl (ExceptT String Id))
 
-local notation "AlgM" => AlgM (τ := τ)
+local notation "AlgM" => AlgM (τ := τ) (ℓ := ℓ)
 
 @[expose]
 public def tryPromoteImpl (ref : Option Reference) (T : τ) :
@@ -119,7 +119,10 @@ public def elabStmtImpl (s : Stmt) :
     AlgM LoweredExpr := do
   match s with
   | .declare n T =>
-    modify (fun s => { s with promotionInfo := s.promotionInfo.insert ⟨n, T⟩ ⟨[], [], true, false, some ⟨⟩⟩ })
+    modify (fun s =>
+      { s with
+        promotionInfo :=
+          s.promotionInfo.insert ⟨n, T⟩ ⟨[], [], true, false, some ValueVersion.unspecified⟩ })
     pure (LoweredExpr.declare ⟨n, T⟩ T)
   | .exprStmt e =>
     let (m, _) <- elabExprImpl e

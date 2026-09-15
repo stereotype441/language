@@ -9,9 +9,10 @@ namespace FlowAnalysis
 
 open PromotionChain
 
-variable {τ : Type} [Γ : DartTypeRepr τ]
+variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ]
 
 local notation "PromotionChain" => PromotionChain (τ := τ)
+local notation "ValueVersion" => ValueVersion (ℓ := ℓ)
 
 /-- The state of a promotable value at a particular point in a function's execution. -/
 @[ext]
@@ -22,7 +23,7 @@ public structure PromotionModel where
   unassigned : Bool
   version? : Option ValueVersion
 
-local notation "PromotionModel" => PromotionModel (τ := τ)
+local notation "PromotionModel" => PromotionModel (τ := τ) (ℓ := ℓ)
 
 namespace «PromotionModel»
 
@@ -39,7 +40,7 @@ public def join (pm₁ pm₂ : PromotionModel) :
     pm₁.tested ∪ pm₂.tested,
     pm₁.assigned ∧ pm₂.assigned,
     pm₁.unassigned ∧ pm₂.unassigned,
-    ValueVersion.join pm₁.version? pm₂.version?⟩
+    ValueVersion.join? pm₁.version? pm₂.version?⟩
 
 /-- The join operation is idempotent (`join pm pm = pm`). -/
 @[simp]
@@ -47,22 +48,23 @@ public theorem join_self (pm : PromotionModel) : pm.join pm = pm := by
   rcases pm; simp [join]
 
 public instance join.instIdempotentOp :
-    Std.IdempotentOp (join (τ := τ)) where
+    Std.IdempotentOp (join (τ := τ) (ℓ := ℓ)) where
   idempotent := join_self
 
 /-- The join operation is commutative (`join pm₁ pm₂ = join pm₂ pm₁`). -/
 public theorem join_comm (pm₁ pm₂ : PromotionModel) : pm₁.join pm₂ = pm₂.join pm₁ := by
-  simp [join, PromotionChain.join_comm, Finset.union_comm, Bool.and_comm, ValueVersion.join_comm]
+  simp [join, PromotionChain.join_comm, Finset.union_comm, Bool.and_comm, ValueVersion.join?_comm]
 
-public instance join.instCommutative : Std.Commutative (join (τ := τ)) where
+public instance join.instCommutative : Std.Commutative (join (τ := τ) (ℓ := ℓ)) where
   comm := join_comm
 
 /-- The join operation is associative (`join (join pm₁ pm₂) pm₃ = join pm₁ (join pm₂ pm₃)`). -/
 public theorem join_assoc (pm₁ pm₂ pm₃ : PromotionModel) :
     (pm₁.join pm₂).join pm₃ = pm₁.join (pm₂.join pm₃) := by
-  simp [join, PromotionChain.join_assoc, Finset.union_assoc, Bool.and_assoc, ValueVersion.join_assoc]
+  simp [join, PromotionChain.join_assoc, Finset.union_assoc, Bool.and_assoc,
+    ValueVersion.join?_assoc]
 
-public instance join.instAssociative : Std.Associative (join (τ := τ)) where
+public instance join.instAssociative : Std.Associative (join (τ := τ) (ℓ := ℓ)) where
   assoc := join_assoc
 
 end «PromotionModel»
@@ -76,7 +78,7 @@ public structure PromotionModelImpl where
   unassigned : Bool
   version? : Option ValueVersion
 
-local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ)
+local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
 
 @[expose]
 public def PromotionModelImpl.join (pmI₁ pmI₂ : PromotionModelImpl) : PromotionModelImpl :=
@@ -84,7 +86,7 @@ public def PromotionModelImpl.join (pmI₁ pmI₂ : PromotionModelImpl) : Promot
     joinTestedImpl pmI₁.tested pmI₂.tested,
     pmI₁.assigned ∧ pmI₂.assigned,
     pmI₁.unassigned ∧ pmI₂.unassigned,
-    ValueVersion.join pmI₁.version? pmI₂.version?
+    ValueVersion.join? pmI₁.version? pmI₂.version?
   ⟩
 
 @[expose]
@@ -97,6 +99,11 @@ public def PromotionModelImpl.currentType (pmI : PromotionModelImpl) (baseType :
   match pmI.promotedType? with
   | none => baseType
   | some T => if T ≤ baseType then T else baseType
+
+-- Decidable equality of labels is only needed in order to join value versions, so omit it from the
+-- refinement definitions and lemmas below; `PromotionModelImpl.refines.join` reintroduces it
+-- explicitly.
+omit [DecidableEq ℓ]
 
 public structure PromotionModelImpl.refines (pmI : PromotionModelImpl) (pm : PromotionModel) :
     Prop where
@@ -137,9 +144,9 @@ The promotion model that the algorithm creates for a freshly declared variable r
 promotion model that the specification creates for it.
 -/
 @[simp]
-public theorem PromotionModelImpl.refines.declared :
-    (⟨[], [], true, false, some ⟨⟩⟩ : PromotionModelImpl).refines
-      ⟨∅, ∅, true, false, some ⟨⟩⟩ := by
+public theorem PromotionModelImpl.refines.declared (version : ValueVersion) :
+    (⟨[], [], true, false, some version⟩ : PromotionModelImpl).refines
+      ⟨∅, ∅, true, false, some version⟩ := by
   constructor <;> simp
 
 public theorem PromotionModelImpl.refines.unique {pmI : PromotionModelImpl}
@@ -193,7 +200,7 @@ public theorem PromotionModelImpl.refines.tryPromote_eq_self {pmI : PromotionMod
   have hbounds : ¬pm.promotedTypes.strictly_bounds T := hrefines.strictly_bounds_iff.not.mp hchain
   simp [hbounds]
 
-public theorem PromotionModelImpl.refines.join {pmI₁ pmI₂ : PromotionModelImpl}
+public theorem PromotionModelImpl.refines.join [DecidableEq ℓ] {pmI₁ pmI₂ : PromotionModelImpl}
     {pm₁ pm₂ : PromotionModel} :
     pmI₁.refines pm₁ → pmI₂.refines pm₂ → (pmI₁.join pmI₂).refines (pm₁.join pm₂) := by
   rintro hrefines₁ hrefines₂
