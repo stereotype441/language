@@ -14,7 +14,7 @@ local notation "Variable" => Variable (τ := SimpleType)
 
 def runFlowAnalysis (s : Stmt) : LoweredExpr ⊕ String :=
   let loweredResult := do
-    let runResult ← elabStmtA s ⟨⟩ FlowModelA.empty
+    let runResult ← elabStmtImpl s ⟨⟩ FlowModelImpl.empty
     pure runResult.fst
   match loweredResult with
     | .ok m => .inl m

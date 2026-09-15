@@ -2,13 +2,13 @@ module
 public import FlowAnalysis.Elements
 public import FlowAnalysis.PromotionChain.Basic
 public import FlowAnalysis.Types
-public import FlowAnalysis.VariableModel.Basic
+public import FlowAnalysis.PromotionModel.Basic
 
 namespace FlowAnalysis
 
 variable {τ : Type} [DartTypeRepr τ]
 
-local notation "VariableModel" => VariableModel (τ := τ)
+local notation "PromotionModel" => PromotionModel (τ := τ)
 local notation "Variable" => Variable (τ := τ)
 
 /-- A part of the program being analyzed that is a candidate for type promotion. -/
@@ -24,7 +24,7 @@ local notation "Reference" => Reference (τ := τ)
 @[ext]
 public structure FlowModel where
   /-- Partial function mapping `Variable`s to type promotion information. -/
-  env : Variable → Option VariableModel
+  promotionInfo : Variable → Option PromotionModel
 
 local notation "FlowModel" => FlowModel (τ := τ)
 
@@ -35,56 +35,56 @@ public def FlowModel.empty : FlowModel := ⟨fun _ => none⟩
 /-- `fm.set v T` returns a modified `FlowModel` in which the type of `v` has been changed to `T`. -/
 @[expose]
 public def FlowModel.set (fm : FlowModel) (v : Variable)
-    (vm : VariableModel) : FlowModel :=
-  ⟨fun v' => if v = v' then vm else fm.env v'⟩
+    (pm : PromotionModel) : FlowModel :=
+  ⟨fun v' => if v = v' then pm else fm.promotionInfo v'⟩
 
 -- TODO: implement full `join` behavior.
 @[expose]
 public def FlowModel.join (fm₁ fm₂ : FlowModel) : FlowModel :=
   ⟨fun v =>
-     match fm₁.env v with
+     match fm₁.promotionInfo v with
      | none => none
-     | some vm₁ =>
-         match fm₂.env v with
+     | some pm₁ =>
+         match fm₂.promotionInfo v with
          | none => none
-         | some vm₂ => vm₁.join vm₂⟩
+         | some pm₂ => pm₁.join pm₂⟩
 
 -- FlowModel Theorems --
 
 @[simp]
-public theorem FlowModel.env_set {fm : FlowModel} {v v' T} :
-    (fm.set v T).env v' = if v = v' then some T else fm.env v' := by
+public theorem FlowModel.promotionInfo_set {fm : FlowModel} {v v' T} :
+    (fm.set v T).promotionInfo v' = if v = v' then some T else fm.promotionInfo v' := by
   simp_all [FlowModel.set]
 
 public theorem FlowModel.set_get?_neq {fm : FlowModel} {v v' : Variable}
-    {vm : VariableModel} :
-    v ≠ v' → (fm.set v vm).env v' = fm.env v' := by
+    {pm : PromotionModel} :
+    v ≠ v' → (fm.set v pm).promotionInfo v' = fm.promotionInfo v' := by
   intro hNeq
   simp [hNeq]
 
 @[simp]
 public theorem FlowModel.get?_set {fm : FlowModel} {v v' T} :
-    (fm.set v T).env v' = if v = v' then some T else fm.env v' := by
+    (fm.set v T).promotionInfo v' = if v = v' then some T else fm.promotionInfo v' := by
   simp_all [FlowModel.set]
 
 public theorem FlowModel.extensionality {fm fm' : FlowModel} :
-    (∀ v : Variable, fm.env v = fm'.env v) → fm = fm' := by
-  rcases fm; rename_i env
-  rcases fm'; rename_i env'
+    (∀ v : Variable, fm.promotionInfo v = fm'.promotionInfo v) → fm = fm' := by
+  rcases fm; rename_i promotionInfo
+  rcases fm'; rename_i promotionInfo'
   simp
   apply funext
 
 /--
 Setting a variable to the variable model it already has leaves the flow model unchanged.
 
-This is useful for reasoning about elaboration rules that unconditionally update `env`, in cases
+This is useful for reasoning about elaboration rules that unconditionally update `promotionInfo`, in cases
 where the updated value turns out to be the value that was already there.
 -/
 @[simp]
 public theorem FlowModel.set_self {fm : FlowModel} {v : Variable}
-    {vm : VariableModel} (hlookup : fm.env v = some vm) : fm.set v vm = fm := by
+    {pm : PromotionModel} (hlookup : fm.promotionInfo v = some pm) : fm.set v pm = fm := by
   apply extensionality; intro v'
-  simp only [env_set]
+  simp only [promotionInfo_set]
   split <;> simp_all
 
 @[simp]
@@ -92,7 +92,7 @@ public theorem FlowModel.join_idempotent (fm : FlowModel) :
     fm.join fm = fm := by
   apply extensionality; intro v
   simp [FlowModel.join]
-  cases fm.env v <;> simp_all
+  cases fm.promotionInfo v <;> simp_all
 
 instance FlowModel.instIdempotentOpJoin : Std.IdempotentOp (FlowModel.join (τ := τ)) where
   idempotent := join_idempotent

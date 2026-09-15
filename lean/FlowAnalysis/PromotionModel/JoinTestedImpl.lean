@@ -3,7 +3,7 @@ public import Batteries.Data.List.Basic
 public import Batteries.Data.List.Lemmas
 public import FlowAnalysis.Types
 
-namespace FlowAnalysis.VariableModel
+namespace FlowAnalysis.PromotionModel
 
 variable {τ : Type} [DartTypeRepr τ]
 
@@ -11,4 +11,4 @@ variable {τ : Type} [DartTypeRepr τ]
 @[expose]
 public def joinTestedImpl (ts₁ ts₂ : List τ) : List τ := ts₁ ∪ ts₂
 
-end FlowAnalysis.VariableModel
+end FlowAnalysis.PromotionModel

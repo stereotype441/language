@@ -25,10 +25,10 @@ public def FlowModel.tryPromote (ref : Option Reference) (T : τ)
     FlowModel :=
   match ref with
   | some (Reference.var v) =>
-    match fm.env v with
-    | some vm =>
-      if T < vm.currentType v.type then
-        fm.set v {vm with promotedTypes := vm.promotedTypes.tryPromote T}
+    match fm.promotionInfo v with
+    | some pm =>
+      if T < pm.currentType v.type then
+        fm.set v {pm with promotedTypes := pm.promotedTypes.tryPromote T}
       else
         fm
     | none => fm
@@ -38,9 +38,9 @@ public def FlowModel.tryPromote (ref : Option Reference) (T : τ)
 public inductive ElabExpr : FlowModel → Expr →
     LoweredExpr → ExprModel -> Prop where
   /-- Read of variable `v`. -/
-  | var {fm v vm T} :
-      (fm : FlowModel).env v = some vm →
-      T = vm.currentType v.type →
+  | var {fm v pm T} :
+      (fm : FlowModel).promotionInfo v = some pm →
+      T = pm.currentType v.type →
       ElabExpr fm (.var v) (.var v T) ⟨T, some (.var v), fm, fm⟩
   /-- Null check operator (`e₁!`). -/
   | nullCheck {fm₀ e₁ m₁ em₁ fm} :
