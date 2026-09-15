@@ -14,7 +14,10 @@ local notation "Variable" => Variable (τ := SimpleType)
 
 def runFlowAnalysis (s : Stmt) : LoweredExpr ⊕ String :=
   let loweredResult := do
-    let runResult ← elabStmtImpl s ⟨⟩ FlowModelImpl.empty
+    -- TODO: labels should identify the program point at which each value comes into existence, but
+    -- the syntax doesn't yet carry enough information to do that, so every value currently has the
+    -- version `ValueVersion.unspecified`.  Until that changes, a single label suffices.
+    let runResult ← elabStmtImpl (ℓ := Unit) s ⟨⟩ FlowModelImpl.empty
     pure runResult.fst
   match loweredResult with
     | .ok m => .inl m
