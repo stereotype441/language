@@ -53,10 +53,12 @@ local notation "ExprModel" => ExprModel (τ := τ) (ℓ := ℓ)
 local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
 local notation "FlowModel" => FlowModel (τ := τ) (ℓ := ℓ)
 local notation "FlowModelImpl" => FlowModelImpl (τ := τ) (ℓ := ℓ)
+local notation "Key" => Key (τ := τ) (ℓ := ℓ)
 local notation "PromotionChain" => PromotionChain (τ := τ)
 local notation "Stmt" => Stmt (τ := τ)
 local notation "PromotionModel" => PromotionModel (τ := τ) (ℓ := ℓ)
 local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
+local notation "ValueVersion" => ValueVersion (ℓ := ℓ)
 
 -- These lemmas are about the shape of `AlgM`, so none of them need to know anything about labels.
 omit [DecidableEq ℓ] [Inhabited ℓ] in
@@ -114,11 +116,11 @@ for `v`, or both do, and the algorithm's variable model refines the specificatio
 inductive FlowModelImpl.PromotionInfoRefinesAt (fmI : FlowModelImpl)
     (fm : FlowModel) (v : Variable) : Prop where
   /-- `v` is absent from both flow models. -/
-  | absent (hlookupI : fmI.promotionInfo[v]? = none) (hlookup : fm.promotionInfo v = none)
+  | absent (hlookupI : fmI.promotionInfo[v]? = none) (hlookup : fm.promotionInfo (.var v) = none)
   /-- `v` is present in both flow models, and their variable models are related by `refines`. -/
   | present
         {pmI : PromotionModelImpl} {pm : PromotionModel} (hlookupI : fmI.promotionInfo[v]? = some pmI)
-        (hlookup : fm.promotionInfo v = some pm) (hrefines_vm : pmI.refines pm)
+        (hlookup : fm.promotionInfo (.var v) = some pm) (hrefines_vm : pmI.refines pm)
 
 /--
 `fmI.refines fm` says that the algorithm's flow model `fmI` faithfully represents the
@@ -128,30 +130,46 @@ structure FlowModelImpl.refines (fmI : FlowModelImpl)
     (fm : FlowModel) : Prop where
   /-- The two flow models' `promotionInfo` fields agree about every variable. -/
   promotionInfos (v : Variable) : fmI.PromotionInfoRefinesAt fm v
+  /--
+  Neither flow model records anything about a property.
+
+  This is the degenerate form, at this stage, of the requirement that a key absent from the
+  algorithm's flow model reads as `none` in the specification's.  The algorithm's `promotionInfo` is
+  keyed by `Variable`, so it can't name a property at all; correspondingly, the specification's
+  flow model must leave every property key unset.
+
+  TODO(stage 4): once property reads allocate keys, this becomes a genuine agreement condition
+  rather than a blanket absence.
+  -/
+  locsAbsent (r : ValueVersion) (p : List String) : fm.promotionInfo (.loc r p) = none
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 /-- The algorithm's initial flow model refines the specification's initial flow model. -/
 theorem FlowModelImpl.refines.empty :
-    (.empty : FlowModelImpl).refines FlowModel.empty := by
-  constructor; intro v
-  exact .absent (by simp [FlowModelImpl.empty]) (by simp [FlowModel.empty])
+    (.empty : FlowModelImpl).refines FlowModel.empty where
+  promotionInfos _ := .absent (by simp [FlowModelImpl.empty]) (by simp [FlowModel.empty])
+  locsAbsent _ _ := by simp [FlowModel.empty]
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
-A flow model refined by `fmI` maps every variable to `none` precisely when `fmI`'s `promotionInfo` is empty.
+A flow model refined by `fmI` maps every key to `none` precisely when `fmI`'s `promotionInfo` is empty.
 -/
 theorem FlowModelImpl.refines.isEmpty {fmI : FlowModelImpl} {fm : FlowModel}
     (hrefines : fmI.refines fm) :
-    fmI.promotionInfo.isEmpty ↔ ∀ v, fm.promotionInfo v = none := by
+    fmI.promotionInfo.isEmpty ↔ ∀ k : Key, fm.promotionInfo k = none := by
   constructor
   case mp =>
-    intro hemptyI v
-    have : fmI.promotionInfo[v]? = none := by exact Std.HashMap.getElem?_of_isEmpty hemptyI
-    cases hrefines.promotionInfos v <;> simp_all
+    intro hemptyI k
+    cases k
+    case loc r p => exact hrefines.locsAbsent r p
+    case var v =>
+      have : fmI.promotionInfo[v]? = none := by exact Std.HashMap.getElem?_of_isEmpty hemptyI
+      cases hrefines.promotionInfos v <;> simp_all
   case mpr =>
     intro hempty
     rw [Std.HashMap.isEmpty_iff_forall_not_mem]
     intro v
+    have := hempty (.var v)
     cases hrefines.promotionInfos v <;> simp_all
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
@@ -164,9 +182,9 @@ from firing on the goals that arise in `FlowModelImpl.refines.join`.
 -/
 @[simp]
 theorem FlowModelImpl.refines.empty_of_isEmpty {fmI : FlowModelImpl}
-    (hempty : fmI.promotionInfo.isEmpty) : fmI.refines ⟨fun _ => none⟩ := by
-  constructor; intro v
-  exact .absent (Std.HashMap.getElem?_of_isEmpty hempty) (by simp)
+    (hempty : fmI.promotionInfo.isEmpty) : fmI.refines ⟨fun _ => none⟩ where
+  promotionInfos _ := .absent (Std.HashMap.getElem?_of_isEmpty hempty) (by simp)
+  locsAbsent _ _ := by simp
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
@@ -175,7 +193,10 @@ determines each variable's variable model up to `PromotionModelImpl.refines`, wh
 -/
 theorem FlowModelImpl.refines.unique {fmI : FlowModelImpl} {fm₁ fm₂ : FlowModel}
     (hrefines₁ : fmI.refines fm₁) (hrefines₂ : fmI.refines fm₂) : fm₁ = fm₂ := by
-  apply FlowModel.extensionality; intro v
+  apply FlowModel.extensionality; intro k
+  cases k
+  case loc r p => rw [hrefines₁.locsAbsent r p, hrefines₂.locsAbsent r p]
+  case var v =>
   cases hrefines₁.promotionInfos v
   case absent hlookupI₁ hlookup₁ => cases hrefines₂.promotionInfos v <;> simp_all
   case present pmI₁ pm₁ hlookupI₁ hlookup₁ hrefines_vm₁ =>
@@ -188,7 +209,7 @@ theorem FlowModelImpl.refines.unique {fmI : FlowModelImpl} {fm₁ fm₂ : FlowMo
       subst hvmIs
       rw [hlookup₁, hlookup₂, hrefines_vm₁.unique hrefines_vm₂]
 
-omit [DecidableEq ℓ] [Inhabited ℓ] in
+omit [Inhabited ℓ] in
 /--
 Refinement is preserved by adding a variable to both flow models, provided the variable models
 being added are themselves related by `refines`.
@@ -197,19 +218,24 @@ being added are themselves related by `refines`.
 theorem FlowModelImpl.refines.insert {fmI : FlowModelImpl} {fm : FlowModel}
     {pmI : PromotionModelImpl} {pm : PromotionModel} (v : Variable)
     (hrefines_fm : fmI.refines fm) (hrefines_vm : pmI.refines pm) :
-    (FlowModelImpl.mk (fmI.promotionInfo.insert v pmI)).refines (fm.set v pm) := by
-  constructor; intro v'
-  by_cases heq : v = v' <;> subst_eqs
-  case pos =>
-    exact .present (by simp) (by simp) hrefines_vm
-  case neg =>
-    cases hrefines_fm.promotionInfos v'
-    case absent hlookupI hlookup =>
-      exact .absent (by simp_all) (by simp_all)
-    case present pmI' pm' hlookupI hlookup hrefines_vm' =>
-      exact .present (by simp_all [Std.HashMap.getElem?_insert]) (by simp_all) hrefines_vm'
+    (FlowModelImpl.mk (fmI.promotionInfo.insert v pmI)).refines (fm.set (.var v) pm) := by
+  constructor
+  case locsAbsent =>
+    intro r p
+    simpa using hrefines_fm.locsAbsent r p
+  case promotionInfos =>
+    intro v'
+    by_cases heq : v = v' <;> subst_eqs
+    case pos =>
+      exact .present (by simp) (by simp) hrefines_vm
+    case neg =>
+      cases hrefines_fm.promotionInfos v'
+      case absent hlookupI hlookup =>
+        exact .absent (by simp_all) (by simp_all)
+      case present pmI' pm' hlookupI hlookup hrefines_vm' =>
+        exact .present (by simp_all [Std.HashMap.getElem?_insert]) (by simp_all) hrefines_vm'
 
-omit [DecidableEq ℓ] [Inhabited ℓ] in
+omit [Inhabited ℓ] in
 /--
 Running the algorithm's `tryPromoteImpl` on a flow model that refines `fm` succeeds, and produces a
 flow model that refines the result of the specification's `FlowModel.tryPromote`.
@@ -218,36 +244,43 @@ theorem FlowModelImpl.refines.tryPromote
     {fmI : FlowModelImpl} {fm : FlowModel} (hrefines : fmI.refines fm) ref? T :
     ∃ fmI', tryPromoteImpl ref? T cfg fmI = Except.ok ((), fmI') ∧
     fmI'.refines (fm.tryPromote ref? T) := by
-  simp [tryPromoteImpl, FlowModel.tryPromote]
-  cases ref? <;> simp_all
-  case none => exists fmI
+  cases ref?
+  case none => simp [tryPromoteImpl, FlowModel.tryPromote]; exists fmI
   case some ref =>
-    cases ref; simp_all
+    cases ref
+    case loc r p => simp [tryPromoteImpl, FlowModel.tryPromote]; exists fmI
     case var v =>
+      simp [tryPromoteImpl, FlowModel.tryPromote]
       cases hrefines.promotionInfos v <;> simp_all
       case absent => exists fmI
       case present pmI pm hlookupI hlookup hrefines_vm =>
-        rw [hrefines_vm.currentTypes]
-        by_cases hT_lt_current : T < pm.currentType v.type <;> simp_all
-        case neg => exists fmI
-        case pos =>
-          -- Unlike `FlowModel.tryPromote`, which promotes using `PromotionChain.tryPromote`, the
-          -- algorithm checks explicitly whether appending `T` produces a valid promotion chain, and
-          -- leaves `promotionInfo` untouched if it doesn't. So we need to consider the two cases separately.
-          by_cases hchain : isPromotionChain (pmI.promotedTypes ++ [T]) <;> simp_all
+        -- Neither the algorithm nor the specification promotes a write-captured location, so
+        -- dispose of that case first; afterwards both guards reduce to the same conditions.
+        have hwcs : pmI.writeCaptured = pm.writeCaptured := hrefines_vm.writeCaptured
+        by_cases hwc : pm.writeCaptured
+        case pos => simp_all; exists fmI
+        case neg =>
+          rw [hrefines_vm.currentTypes]
+          by_cases hT_lt_current : T < pm.currentType v.type <;> simp_all
+          case neg => exists fmI
           case pos =>
-            -- `T` was appended to `v`'s promotion chain, in both the algorithm and the spec.
-            exists ⟨fmI.promotionInfo.insert v {pmI with promotedTypes := pmI.promotedTypes ++ [T]}⟩
-            refine ⟨rfl, ?_⟩
-            exact hrefines.insert v (hrefines_vm.promote hchain)
-          case neg =>
-            -- Neither the algorithm nor the spec promoted `v`, so neither one changed its state;
-            -- for the spec, this is because `PromotionChain.tryPromote` was a no-op, so the `set`
-            -- assigned `v` the variable model it already had.
-            exists fmI
-            refine ⟨rfl, ?_⟩
-            rw [hrefines_vm.tryPromote_eq_self hchain, FlowModel.set_self hlookup]
-            exact hrefines
+            -- Unlike `FlowModel.tryPromote`, which promotes using `PromotionChain.tryPromote`, the
+            -- algorithm checks explicitly whether appending `T` produces a valid promotion chain, and
+            -- leaves `promotionInfo` untouched if it doesn't. So we need to consider the two cases separately.
+            by_cases hchain : isPromotionChain (pmI.promotedTypes ++ [T]) <;> simp_all
+            case pos =>
+              -- `T` was appended to `v`'s promotion chain, in both the algorithm and the spec.
+              exists ⟨fmI.promotionInfo.insert v {pmI with promotedTypes := pmI.promotedTypes ++ [T]}⟩
+              refine ⟨by simp_all, ?_⟩
+              exact hrefines.insert v (hrefines_vm.promote hchain (by simp_all))
+            case neg =>
+              -- Neither the algorithm nor the spec promoted `v`, so neither one changed its state;
+              -- for the spec, this is because `PromotionModel.tryPromote` was a no-op, so the `set`
+              -- assigned `v` the variable model it already had.
+              exists fmI
+              refine ⟨rfl, ?_⟩
+              rw [hrefines_vm.tryPromote_eq_self hchain, FlowModel.set_self hlookup]
+              exact hrefines
 
 section
 variable {α β : Type} [BEq α] [LawfulBEq α] [Hashable α] [LawfulHashable α]
@@ -279,7 +312,12 @@ theorem FlowModelImpl.refines.join {fmI₁ fmI₂ : FlowModelImpl}
     by_cases_iff hrefines₂.isEmpty <;> simp_all
     case pos => (conv => enter [2, 1, v]; tactic => split); simp_all
     case neg hnonEmpty₂ hnonEmptyI₂ =>
-      constructor; intro v
+      constructor
+      case locsAbsent =>
+        intro r p
+        simp [hrefines₁.locsAbsent r p]
+      case promotionInfos =>
+      intro v
       cases hrefines₁.promotionInfos v
       case absent hlookupI₁ hlookup₁ =>
         exact .absent (by simp_all [mergeMaps_none₁]) (by simp_all)
@@ -354,7 +392,7 @@ theorem elabExprImpl.correct.var (v : Variable) :
       constructor
       · exact ElabExpr.var hlookup rfl
       · exact ExprModelImpl.refines.noBoolInfo
-          hrefines_fm₀ (pm.currentType v.type) (some (Reference.var v))
+          hrefines_fm₀ (pm.currentType v.type) (some (Key.var v))
 
 theorem elabExprImpl.correct.nullCheck (e₁ : Expr) (hcorrect₁ :
     elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁) :
@@ -510,7 +548,7 @@ theorem elabStmtImpl.correct.declare (n : String) (T : τ) :
   case sound =>
     intro fm₀ m fmI fmI₀ hrefines_fm₀ hok; simp [elabStmtImpl] at hok
     rcases hok with ⟨rfl, rfl⟩
-    exists fm₀.set ⟨n, T⟩ ⟨∅, ∅, true, false, some ValueVersion.unspecified⟩
+    exists fm₀.set (.var ⟨n, T⟩) (PromotionModel.declared ValueVersion.unspecified)
     constructor
     · apply ElabStmt.declare fm₀ n T
     · apply hrefines_fm₀.insert ⟨n, T⟩ (PromotionModelImpl.refines.declared _)

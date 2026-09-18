@@ -13,33 +13,37 @@ variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ] [Inha
 local notation "ExprModel" => ExprModel (τ := τ) (ℓ := ℓ)
 local notation "FlowModel" => FlowModel (τ := τ) (ℓ := ℓ)
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
-local notation "Reference" => Reference (τ := τ)
+local notation "Key" => Key (τ := τ) (ℓ := ℓ)
 
 /--
 `fm.tryPromote ref T` returns an updated flow model in which the referent of `ref` has been
 promoted to `T`, assuming such a promotion is valid. Otherwise it returns `fm` unchanged.
+
+A write-captured location is never promoted: flow analysis has given up on tracking which value it
+holds, so it has no basis for a promotion.  The guard is also what supplies the hypothesis
+`PromotionModel.tryPromote` needs in order to re-establish `writeCaptured_promotedTypes`.
 -/
 @[expose]
-public def FlowModel.tryPromote (ref : Option Reference) (T : τ)
+public def FlowModel.tryPromote (ref : Option Key) (T : τ)
     (fm : FlowModel) :
     FlowModel :=
   match ref with
-  | some (Reference.var v) =>
-    match fm.promotionInfo v with
+  | some (Key.var v) =>
+    match fm.promotionInfo (.var v) with
     | some pm =>
-      if T < pm.currentType v.type then
-        fm.set v {pm with promotedTypes := pm.promotedTypes.tryPromote T}
+      if h : ¬pm.writeCaptured ∧ T < pm.currentType v.type then
+        fm.set (.var v) (pm.tryPromote T h.1)
       else
         fm
     | none => fm
-  | none => fm
+  | _ => fm
 
 /-- Expression elaboration rules. -/
 public inductive ElabExpr : FlowModel → Expr →
     LoweredExpr → ExprModel -> Prop where
   /-- Read of variable `v`. -/
   | var {fm v pm T} :
-      (fm : FlowModel).promotionInfo v = some pm →
+      (fm : FlowModel).promotionInfo (.var v) = some pm →
       T = pm.currentType v.type →
       ElabExpr fm (.var v) (.var v T) ⟨T, some (.var v), fm, fm⟩
   /-- Null check operator (`e₁!`). -/
@@ -64,7 +68,7 @@ public inductive ElabStmt : FlowModel → Stmt →
   /-- Variable declaration statement. TODO: support more than one variable. -/
   | declare fm n T :
       ElabStmt fm (.declare n T) (.declare ⟨n, T⟩ T)
-        (fm.set ⟨n, T⟩ ⟨∅, ∅, true, false, some ValueVersion.unspecified⟩)
+        (fm.set (.var ⟨n, T⟩) (PromotionModel.declared ValueVersion.unspecified))
   /-- Expression statement. -/
   | exprStmt {fm₀ e m em} :
       ElabExpr fm₀ e m em →
