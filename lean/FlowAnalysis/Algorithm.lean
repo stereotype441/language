@@ -23,7 +23,7 @@ variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ] [Inha
 
 local notation "Expr" => Expr (τ := τ)
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
-local notation "Reference" => Reference (τ := τ)
+local notation "Key" => Key (τ := τ) (ℓ := ℓ)
 local notation "Stmt" => Stmt (τ := τ)
 local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
 local notation "Variable" => Variable (τ := τ)
@@ -61,7 +61,7 @@ public def FlowModelImpl.join (fmI₁ fmI₂ : FlowModelImpl) :
 
 public structure ExprModelImpl where
   type : τ
-  ref? : Option Reference
+  ref? : Option Key
   boolInfo : Option (FlowModelImpl × FlowModelImpl)
 
 local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
@@ -78,17 +78,18 @@ public abbrev AlgM :=
 local notation "AlgM" => AlgM (τ := τ) (ℓ := ℓ)
 
 @[expose]
-public def tryPromoteImpl (ref : Option Reference) (T : τ) :
+public def tryPromoteImpl (ref : Option Key) (T : τ) :
     AlgM Unit := do
   match ref with
-  | some (Reference.var v) =>
+  | some (Key.var v) =>
     match (<- get).promotionInfo[v]? with
     | some pmI =>
-      if T < pmI.currentType v.type ∧ isPromotionChain (pmI.promotedTypes ++ [T]) then
+      if ¬pmI.writeCaptured ∧ T < pmI.currentType v.type ∧
+          isPromotionChain (pmI.promotedTypes ++ [T]) then
         modify (fun s => {
           s with promotionInfo := s.promotionInfo.insert v {pmI with promotedTypes := pmI.promotedTypes ++ [T]}})
     | none => pure ()
-  | none => pure ()
+  | _ => pure ()
 
 mutual
 
@@ -101,7 +102,7 @@ public def elabExprImpl (e : Expr) :
     match (<- get).promotionInfo[v]? with
     | some pm =>
         let T := pm.currentType v.type
-        pure (LoweredExpr.var v T, ⟨T, some (Reference.var v), none⟩)
+        pure (LoweredExpr.var v T, ⟨T, some (Key.var v), none⟩)
     | none => throw s!"Undefined variable {v.name}"
   | .nullCheck eInner =>
     let (m, emI) <- elabExprImpl eInner
