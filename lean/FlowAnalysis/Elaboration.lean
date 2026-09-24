@@ -16,7 +16,7 @@ section
 variable {ℓ : Type} [DecidableEq ℓ]
 
 local notation "FlowModel" => FlowModel (τ := τ) (ℓ := ℓ)
-local notation "Key" => Key (τ := τ) (ℓ := ℓ)
+local notation "Reference" => Reference (τ := τ) (ℓ := ℓ)
 
 /--
 `fm.tryPromote ref? previousType T` returns an updated flow model in which the referent of `ref?` has
@@ -31,26 +31,22 @@ A write-captured location is never promoted: flow analysis has given up on track
 holds, so it has no basis for a promotion.  The guard is also what supplies the hypothesis
 `PromotionModel.tryPromote` needs in order to re-establish `writeCaptured_promotedTypes`.
 
-If the key has no promotion model, this returns `fm` unchanged. That departs from the Dart
-implementation, whose `infoFor` creates `PromotionModel.fresh(version: reference.version)` and
-promotes that. The branch is currently unreachable, because a key only comes from `ElabExpr.var`,
-which requires the variable to have a promotion model, and a variable read doesn't change the flow
-model.
-
-TODO(stage 4): in the inner `none` branch, create a fresh promotion model at the reference's value
-version and promote that.
+The promotion model to promote is obtained with `FlowModel.infoFor`, as in the Dart implementation,
+so a location with no promotion model yet (as for the first promotion of a property) is promoted
+starting from a fresh model. `infoFor` returns `none` only for a write-captured location, which
+wouldn't be promoted anyway.
 -/
 @[expose]
-public def FlowModel.tryPromote (ref? : Option Key) (previousType T : τ)
+public def FlowModel.tryPromote (ref? : Option Reference) (previousType T : τ)
     (fm : FlowModel) :
     FlowModel :=
   match ref? with
   | none => fm
-  | some k =>
-    match fm.promotionInfo k with
+  | some r =>
+    match fm.infoFor r with
     | some pm =>
       if h : ¬pm.writeCaptured ∧ T < previousType then
-        fm.set k (pm.tryPromote T h.1)
+        fm.set r.key (pm.tryPromote T h.1)
       else
         fm
     | none => fm
@@ -63,9 +59,27 @@ Mirrors the specification's `promoteToNonNull(E, M)`, which is defined in terms 
 exactly this way.
 -/
 @[expose]
-public def FlowModel.promoteToNonNull (ref? : Option Key) (previousType : τ) (fm : FlowModel) :
-    FlowModel :=
+public def FlowModel.promoteToNonNull (ref? : Option Reference) (previousType : τ)
+    (fm : FlowModel) : FlowModel :=
   fm.tryPromote ref? previousType (NonNull previousType)
+
+/--
+Promoting a well-formed reference preserves well-formedness: the model stored back under the key is
+the one `infoFor` supplied, with an extra promoted type, so it holds the same version.
+-/
+public theorem FlowModel.WellFormed.tryPromote {fm : FlowModel} (hwf : fm.WellFormed)
+    {ref? : Option Reference} (href : ∀ r, ref? = some r → r.WellFormed) (previousType T : τ) :
+    (fm.tryPromote ref? previousType T).WellFormed := by
+  simp only [FlowModel.tryPromote]
+  split
+  case h_1 => exact hwf
+  case h_2 r =>
+    split
+    case h_1 pm hinfo =>
+      split
+      case isTrue => exact hwf.set fun v q hkey => hwf.infoFor (href r rfl) hinfo v q hkey
+      case isFalse => exact hwf
+    case h_2 => exact hwf
 
 end
 
@@ -95,7 +109,7 @@ public inductive ElabExpr : AstPath → FlowModel → Expr →
   | var {π fm v pm T} :
       (fm : FlowModel).promotionInfo (.var v) = some pm →
       T = pm.currentType v.type →
-      ElabExpr π fm (.var v) (.var v T) ⟨T, some (.var v), fm, fm⟩
+      ElabExpr π fm (.var v) (.var v T) ⟨T, some ⟨.var v, pm.version?⟩, fm, fm⟩
   /-- Null check operator (`e₁!`). -/
   | nullCheck {π fm₀ e₁ m₁ em₁ fm} :
       ElabExpr (0 :: π) fm₀ e₁ m₁ em₁ →
@@ -109,6 +123,19 @@ public inductive ElabExpr : AstPath → FlowModel → Expr →
   /-- Null literal (`null`). -/
   | nullLiteral {π fm} :
       ElabExpr π fm .null .null ⟨Γ.Null, none, fm, fm⟩
+  /--
+  Property read (`e₁.p`). Mirrors Dart's `propertyGet`.
+
+  The read refers to the property of the value that `e₁` read, if flow analysis tracks it (see
+  `Reference.property?`), and its type is the property's promoted type, if any. The read doesn't
+  change the flow model: like Dart's `_handleProperty`, it only looks up the property's promotion
+  model, and doesn't create one.
+  -/
+  | propertyGet {π fm₀ e₁ m₁ em₁ p ref? T} :
+      ElabExpr (0 :: π) fm₀ e₁ m₁ em₁ →
+      ref? = em₁.ref?.bind (·.property? p) →
+      T = em₁.fm_after.currentTypeOf ref? p.type →
+      ElabExpr π fm₀ (e₁.property p) (m₁.propertyGet p T) ⟨T, ref?, em₁.fm_after, em₁.fm_after⟩
 
 mutual
 
@@ -169,5 +196,59 @@ public theorem ElabExpr.boolInfo_onlyIf_bool {π} {fm : FlowModel} {e m} {em : E
     ElabExpr π fm e m em → em.fm_true ≠ em.fm_false → em.type = Γ.bool := by
   intro hDeriv hHasInfo
   induction hDeriv <;> simp_all
+
+/--
+Elaborating an expression from a well-formed flow model produces well-formed flow models, and a
+well-formed reference.
+
+The only interesting case is the promotion of a property: the promotion model it stores under the
+property's key is either the one already there, or a fresh one holding the version recorded in the
+reference, which is the version named by the key.
+-/
+public theorem ElabExpr.wellFormed {π} {fm₀ : FlowModel} {e m} {em : ExprModel}
+    (helab : ElabExpr π fm₀ e m em) (hwf : fm₀.WellFormed) :
+    em.fm_true.WellFormed ∧ em.fm_false.WellFormed ∧ ∀ r, em.ref? = some r → r.WellFormed := by
+  induction helab
+  case var =>
+    refine ⟨hwf, hwf, ?_⟩
+    rintro r ⟨⟩ v q ⟨⟩
+  case nullCheck ih =>
+    obtain ⟨hwf_true, hwf_false, href⟩ := ih hwf
+    subst_vars
+    refine ⟨?_, ?_, by simp⟩ <;> exact (hwf_true.join hwf_false).tryPromote href _ _
+  case asExpr ih =>
+    obtain ⟨hwf_true, hwf_false, href⟩ := ih hwf
+    subst_vars
+    refine ⟨?_, ?_, by simp⟩ <;> exact (hwf_true.join hwf_false).tryPromote href _ _
+  case nullLiteral => exact ⟨hwf, hwf, by simp⟩
+  case propertyGet ih =>
+    obtain ⟨hwf_true, hwf_false, -⟩ := ih hwf
+    subst_vars
+    refine ⟨hwf_true.join hwf_false, hwf_true.join hwf_false, ?_⟩
+    intro r hr
+    obtain ⟨r₁, -, hr₁⟩ := Option.bind_eq_some_iff.mp hr
+    exact Reference.WellFormed.property? hr₁
+
+mutual
+
+/-- Elaborating a statement from a well-formed flow model produces a well-formed flow model. -/
+public theorem ElabStmt.wellFormed {π} {fm₀ : FlowModel} {s m fm} :
+    ElabStmt π fm₀ s m fm → fm₀.WellFormed → fm.WellFormed
+  | .declare _ _ _ _, hwf => hwf.set (by rintro r p ⟨⟩)
+  | .exprStmt helab, hwf =>
+    have ⟨hwf_true, hwf_false, _⟩ := helab.wellFormed hwf
+    hwf_true.join hwf_false
+  | .ifStmt helab₁ _ helab₂ helab₃, hwf =>
+    have ⟨hwf_true, hwf_false, _⟩ := helab₁.wellFormed hwf
+    (helab₂.wellFormed hwf_true).join (helab₃.wellFormed hwf_false)
+  | .block helab, hwf => helab.wellFormed hwf
+
+/-- Elaborating a statement list from a well-formed flow model produces a well-formed flow model. -/
+public theorem ElabStmts.wellFormed {π} {fm₀ : FlowModel} {ss ms fm} :
+    ElabStmts π fm₀ ss ms fm → fm₀.WellFormed → fm.WellFormed
+  | .nil, hwf => hwf
+  | .cons helab helabs, hwf => helabs.wellFormed (helab.wellFormed hwf)
+
+end
 
 end FlowAnalysis

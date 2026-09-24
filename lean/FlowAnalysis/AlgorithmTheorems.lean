@@ -47,6 +47,7 @@ open DartTypeRepr
 variable {τ : Type} [Γ : DartTypeRepr τ]
 
 local notation "Expr" => Expr (τ := τ)
+local notation "Property" => Property (τ := τ)
 local notation "PromotionChain" => PromotionChain (τ := τ)
 local notation "Stmt" => Stmt (τ := τ)
 
@@ -64,7 +65,10 @@ local notation "Key" => Key (τ := τ) (ℓ := ℓ)
 local notation "PromotionKeyStore" => PromotionKeyStore (τ := τ) (ℓ := ℓ)
 local notation "PromotionModel" => PromotionModel (τ := τ) (ℓ := ℓ)
 local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
+local notation "Reference" => Reference (τ := τ) (ℓ := ℓ)
+local notation "ReferenceImpl" => ReferenceImpl (ℓ := ℓ)
 local notation "ValueVersion" => ValueVersion (ℓ := ℓ)
+local notation "ValueVersionImpl" => ValueVersionImpl (ℓ := ℓ)
 
 -- These lemmas are about the shape of `AlgM`, so none of them need to know anything about labels.
 omit [DecidableEq ℓ] in
@@ -120,6 +124,15 @@ theorem keyForVariableM_eq {v : Variable} {s : AlgState} :
     (keyForVariableM v : AlgM _) cfg s =
       Except.ok ((s.promotionKeyStore.keyForVariable v).1,
         { s with promotionKeyStore := (s.promotionKeyStore.keyForVariable v).2 }) := rfl
+
+@[simp]
+theorem getOrCreatePropertyVersionM_eq {target : ValueVersionImpl} {name : String}
+    {s : AlgState} :
+    (getOrCreatePropertyVersionM target name : AlgM _) cfg s =
+      Except.ok ((s.promotionKeyStore.getOrCreatePropertyVersion target name).1,
+        { s with
+          promotionKeyStore := (s.promotionKeyStore.getOrCreatePropertyVersion target name).2 }) :=
+  rfl
 
 omit [DecidableEq ℓ] in
 @[simp]
@@ -353,6 +366,27 @@ theorem FlowModelImpl.refines.finishTypeTest
   hrefines.insert hwf hk (hrefines_pm.promote hchain hwc)
 
 /--
+`rI.refines ks r` says that the algorithm's reference `rI`, whose promotion key is interpreted by
+the key store `ks`, faithfully represents the specification's reference `r`: the promotion key
+stands for `r.key`, and the version is `r`'s, placed at the path of `r.key`.
+
+The version needs the path because the specification's versions don't carry one (see
+`ValueVersionImpl`).
+-/
+structure ReferenceImpl.refines (rI : ReferenceImpl) (ks : PromotionKeyStore) (r : Reference) :
+    Prop where
+  /-- The promotion key stands for the reference's key. -/
+  key : ks.keys[rI.promotionKey]? = some r.key
+  /-- The versions agree, once the specification's is placed at the path of the key. -/
+  version? : rI.version? = r.version?.map (⟨·, r.key.path⟩)
+
+omit [DecidableEq ℓ] in
+/-- Refinement of a reference survives the allocation of more keys. -/
+theorem ReferenceImpl.refines.mono {rI : ReferenceImpl} {ks ks' : PromotionKeyStore}
+    {r : Reference} (hr : rI.refines ks r) (hext : ks.Extends ks') : rI.refines ks' r :=
+  ⟨hext _ _ hr.key, hr.version?⟩
+
+/--
 The algorithm's `tryPromoteForTypeCast` refines the specification's `FlowModel.tryPromote`.
 
 `tryMarkNonNullable` differs only in how it computes the type to promote to, so its counterpart,
@@ -360,15 +394,35 @@ The algorithm's `tryPromoteForTypeCast` refines the specification's `FlowModel.t
 -/
 theorem FlowModelImpl.refines.tryPromoteForTypeCast
     {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
-    (hwf : ks.WellFormed) {k : PromotionKey} {key : Key} (hk : ks.keys[k]? = some key)
+    (hwf : ks.WellFormed) {rI : ReferenceImpl} {r : Reference} (hr : rI.refines ks r)
     (previousType T : τ) :
-    (fmI.tryPromoteForTypeCast k previousType T).refines ks
-      (fm.tryPromote (some key) previousType T) := by
+    (fmI.tryPromoteForTypeCast rI previousType T).refines ks
+      (fm.tryPromote (some r) previousType T) := by
   simp only [FlowModelImpl.tryPromoteForTypeCast, FlowModel.tryPromote]
-  cases hrefines.promotionInfos k key hk
-  case absent hlookupI hlookup => simp [hlookupI, hlookup, hrefines]
+  cases hrefines.promotionInfos rI.promotionKey r.key hr.key
+  case absent hlookupI hlookup =>
+    -- Neither side has a stored model, so `infoFor` supplies a fresh one on both sides, at the
+    -- version that was read (if any).
+    simp only [FlowModelImpl.infoFor, FlowModel.infoFor, hlookupI, hlookup, hr.version?]
+    cases r.version?
+    case none => exact hrefines
+    case some v =>
+      have hwcI : (PromotionModelImpl.fresh v : PromotionModelImpl).writeCaptured = false := rfl
+      have hwc : ¬(PromotionModel.fresh v : PromotionModel).writeCaptured := by
+        simp [PromotionModel.fresh]
+      simp only [Option.map_some, hwcI, hwc, Bool.false_eq_true, ↓reduceIte, not_false_eq_true,
+        true_and]
+      by_cases hT_lt : T < previousType
+      case neg => simp [hT_lt, hrefines]
+      case pos =>
+        -- A fresh model has no promotions, so appending `T` always yields a promotion chain.
+        have hchain : isPromotionChain
+            ((PromotionModelImpl.fresh v : PromotionModelImpl).promotedTypes ++ [T]) := by
+          simp [PromotionModelImpl.fresh]
+        simp only [hT_lt, hchain, and_self, ↓reduceIte, ↓reduceDIte]
+        exact hrefines.finishTypeTest hwf hr.key (PromotionModelImpl.refines.fresh v) hchain hwc
   case present pmI pm hlookupI hlookup hrefines_pm =>
-    simp only [hlookupI, hlookup]
+    simp only [FlowModelImpl.infoFor, FlowModel.infoFor, hlookupI, hlookup]
     -- Neither the algorithm nor the specification promotes a write-captured location, so dispose
     -- of that case first; afterwards both guards reduce to the same conditions.
     have hwcs : pmI.writeCaptured = pm.writeCaptured := hrefines_pm.writeCaptured
@@ -387,7 +441,7 @@ theorem FlowModelImpl.refines.tryPromoteForTypeCast
         by_cases hchain : isPromotionChain (pmI.promotedTypes ++ [T])
         case pos =>
           simp only [hchain, ↓reduceIte]
-          exact hrefines.finishTypeTest hwf hk hrefines_pm hchain hwc
+          exact hrefines.finishTypeTest hwf hr.key hrefines_pm hchain hwc
         case neg =>
           -- Neither the algorithm nor the spec promoted `key`, so neither one changed its state;
           -- for the spec, this is because `PromotionModel.tryPromote` was a no-op, so the `set`
@@ -399,41 +453,11 @@ theorem FlowModelImpl.refines.tryPromoteForTypeCast
 /-- The algorithm's `tryMarkNonNullable` refines the specification's `promoteToNonNull`. -/
 theorem FlowModelImpl.refines.tryMarkNonNullable
     {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
-    (hwf : ks.WellFormed) {k : PromotionKey} {key : Key} (hk : ks.keys[k]? = some key)
+    (hwf : ks.WellFormed) {rI : ReferenceImpl} {r : Reference} (hr : rI.refines ks r)
     (previousType : τ) :
-    (fmI.tryMarkNonNullable k previousType).refines ks
-      (fm.promoteToNonNull (some key) previousType) :=
-  hrefines.tryPromoteForTypeCast hwf hk previousType (NonNull previousType)
-
-/--
-The `as` elaboration case's call to `tryPromoteForTypeCast`, including the check for a missing
-reference that guards it, refines the specification's `FlowModel.tryPromote`.
--/
-theorem FlowModelImpl.refines.tryPromoteForTypeCast?
-    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
-    (hwf : ks.WellFormed) {refI? : Option PromotionKey} {ref? : Option Key}
-    (hrefs : Option.Rel (fun k key => ks.keys[k]? = some key) refI? ref?) (previousType T : τ) :
-    (match refI? with
-      | some ref => fmI.tryPromoteForTypeCast ref previousType T
-      | none => fmI).refines ks (fm.tryPromote ref? previousType T) := by
-  cases hrefs
-  case none => exact hrefines
-  case some k key hk => exact hrefines.tryPromoteForTypeCast hwf hk previousType T
-
-/--
-The null check elaboration case's call to `tryMarkNonNullable`, including the check for a missing
-reference that guards it, refines the specification's `FlowModel.promoteToNonNull`.
--/
-theorem FlowModelImpl.refines.tryMarkNonNullable?
-    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
-    (hwf : ks.WellFormed) {refI? : Option PromotionKey} {ref? : Option Key}
-    (hrefs : Option.Rel (fun k key => ks.keys[k]? = some key) refI? ref?) (previousType : τ) :
-    (match refI? with
-      | some ref => fmI.tryMarkNonNullable ref previousType
-      | none => fmI).refines ks (fm.promoteToNonNull ref? previousType) := by
-  cases hrefs
-  case none => exact hrefines
-  case some k key hk => exact hrefines.tryMarkNonNullable hwf hk previousType
+    (fmI.tryMarkNonNullable rI previousType).refines ks
+      (fm.promoteToNonNull (some r) previousType) :=
+  hrefines.tryPromoteForTypeCast hwf hr previousType (NonNull previousType)
 
 section
 variable {α β : Type} [BEq α] [LawfulBEq α] [Hashable α] [LawfulHashable α]
@@ -503,9 +527,9 @@ structure ExprModelImpl.refines (emI : ExprModelImpl) (ks : PromotionKeyStore)
   types : emI.type = em.type
   /--
   The algorithm and the specification identify the same promotion target, if any: either neither
-  has one, or the algorithm's is a promotion key standing for the specification's.
+  has one, or the algorithm's reference refines the specification's.
   -/
-  ref?s : Option.Rel (fun k key => ks.keys[k]? = some key) emI.ref? em.ref?
+  ref?s : Option.Rel (fun rI r => rI.refines ks r) emI.ref? em.ref?
   /-- The flow models that apply when the expression evaluates to `true` are related. -/
   fm_trues : (emI.boolInfo.getD (fmI, fmI)).fst.refines ks em.fm_true
   /-- The flow models that apply when the expression evaluates to `false` are related. -/
@@ -517,8 +541,8 @@ An algorithmic expression model that records no boolean information refines a sp
 expression model whose `true` and `false` flow models are both the flow model the algorithm reached.
 -/
 theorem ExprModelImpl.refines.noBoolInfo {fmI : FlowModelImpl} {ks : PromotionKeyStore}
-    {fm : FlowModel} (hrefines : fmI.refines ks fm) (T : τ) {refI? : Option PromotionKey}
-    {ref? : Option Key} (hrefs : Option.Rel (fun k key => ks.keys[k]? = some key) refI? ref?) :
+    {fm : FlowModel} (hrefines : fmI.refines ks fm) (T : τ) {refI? : Option ReferenceImpl}
+    {ref? : Option Reference} (hrefs : Option.Rel (fun rI r => rI.refines ks r) refI? ref?) :
     (⟨T, refI?, none⟩ : ExprModelImpl).refines ks fmI ⟨T, ref?, fm, fm⟩ :=
   ⟨rfl, hrefs, hrefines, hrefines⟩
 
@@ -553,6 +577,73 @@ theorem AlgState.refines.keyForVariable {s : AlgState} {fm : FlowModel} (hrefine
   exact ⟨k, ks, rfl, PromotionKeyStore.keyForVariable_keys hrefines.wf hr, hext,
     ⟨hwf', hrefines.current.mono hwf' hext⟩⟩
 
+/--
+Looking up the key for a property of a value, allocating it if necessary, preserves refinement, and
+yields a key that stands for the property.
+-/
+theorem AlgState.refines.getOrCreatePropertyVersion {s : AlgState} {fm : FlowModel}
+    (hrefines : s.refines fm) (target : ValueVersionImpl) (name : String) :
+    ∃ k ks, s.promotionKeyStore.getOrCreatePropertyVersion target name = (k, ks) ∧
+      ks.keys[k]? = some (.loc target.roots (target.path ++ [name])) ∧
+      s.promotionKeyStore.Extends ks ∧
+      ({ s with promotionKeyStore := ks } : AlgState).refines fm := by
+  rcases hr : s.promotionKeyStore.getOrCreatePropertyVersion target name with ⟨k, ks⟩
+  have hwf' := PromotionKeyStore.getOrCreatePropertyVersion_wellFormed hrefines.wf hr
+  have hext := PromotionKeyStore.getOrCreatePropertyVersion_extends hr
+  exact ⟨k, ks, rfl, PromotionKeyStore.getOrCreatePropertyVersion_keys hrefines.wf hr, hext,
+    ⟨hwf', hrefines.current.mono hwf' hext⟩⟩
+
+/--
+`handlePropertyM` computes the type and reference that the specification's property read rule
+(`ElabExpr.propertyGet`) prescribes, and preserves refinement. It leaves the flow model alone, so
+the specification's flow model `fm` is unchanged.
+-/
+theorem handlePropertyM.correct {s₁ : AlgState} {fm : FlowModel} (hrefines : s₁.refines fm)
+    {refI? : Option ReferenceImpl} {ref? : Option Reference}
+    (hrefs : Option.Rel (fun rI r => rI.refines s₁.promotionKeyStore r) refI? ref?)
+    (p : Property) :
+    ∃ s₂ refI?',
+      handlePropertyM refI? p cfg s₁ =
+        .ok ((fm.currentTypeOf (ref?.bind (·.property? p)) p.type, refI?'), s₂) ∧
+      s₁.promotionKeyStore.Extends s₂.promotionKeyStore ∧ s₂.refines fm ∧
+      Option.Rel (fun rI r => rI.refines s₂.promotionKeyStore r) refI?'
+        (ref?.bind (·.property? p)) := by
+  cases hrefs
+  case none =>
+    exact ⟨s₁, none, by simp [handlePropertyM, FlowModel.currentTypeOf], .refl _, hrefines, .none⟩
+  case some rI r hr =>
+    cases hv : r.version?
+    case none =>
+      have hvI : rI.version? = none := by simp [hr.version?, hv]
+      refine ⟨s₁, none, ?_, .refl _, hrefines, ?_⟩
+      · simp [handlePropertyM, hvI, Reference.property?, hv, FlowModel.currentTypeOf]
+      · simp [Reference.property?, hv]
+    case some v =>
+      have hvI : rI.version? = some ⟨v, r.key.path⟩ := by simp [hr.version?, hv]
+      cases hp : p.isPromotable
+      case false =>
+        refine ⟨s₁, none, ?_, .refl _, hrefines, ?_⟩
+        · simp [handlePropertyM, hvI, hp, Reference.property?, FlowModel.currentTypeOf]
+        · simp [Reference.property?, hp]
+      case true =>
+        obtain ⟨k, ks, hr', hk, hext, hrefines'⟩ :=
+          hrefines.getOrCreatePropertyVersion ⟨v, r.key.path⟩ p.name
+        refine ⟨{ s₁ with promotionKeyStore := ks },
+          some ⟨k, some ⟨v, r.key.path ++ [p.name]⟩⟩, ?_, hext, hrefines', ?_⟩
+        · -- The type is the property's promoted type, if the flow model has a promotion model for
+          -- it, on both sides.
+          have hproperty : r.property? p = some ⟨r.key.property v p.name, some v⟩ := by
+            simp [Reference.property?, hp, hv]
+          simp only [handlePropertyM, hvI, hp, Option.bind_some, AlgM_bind_eq,
+            getOrCreatePropertyVersionM_eq, hr', AlgM_get_eq, AlgM_pure_eq, hproperty,
+            FlowModel.currentTypeOf, Key.property]
+          cases hrefines'.current.promotionInfos k _ hk
+          case absent hlookupI hlookup => simp_all
+          case present pmI pm hlookupI hlookup hrefines_pm =>
+            simp_all [hrefines_pm.currentTypes]
+        · simp only [Option.bind_some, Reference.property?, hp, hv, ↓reduceIte, Option.map_some]
+          exact .some ⟨hk, by simp⟩
+
 end
 
 /-
@@ -561,6 +652,49 @@ The elaboration rules and functions label value versions by AST paths, so from h
 -/
 
 local notation "AlgState" => AlgState (τ := τ) (ℓ := AstPath)
+local notation "FlowModel" => FlowModel (τ := τ) (ℓ := AstPath)
+local notation "FlowModelImpl" => FlowModelImpl (τ := τ) (ℓ := AstPath)
+local notation "PromotionKeyStore" => PromotionKeyStore (τ := τ) (ℓ := AstPath)
+local notation "Reference" => Reference (τ := τ) (ℓ := AstPath)
+local notation "ReferenceImpl" => ReferenceImpl (ℓ := AstPath)
+
+/-
+The next two lemmas are stated at `ℓ := AstPath`, rather than for any `ℓ`, because their `match`es
+must be the very ones in `elabExprImpl`. Lean shares the auxiliary definition of a `match` between
+`match`es that elaborate to the same closed term, and a `match` on `Option (ReferenceImpl ℓ)`
+doesn't elaborate to the same term as one on `Option (ReferenceImpl AstPath)`. A stuck `match`
+doesn't unfold, so differing auxiliary definitions wouldn't be recognized as equal.
+-/
+
+/--
+The `as` elaboration case's call to `tryPromoteForTypeCast`, including the check for a missing
+reference that guards it, refines the specification's `FlowModel.tryPromote`.
+-/
+theorem FlowModelImpl.refines.tryPromoteForTypeCast?
+    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
+    (hwf : ks.WellFormed) {refI? : Option ReferenceImpl} {ref? : Option Reference}
+    (hrefs : Option.Rel (fun rI r => rI.refines ks r) refI? ref?) (previousType T : τ) :
+    (match refI? with
+      | some ref => fmI.tryPromoteForTypeCast ref previousType T
+      | none => fmI).refines ks (fm.tryPromote ref? previousType T) := by
+  cases hrefs
+  case none => exact hrefines
+  case some rI r hr => exact hrefines.tryPromoteForTypeCast hwf hr previousType T
+
+/--
+The null check elaboration case's call to `tryMarkNonNullable`, including the check for a missing
+reference that guards it, refines the specification's `FlowModel.promoteToNonNull`.
+-/
+theorem FlowModelImpl.refines.tryMarkNonNullable?
+    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
+    (hwf : ks.WellFormed) {refI? : Option ReferenceImpl} {ref? : Option Reference}
+    (hrefs : Option.Rel (fun rI r => rI.refines ks r) refI? ref?) (previousType : τ) :
+    (match refI? with
+      | some ref => fmI.tryMarkNonNullable ref previousType
+      | none => fmI).refines ks (fm.promoteToNonNull ref? previousType) := by
+  cases hrefs
+  case none => exact hrefines
+  case some rI r hr => exact hrefines.tryMarkNonNullable hwf hr previousType
 
 /--
 `elabExprImpl.Correctness π e` says that `elabExprImpl` is complete and sound with respect to
@@ -594,8 +728,10 @@ theorem elabExprImpl.correct.var {π} (v : Variable) :
     case present pmI pm' hlookupI hlookup' hrefines_pm =>
       have hpm : pm' = pm := by simp_all
       subst hpm
-      refine ⟨{ s₀ with promotionKeyStore := ks₁ }, ⟨pm'.currentType v.type, some k, none⟩,
-        ?_, hext, hrefines₁, ExprModelImpl.refines.noBoolInfo hrefines₁.current _ (.some hk)⟩
+      refine ⟨{ s₀ with promotionKeyStore := ks₁ },
+        ⟨pm'.currentType v.type, some ⟨k, pmI.version?.map (⟨·, []⟩)⟩, none⟩, ?_, hext, hrefines₁,
+        ExprModelImpl.refines.noBoolInfo hrefines₁.current _
+          (.some ⟨hk, by simp [hrefines_pm.version?]⟩)⟩
       simp [elabExprImpl, hr, hlookupI, hrefines_pm.currentTypes]
   case sound =>
     intro fm₀ m emI s s₀ hrefines₀ hok
@@ -606,10 +742,48 @@ theorem elabExprImpl.correct.var {π} (v : Variable) :
     case present pmI pm hlookupI hlookup hrefines_pm =>
       simp [hlookupI, hrefines_pm.currentTypes] at hok
       rcases hok with ⟨⟨rfl, rfl⟩, rfl⟩
-      refine ⟨⟨pm.currentType v.type, some (.var v), fm₀, fm₀⟩, ElabExpr.var hlookup rfl, hext,
-        ?_, ExprModelImpl.refines.noBoolInfo hrefines₁.current _ (.some hk)⟩
+      refine ⟨⟨pm.currentType v.type, some ⟨.var v, pm.version?⟩, fm₀, fm₀⟩,
+        ElabExpr.var hlookup rfl, hext, ?_,
+        ExprModelImpl.refines.noBoolInfo hrefines₁.current _
+          (.some ⟨hk, by simp [hrefines_pm.version?]⟩)⟩
       simp only [ExprModel.simple_after]
       exact hrefines₁
+
+/--
+A property read is correct if the read of its target is: the target's reference is passed to
+`handlePropertyM`, which does what `ElabExpr.propertyGet` prescribes.
+-/
+theorem elabExprImpl.correct.propertyGet {π} (e₁ : Expr) (p : Property)
+    (hcorrect₁ : elabExprImpl.Correctness (0 :: π) e₁) :
+    elabExprImpl.Correctness π (e₁.property p) := by
+  constructor
+  case complete =>
+    intro fm₀ m em s₀ hrefines₀ helab
+    cases helab; case propertyGet m₁ em₁ ref? T helab₁ href hT =>
+    subst href hT
+    obtain ⟨s₁, emI₁, hok₁, hext₁, hrefines₁, hrefines_em₁⟩ := hcorrect₁.complete hrefines₀ helab₁
+    obtain ⟨s₂, refI?, hok₂, hext₂, hrefines₂, hrefs₂⟩ :=
+      handlePropertyM.correct (cfg := ⟨π⟩) hrefines₁ hrefines_em₁.ref?s p
+    simp only [ExprModel.simple_after]
+    refine ⟨s₂, ⟨_, refI?, none⟩, ?_, hext₁.trans hext₂, hrefines₂,
+      ExprModelImpl.refines.noBoolInfo hrefines₂.current _ hrefs₂⟩
+    simp [elabExprImpl, hok₁, hok₂]
+  case sound =>
+    intro fm₀ m emI s s₀ hrefines₀ hok
+    simp only [elabExprImpl, AlgM_bind_eq, withChild_eq] at hok
+    cases hok₁ : elabExprImpl e₁ ⟨0 :: π⟩ s₀
+    case error => simp [hok₁] at hok
+    case ok result₁ =>
+    rcases result₁ with ⟨⟨m₁, emI₁⟩, s₁⟩
+    obtain ⟨em₁, helab₁, hext₁, hrefines₁, hrefines_em₁⟩ := hcorrect₁.sound hrefines₀ hok₁
+    obtain ⟨s₂, refI?, hok₂, hext₂, hrefines₂, hrefs₂⟩ :=
+      handlePropertyM.correct (cfg := ⟨π⟩) hrefines₁ hrefines_em₁.ref?s p
+    simp [hok₁, hok₂] at hok
+    rcases hok with ⟨⟨rfl, rfl⟩, rfl⟩
+    refine ⟨_, ElabExpr.propertyGet helab₁ rfl rfl, hext₁.trans hext₂, ?_,
+      ExprModelImpl.refines.noBoolInfo hrefines₂.current _ hrefs₂⟩
+    simp only [ExprModel.simple_after]
+    exact hrefines₂
 
 theorem elabExprImpl.correct.nullCheck {π} (e₁ : Expr) (hcorrect₁ :
     elabExprImpl.Correctness (0 :: π) e₁) :
@@ -723,6 +897,9 @@ theorem elabExprImpl.correct (π : AstPath) (e : Expr) :
       apply (elabExprImpl.correct.asExpr e₁ T (elabExprImpl.correct (0 :: π) e₁)).complete
         hrefines₀ helab
     case null => apply elabExprImpl.correct.nullLiteral.complete hrefines₀ helab
+    case property e₁ p =>
+      apply (elabExprImpl.correct.propertyGet e₁ p (elabExprImpl.correct (0 :: π) e₁)).complete
+        hrefines₀ helab
   case sound =>
     intro fm₀ m emI s s₀ hrefines₀ hok
     cases h : e <;> rw [h] at hok
@@ -734,6 +911,9 @@ theorem elabExprImpl.correct (π : AstPath) (e : Expr) :
       apply (elabExprImpl.correct.asExpr e₁ T (elabExprImpl.correct (0 :: π) e₁)).sound
         hrefines₀ hok
     case null => apply elabExprImpl.correct.nullLiteral.sound hrefines₀ hok
+    case property e₁ p =>
+      apply (elabExprImpl.correct.propertyGet e₁ p (elabExprImpl.correct (0 :: π) e₁)).sound
+        hrefines₀ hok
 
 /--
 `elabStmtImpl.Correctness π s` says that `elabStmtImpl` is complete and sound with respect to

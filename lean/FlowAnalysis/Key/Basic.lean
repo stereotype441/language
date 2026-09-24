@@ -99,7 +99,9 @@ TODO(stage 5): the join of two flow models must *re-key* property entries, mappi
 `loc r₂ p` to `loc (ValueVersion.join r₁ r₂) p`.  This is what the implementation's
 `_joinProperties` computes, and it is the reason a property read distributes over a join.  A naive
 pointwise join over a fixed set of keys would instead drop every property promotion, because the
-keys on the two incoming paths differ.
+keys on the two incoming paths differ.  Until Stage 5 adds the re-keying join, the model is sound
+but less precise than Dart: after `if (b) { declare x; x._f! } else { declare x; x._f! }`, Dart
+considers `x._f` promoted, but the model doesn't.
 -/
 @[simp]
 public theorem property_inj {k₁ k₂ : Key} {version₁ version₂ : ValueVersion}
@@ -124,4 +126,77 @@ public theorem property_path_inj {k₁ k₂ : Key} {version₁ version₂ : Valu
   exact List.append_cancel_right hpath
 
 end «Key»
+
+local notation "Property" => Property (τ := τ)
+
+/--
+Mirrors Dart's `_Reference`: what flow analysis knows about the location that an expression read,
+so that the location can be promoted when the expression's value is.
+-/
+public structure Reference where
+  /-- The key of the location that was read. -/
+  key : Key
+  /--
+  The version of the value that was read, which is the version held at `key` at the time.
+
+  `none` only for a write-captured variable. Dart gives each read of such a variable a fresh
+  `ValueVersion` (`_variableReference`). Among the constructs modelled so far, nothing can reach a
+  fresh version again, so recording `none` instead is observationally equivalent. TODO(stage 7):
+  revisit when write capture is modelled, since some constructs do reach the fresh version again.
+  Cascades are one example (see `Reference.property?`); pattern matching and anonymous methods are
+  others.
+  -/
+  version? : Option ValueVersion
+
+local notation "Reference" => Reference (τ := τ) (ℓ := ℓ)
+
+namespace «Reference»
+
+/--
+`r.property? p` is the reference to property `p` of the value that `r` read, or `none` if flow
+analysis doesn't track that property. Mirrors the choice of key in Dart's `_handleProperty`.
+
+It is `none` if `p` isn't promotable, or if the target's value isn't tracked (a write-captured
+variable). Otherwise the property's key is determined by the target's key and version (see
+`Key.property`), and its `version?` records the version of the target, since in the specification a
+version doesn't carry a path (see `FlowAnalysis.ValueVersion`).
+
+TODO(stage 7): revisit the write-captured case once constructs that reach a fresh version again are
+modelled (see `Reference.version?`). Cascades are one example: within a cascade, the
+properties of a write-captured variable *can* be promoted. For example, even if `x` is write
+captured, `x.._p!.f().._p.g()` is allowed: cascade semantics make it behave like
+`let tmp = x; tmp._p!.f(); tmp._p.g();`, so the second `_p` needs no null check. Dart achieves this
+because `cascadeExpression_afterTarget` holds the fresh version that `_variableReference` gives the
+read of `x` in a temporary reference, through which every section of the cascade reaches it again.
+So a `version?` of `none`, which can't be reached again, will no longer do (see
+`Reference.version?`).
+-/
+@[expose]
+public def property? (r : Reference) (p : Property) : Option Reference :=
+  if p.isPromotable then r.version?.map fun v => ⟨r.key.property v p.name, some v⟩ else none
+
+/--
+A reference to a property records the version named by its key.
+
+This is the specification's counterpart of Dart's assertion in `_handleProperty` that the promotion
+model found for a property holds the version the property was read from, and it is what makes
+`FlowModel.infoFor` preserve `FlowModel.WellFormed`.
+-/
+@[expose]
+public def WellFormed (r : Reference) : Prop :=
+  ∀ v q, r.key = .loc v q → r.version? = some v
+
+/-- A reference produced by `property?` is well formed. -/
+public theorem WellFormed.property? {r r' : Reference} {p : Property}
+    (h : r.property? p = some r') : r'.WellFormed := by
+  intro v q hkey
+  simp only [Reference.property?] at h
+  split at h
+  case isTrue =>
+    obtain ⟨v', -, rfl⟩ := Option.map_eq_some_iff.mp h
+    simp only [Key.property, Key.loc.injEq] at hkey
+    rw [hkey.1]
+  case isFalse => simp at h
+
+end «Reference»
 end FlowAnalysis

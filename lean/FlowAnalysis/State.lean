@@ -11,6 +11,7 @@ variable {τ : Type} [DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ]
 
 local notation "PromotionModel" => PromotionModel (τ := τ) (ℓ := ℓ)
 local notation "Key" => Key (τ := τ) (ℓ := ℓ)
+local notation "Reference" => Reference (τ := τ) (ℓ := ℓ)
 
 /-- The state of a function at a particular point in its execution. -/
 @[ext]
@@ -40,6 +41,35 @@ public def FlowModel.join (fm₁ fm₂ : FlowModel) : FlowModel :=
          match fm₂.promotionInfo k with
          | none => none
          | some pm₂ => pm₁.join pm₂⟩
+
+/--
+`fm.infoFor r` is the promotion model of the location that `r` refers to: the one `fm` stores under
+`r.key` if there is one, and otherwise a fresh promotion model holding the version that was read.
+Mirrors Dart's `FlowModel.infoFor`.
+
+The result is `none` only if there is no stored model and `r` has no version, which happens only for
+a write-captured variable (see `Reference.version?`). In Dart, such a reference has a fresh version,
+so `infoFor` always returns a model.
+-/
+@[expose]
+public def FlowModel.infoFor (fm : FlowModel) (r : Reference) : Option PromotionModel :=
+  match fm.promotionInfo r.key with
+  | some pm => some pm
+  | none => r.version?.map PromotionModel.fresh
+
+/--
+`fm.currentTypeOf ref? T` is the type of a read of the location that `ref?` refers to, given that
+its declared type is `T`: the promoted type if `fm` has a promotion model for it, and `T` otherwise.
+
+Mirrors the computation of the type in Dart's `_handleProperty`. That looks up the stored promotion
+model directly rather than using `infoFor`, but the difference is unobservable, because a fresh
+model has no promotions.
+-/
+@[expose]
+public def FlowModel.currentTypeOf (fm : FlowModel) (ref? : Option Reference) (T : τ) : τ :=
+  match ref?.bind fun r => fm.promotionInfo r.key with
+  | some pm => pm.currentType T
+  | none => T
 
 -- FlowModel Theorems --
 
@@ -104,7 +134,7 @@ than a new version under the old one.
 It is stated here, as a condition on the key-to-model map, rather than as an invariant of
 `PromotionModel`, because it relates a key to its model rather than constraining a model on its own.
 
-TODO(stage 4): this is vacuous until property reads start constructing `loc` keys.
+Elaboration preserves it: see `ElabStmt.wellFormed`.
 -/
 @[expose]
 public def FlowModel.WellFormed (fm : FlowModel) : Prop :=
@@ -149,9 +179,34 @@ public theorem FlowModel.WellFormed.join {fm₁ fm₂ : FlowModel} (hwf₁ : fm�
       cases hlookup
       simp [PromotionModel.join, hwf₁ r p pm₁ hlookup₁, hwf₂ r p pm₂ hlookup₂]
 
+omit [DecidableEq ℓ] in
+/--
+In a well-formed flow model, the promotion model that `infoFor` supplies for a well-formed reference
+carries the version named by the reference's key.
+
+A stored model does so because the flow model is well formed, and a fresh model does so because the
+reference is. This is the hypothesis `FlowModel.WellFormed.set` needs in order to store the model
+back, after promoting it.
+-/
+public theorem FlowModel.WellFormed.infoFor {fm : FlowModel} (hwf : fm.WellFormed) {r : Reference}
+    (hr : r.WellFormed) {pm : PromotionModel} (h : fm.infoFor r = some pm) :
+    ∀ v q, r.key = .loc v q → pm.version? = some v := by
+  intro v q hkey
+  simp only [FlowModel.infoFor] at h
+  split at h
+  case h_1 pm' hlookup =>
+    cases h
+    rw [hkey] at hlookup
+    exact hwf v q _ hlookup
+  case h_2 =>
+    obtain ⟨v', hv', rfl⟩ := Option.map_eq_some_iff.mp h
+    have := hr v q hkey
+    simp_all [PromotionModel.fresh]
+
 public structure ExprModel where
   type : τ
-  ref? : Option Key
+  /-- The location the expression read, if it read one that flow analysis can promote. -/
+  ref? : Option Reference
   fm_true : FlowModel
   fm_false : FlowModel
 
@@ -161,7 +216,7 @@ local notation "ExprModel" => ExprModel (τ := τ) (ℓ := ℓ)
 public def ExprModel.fm_after (em : ExprModel) := em.fm_true.join em.fm_false
 
 @[simp]
-public theorem ExprModel.simple_after {ref? : Option Key} {T : τ}
+public theorem ExprModel.simple_after {ref? : Option Reference} {T : τ}
     {fm : FlowModel} :
     (ExprModel.mk T ref? fm fm).fm_after = fm := by
   simp [ExprModel.fm_after]

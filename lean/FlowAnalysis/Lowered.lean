@@ -9,6 +9,7 @@ open DartTypeRepr
 variable {τ : Type} [Γ : DartTypeRepr τ]
 
 local notation "Variable" => Variable (τ := τ)
+local notation "Property" => Property (τ := τ)
 
 /--
 Lowered, fully type-checked AST form.
@@ -25,6 +26,8 @@ public inductive LoweredExpr where
   | declare (v : Variable) (T : τ)
   | cond (m₁ m₂ m₃ : LoweredExpr) (T : τ)
   | block (exprs : List LoweredExpr)
+  /-- A read of property `p` of the value of `m`, whose type (after any promotion) is `T`. -/
+  | propertyGet (m : LoweredExpr) (p : Property) (T : τ)
   deriving Repr, BEq
 
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
@@ -40,5 +43,6 @@ public def LoweredExpr.typeOf :
   | declare _ _ => Γ.Null
   | cond _ _ _ T => T
   | block _ => Γ.Null
+  | propertyGet _ _ T => T
 
 end FlowAnalysis

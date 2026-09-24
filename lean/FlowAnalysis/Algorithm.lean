@@ -24,6 +24,7 @@ variable {τ : Type} [Γ : DartTypeRepr τ]
 
 local notation "Expr" => Expr (τ := τ)
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
+local notation "Property" => Property (τ := τ)
 local notation "Stmt" => Stmt (τ := τ)
 local notation "Variable" => Variable (τ := τ)
 
@@ -32,6 +33,7 @@ variable {ℓ : Type} [DecidableEq ℓ]
 
 local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
 local notation "PromotionKeyStore" => PromotionKeyStore (τ := τ) (ℓ := ℓ)
+local notation "ValueVersionImpl" => ValueVersionImpl (ℓ := ℓ)
 
 /-- Not exposed so that proofs can't rely on it -/
 public def unspecifiedPromotionChain : List τ := []
@@ -64,9 +66,45 @@ public def FlowModelImpl.join (fmI₁ fmI₂ : FlowModelImpl) :
   if fmI₂.promotionInfo.isEmpty then fmI₂ else
   ⟨mergeMaps PromotionModelImpl.join fmI₁.promotionInfo fmI₂.promotionInfo⟩
 
+/--
+Mirrors Dart's `_Reference`: what flow analysis knows about the location that an expression read,
+so that the location can be promoted when the expression's value is.
+
+Dart's `_Reference` also records the static type of the read, and (for why-not-promoted) whether
+the location is promotable; here the static type is `ExprModelImpl.type`, and only promotable
+locations get references.
+-/
+public structure ReferenceImpl where
+  /-- The promotion key of the location that was read. -/
+  promotionKey : PromotionKey
+  /--
+  The version of the value that was read.
+
+  `none` only for a write-captured variable, where Dart instead uses a fresh `ValueVersion` (see
+  the specification's `Reference.version?`). TODO(stage 7): revisit when write capture is modelled.
+  -/
+  version? : Option ValueVersionImpl
+
+local notation "ReferenceImpl" => ReferenceImpl (ℓ := ℓ)
+
+/--
+`fmI.infoFor r` is the promotion model of the location that `r` refers to: the one `fmI` stores
+under `r.promotionKey` if there is one, and otherwise a fresh promotion model holding the version
+that was read. Mirrors Dart's `FlowModel.infoFor`.
+
+As in the specification's `FlowModel.infoFor`, the result is `none` only if there is no stored model
+and `r` has no version, which happens only for a write-captured variable.
+-/
+@[expose]
+public def FlowModelImpl.infoFor (fmI : FlowModelImpl) (r : ReferenceImpl) :
+    Option PromotionModelImpl :=
+  match fmI.promotionInfo[r.promotionKey]? with
+  | some pmI => some pmI
+  | none => r.version?.map fun v => PromotionModelImpl.fresh v.roots
+
 public structure ExprModelImpl where
   type : τ
-  ref? : Option PromotionKey
+  ref? : Option ReferenceImpl
   boolInfo : Option (FlowModelImpl × FlowModelImpl)
 
 local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
@@ -165,28 +203,20 @@ of `ref`, whose static type is `previousType`, is not `null`.
 Dart's version returns an `ExpressionInfo`, whose `ifFalse` model is the unchanged flow model.
 Every construct modelled so far uses only the `ifTrue` model, so that is all this returns.
 
-If `ref` has no promotion model, this returns `fmI` unchanged. That departs from Dart, which
-obtains the promotion model via `infoFor`, and so creates
-`PromotionModel.fresh(version: reference.version)` when there isn't one, and then promotes it. The
-`none` branch is currently unreachable: `ref` can only come from the `var` case of `elabExprImpl`,
-which throws unless the variable has a promotion model, and a variable read doesn't change the flow
-model. The specification's `FlowModel.tryPromote` has the same `none` branch, so refinement is
-unaffected.
-
-TODO(stage 4): in the `none` branch, create a fresh promotion model at the reference's value
-version (as Dart's `infoFor` does) and promote that. The first promotion of a property reaches
-this branch.
+As in Dart, the promotion model to promote is obtained with `infoFor`, so the first promotion of a
+property starts from a fresh model. `infoFor` returns `none` only for a write-captured variable,
+which wouldn't be promoted anyway.
 -/
 @[expose]
-public def FlowModelImpl.tryMarkNonNullable (fmI : FlowModelImpl) (ref : PromotionKey)
+public def FlowModelImpl.tryMarkNonNullable (fmI : FlowModelImpl) (ref : ReferenceImpl)
     (previousType : τ) : FlowModelImpl :=
-  match fmI.promotionInfo[ref]? with
+  match fmI.infoFor ref with
   | none => fmI
   | some pmI =>
     if pmI.writeCaptured then fmI else
     let newType := NonNull previousType
     if newType < previousType ∧ isPromotionChain (pmI.promotedTypes ++ [newType]) then
-      fmI.finishTypeTest ref pmI newType
+      fmI.finishTypeTest ref.promotionKey pmI newType
     else
       fmI
 
@@ -194,26 +224,54 @@ public def FlowModelImpl.tryMarkNonNullable (fmI : FlowModelImpl) (ref : Promoti
 Mirrors `FlowModel.tryPromoteForTypeCast`: the effect on the flow model of casting the referent of
 `ref`, whose static type is `previousType`, to `T`.
 
-If `ref` has no promotion model, this returns `fmI` unchanged. As with `tryMarkNonNullable`, that
-departs from Dart's `infoFor`, which creates `PromotionModel.fresh(version: reference.version)`,
-but the branch is currently unreachable, because the `var` case of `elabExprImpl` throws unless
-the variable has a promotion model.
-
-TODO(stage 4): in the `none` branch, create a fresh promotion model at the reference's value
-version and promote that.
+As with `tryMarkNonNullable`, the promotion model to promote is obtained with `infoFor`.
 -/
 @[expose]
-public def FlowModelImpl.tryPromoteForTypeCast (fmI : FlowModelImpl) (ref : PromotionKey)
+public def FlowModelImpl.tryPromoteForTypeCast (fmI : FlowModelImpl) (ref : ReferenceImpl)
     (previousType T : τ) : FlowModelImpl :=
-  match fmI.promotionInfo[ref]? with
+  match fmI.infoFor ref with
   | none => fmI
   | some pmI =>
     if pmI.writeCaptured then fmI else
     let newType := T
     if newType < previousType ∧ isPromotionChain (pmI.promotedTypes ++ [newType]) then
-      fmI.finishTypeTest ref pmI newType
+      fmI.finishTypeTest ref.promotionKey pmI newType
     else
       fmI
+
+/--
+Monadic form of `PromotionKeyStore.getOrCreatePropertyVersion`, updating the key store in the
+state.  Mirrors Dart's `target.getOrCreatePropertyVersion(...)` for a promotable property.
+-/
+@[expose]
+public def getOrCreatePropertyVersionM (target : ValueVersionImpl) (name : String) :
+    AlgM PromotionKey :=
+  modifyGet fun s =>
+    let r := s.promotionKeyStore.getOrCreatePropertyVersion target name
+    (r.1, { s with promotionKeyStore := r.2 })
+
+/--
+Mirrors Dart's `_handleProperty`: given the reference (if any) produced by the target of a read of
+property `p`, returns the type of the read and the reference (if any) to the property.
+
+If the target's value is tracked and `p` is promotable, the property's key is looked up (and
+allocated, on a miss) in the target version's `_promotableProperties`, and the type is the
+property's promoted type in the current flow model, if any. The flow model itself is unchanged: as
+in Dart, the read only looks up the property's promotion model, and doesn't create one.
+
+Otherwise the read has the declared type of `p` and no reference. This departs from Dart, which
+allocates a fresh key for every read of a non-promotable property, and returns a reference to it.
+TODO(stage 7): mirror Dart here; see `PromotionKeyStore.getOrCreatePropertyVersion`.
+-/
+@[expose]
+public def handlePropertyM (target? : Option ReferenceImpl) (p : Property) :
+    AlgM (τ × Option ReferenceImpl) := do
+  match target?.bind (·.version?), p.isPromotable with
+  | some target, true =>
+    let k <- getOrCreatePropertyVersionM target p.name
+    let T := ((<- get).current.promotionInfo[k]?).elim p.type (·.currentType p.type)
+    pure (T, some ⟨k, some ⟨target.roots, target.path ++ [p.name]⟩⟩)
+  | _, _ => pure (p.type, none)
 
 end
 
@@ -238,14 +296,18 @@ public def elabExprImpl (e : Expr) :
     match (<- get).current.promotionInfo[k]? with
     | some pm =>
         let T := pm.currentType v.type
-        pure (LoweredExpr.var v T, ⟨T, some k, none⟩)
+        pure (LoweredExpr.var v T, ⟨T, some ⟨k, pm.version?.map (⟨·, []⟩)⟩, none⟩)
     | none =>
       -- Referring to an undeclared variable is a compile-time error, which this `throw` models.
       -- It is intended to stay, though it may move out of the flow analysis part of the model once
       -- elaboration covers name resolution. Dart's `variableRead` doesn't fail here; it falls back
-      -- to a fresh promotion model instead. This `throw` is what makes the `none` branches of
-      -- `FlowModelImpl.tryMarkNonNullable` and `FlowModelImpl.tryPromoteForTypeCast` unreachable.
+      -- to a fresh promotion model instead.
       throw s!"Undefined variable {v.name}"
+  | .property eInner p =>
+    -- Mirrors `_FlowAnalysisImpl.propertyGet`.
+    let (m, emI) <- withChild 0 (elabExprImpl eInner)
+    let (T, ref?) <- handlePropertyM emI.ref? p
+    pure (m.propertyGet p T, ⟨T, ref?, none⟩)
   | .nullCheck eInner =>
     let (m, emI) <- withChild 0 (elabExprImpl eInner)
     modifyCurrent fun fmI =>
