@@ -91,17 +91,6 @@ public theorem val_root {l : ℓ} : (root l).val = {l} := rfl
 public theorem root_inj {l₁ l₂ : ℓ} : root l₁ = root l₂ ↔ l₁ = l₂ := by
   rw [ext_iff]; simp
 
-/--
-The version of a value whose creation site cannot yet be labelled.
-
-TODO: every value that comes into existence should be labelled with the program point that created
-it, but the syntax doesn't yet carry enough information to do that.  Until it does, all such values
-share this single unspecified version.
-
-Deliberately not exposed, so that proofs can't rely on how it is constructed.
--/
-public def unspecified [Inhabited ℓ] : ValueVersion := root default
-
 variable [DecidableEq ℓ]
 
 -- Value versions are used as part of map keys, so decidable equality is required.  It is inherited
