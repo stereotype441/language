@@ -16,32 +16,64 @@ local notation "LoweredExpr" => LoweredExpr (τ := τ)
 local notation "Key" => Key (τ := τ) (ℓ := ℓ)
 
 /--
-`fm.tryPromote ref T` returns an updated flow model in which the referent of `ref` has been
-promoted to `T`, assuming such a promotion is valid. Otherwise it returns `fm` unchanged.
+`fm.tryPromote ref? previousType T` returns an updated flow model in which the referent of `ref?` has
+been promoted from `previousType` to `T`, assuming such a promotion is valid. Otherwise it returns
+`fm` unchanged.
+
+`previousType` is the static type of the expression that produced the reference, exactly as in the
+implementation, where it is `_Reference._type`.  It is not recomputed from the flow model, which is
+what lets this function serve any kind of key without knowing what the key names.
 
 A write-captured location is never promoted: flow analysis has given up on tracking which value it
 holds, so it has no basis for a promotion.  The guard is also what supplies the hypothesis
 `PromotionModel.tryPromote` needs in order to re-establish `writeCaptured_promotedTypes`.
+
+If the key has no promotion model, this returns `fm` unchanged. That departs from the Dart
+implementation, whose `infoFor` creates `PromotionModel.fresh(version: reference.version)` and
+promotes that. The branch is currently unreachable, because a key only comes from `ElabExpr.var`,
+which requires the variable to have a promotion model, and a variable read doesn't change the flow
+model.
+
+TODO(stage 4): in the inner `none` branch, create a fresh promotion model at the reference's value
+version and promote that.
 -/
 @[expose]
-public def FlowModel.tryPromote (ref : Option Key) (T : τ)
+public def FlowModel.tryPromote (ref? : Option Key) (previousType T : τ)
     (fm : FlowModel) :
     FlowModel :=
-  match ref with
-  | some (Key.var v) =>
-    match fm.promotionInfo (.var v) with
+  match ref? with
+  | none => fm
+  | some k =>
+    match fm.promotionInfo k with
     | some pm =>
-      if h : ¬pm.writeCaptured ∧ T < pm.currentType v.type then
-        fm.set (.var v) (pm.tryPromote T h.1)
+      if h : ¬pm.writeCaptured ∧ T < previousType then
+        fm.set k (pm.tryPromote T h.1)
       else
         fm
     | none => fm
-  | _ => fm
+
+/--
+`fm.promoteToNonNull ref? previousType` promotes the referent of `ref?` to the non-nullable form of
+`previousType`, if that is a valid promotion.
+
+Mirrors the specification's `promoteToNonNull(E, M)`, which is defined in terms of `promote` in
+exactly this way.
+-/
+@[expose]
+public def FlowModel.promoteToNonNull (ref? : Option Key) (previousType : τ) (fm : FlowModel) :
+    FlowModel :=
+  fm.tryPromote ref? previousType (NonNull previousType)
 
 /-- Expression elaboration rules. -/
 public inductive ElabExpr : FlowModel → Expr →
     LoweredExpr → ExprModel -> Prop where
-  /-- Read of variable `v`. -/
+  /--
+  Read of variable `v`.
+
+  There is deliberately no rule for a variable with no promotion model: referring to an undeclared
+  variable is a compile-time error. (Dart's `variableRead` instead falls back to a fresh promotion
+  model.)
+  -/
   | var {fm v pm T} :
       (fm : FlowModel).promotionInfo (.var v) = some pm →
       T = pm.currentType v.type →
@@ -49,12 +81,12 @@ public inductive ElabExpr : FlowModel → Expr →
   /-- Null check operator (`e₁!`). -/
   | nullCheck {fm₀ e₁ m₁ em₁ fm} :
       ElabExpr fm₀ e₁ m₁ em₁ →
-      fm = em₁.fm_after.tryPromote em₁.ref? (NonNull em₁.type) →
+      fm = em₁.fm_after.promoteToNonNull em₁.ref? em₁.type →
       ElabExpr fm₀ e₁.nullCheck m₁.nullCheck ⟨NonNull em₁.type, none, fm, fm⟩
   /-- Type cast (`e₁ as T`). -/
   | asExpr {fm₀ e₁ m₁ em₁ fm T} :
       ElabExpr fm₀ e₁ m₁ em₁ →
-      fm = em₁.fm_after.tryPromote em₁.ref? T →
+      fm = em₁.fm_after.tryPromote em₁.ref? em₁.type T →
       ElabExpr fm₀ (e₁.as T) (m₁.as T) ⟨T, none, fm, fm⟩
   /-- Null literal (`null`). -/
   | nullLiteral {fm} :

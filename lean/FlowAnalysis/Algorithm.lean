@@ -6,6 +6,7 @@ This module contains an algorithmic implementation of the flow analysis rules de
 module
 public import Std.Data.HashMap
 import FlowAnalysis.Elaboration
+public import FlowAnalysis.Key.StoreImpl
 public import FlowAnalysis.Lowered
 public import FlowAnalysis.PromotionChain.JoinImpl
 public import FlowAnalysis.State
@@ -23,9 +24,9 @@ variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ] [Inha
 
 local notation "Expr" => Expr (τ := τ)
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
-local notation "Key" => Key (τ := τ) (ℓ := ℓ)
 local notation "Stmt" => Stmt (τ := τ)
 local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
+local notation "PromotionKeyStore" => PromotionKeyStore (τ := τ) (ℓ := ℓ)
 local notation "Variable" => Variable (τ := τ)
 
 /-- Not exposed so that proofs can't rely on it -/
@@ -34,7 +35,7 @@ public def unspecifiedPromotionChain : List τ := []
 -- TODO: use a more PromotionInfo-like structure
 @[ext]
 public structure FlowModelImpl where
-  promotionInfo : Std.HashMap Variable PromotionModelImpl
+  promotionInfo : Std.HashMap PromotionKey PromotionModelImpl
 deriving Inhabited
 
 local notation "FlowModelImpl" => FlowModelImpl (τ := τ) (ℓ := ℓ)
@@ -61,7 +62,7 @@ public def FlowModelImpl.join (fmI₁ fmI₂ : FlowModelImpl) :
 
 public structure ExprModelImpl where
   type : τ
-  ref? : Option Key
+  ref? : Option PromotionKey
   boolInfo : Option (FlowModelImpl × FlowModelImpl)
 
 local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
@@ -69,27 +70,129 @@ local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
 public structure Config where
 
 /--
+Models the mutable state of Dart's `_FlowAnalysisImpl`, as far as it is modelled so far.
+-/
+public structure AlgState where
+  /-- Mirrors `_FlowAnalysisImpl._current`: the flow model at the current point in the code. -/
+  current : FlowModelImpl
+  /--
+  Mirrors `_FlowAnalysisImpl.promotionKeyStore`.
+
+  Unlike `current`, this is never saved and restored as the analysis moves between branches: keys
+  are allocated once for the whole analysis, so a key allocated while analyzing one branch still
+  stands for the same thing when it turns up in another.
+  -/
+  promotionKeyStore : PromotionKeyStore
+
+local notation "AlgState" => AlgState (τ := τ) (ℓ := ℓ)
+
+/-- The state at the start of flow analysis. -/
+@[expose]
+public def AlgState.initial : AlgState := ⟨FlowModelImpl.empty, PromotionKeyStore.empty⟩
+
+/--
 Elaboration algorithms are defined using a state monad that records the current flow analysis
 state. This state is updated as we recursively traverse the code being analyzed.
 -/
 public abbrev AlgM :=
-  ReaderT Config (StateT FlowModelImpl (ExceptT String Id))
+  ReaderT Config (StateT AlgState (ExceptT String Id))
 
 local notation "AlgM" => AlgM (τ := τ) (ℓ := ℓ)
 
+/--
+Monadic form of `PromotionKeyStore.keyForVariable`, updating the key store in the state.  Mirrors
+Dart's `promotionKeyStore.keyForVariable(variable)`.
+-/
 @[expose]
-public def tryPromoteImpl (ref : Option Key) (T : τ) :
-    AlgM Unit := do
-  match ref with
-  | some (Key.var v) =>
-    match (<- get).promotionInfo[v]? with
-    | some pmI =>
-      if ¬pmI.writeCaptured ∧ T < pmI.currentType v.type ∧
-          isPromotionChain (pmI.promotedTypes ++ [T]) then
-        modify (fun s => {
-          s with promotionInfo := s.promotionInfo.insert v {pmI with promotedTypes := pmI.promotedTypes ++ [T]}})
-    | none => pure ()
-  | _ => pure ()
+public def keyForVariableM (v : Variable) : AlgM PromotionKey :=
+  modifyGet fun s =>
+    let r := s.promotionKeyStore.keyForVariable v
+    (r.1, { s with promotionKeyStore := r.2 })
+
+/-- Mirrors `_FlowAnalysisImpl._current = fmI`. -/
+@[expose]
+public def setCurrent (fmI : FlowModelImpl) : AlgM Unit :=
+  modify fun s => { s with current := fmI }
+
+/-- Mirrors `_FlowAnalysisImpl._current = f(_current)`. -/
+@[expose]
+public def modifyCurrent (f : FlowModelImpl → FlowModelImpl) : AlgM Unit :=
+  modify fun s => { s with current := f s.current }
+
+/--
+Mirrors `FlowModel._finishTypeTest`: the common core of `tryMarkNonNullable` and
+`tryPromoteForTypeCast` (and, once `is` is modelled, `tryPromoteForTypeCheck`).  Records that
+the referent of `ref`, whose current promotion model is `pmI`, has been promoted to `promotedType`.
+
+The caller is responsible for having checked that the promotion is valid.
+
+Unlike Dart's `_finishTypeTest`, this takes no `testedType`, and so never updates
+`PromotionModelImpl.tested`.  The specification's `PromotionModel.tryPromote` doesn't update
+`PromotionModel.tested` either, so the field is currently vestigial on both sides.
+
+TODO(stage 6): track tested types, alongside types of interest.
+-/
+@[expose]
+public def FlowModelImpl.finishTypeTest (fmI : FlowModelImpl) (ref : PromotionKey)
+    (pmI : PromotionModelImpl) (promotedType : τ) : FlowModelImpl :=
+  ⟨fmI.promotionInfo.insert ref { pmI with promotedTypes := pmI.promotedTypes ++ [promotedType] }⟩
+
+/--
+Mirrors `FlowModel.tryMarkNonNullable`: the effect on the flow model of learning that the referent
+of `ref`, whose static type is `previousType`, is not `null`.
+
+Dart's version returns an `ExpressionInfo`, whose `ifFalse` model is the unchanged flow model.
+Every construct modelled so far uses only the `ifTrue` model, so that is all this returns.
+
+If `ref` has no promotion model, this returns `fmI` unchanged. That departs from Dart, which
+obtains the promotion model via `infoFor`, and so creates
+`PromotionModel.fresh(version: reference.version)` when there isn't one, and then promotes it. The
+`none` branch is currently unreachable: `ref` can only come from the `var` case of `elabExprImpl`,
+which throws unless the variable has a promotion model, and a variable read doesn't change the flow
+model. The specification's `FlowModel.tryPromote` has the same `none` branch, so refinement is
+unaffected.
+
+TODO(stage 4): in the `none` branch, create a fresh promotion model at the reference's value
+version (as Dart's `infoFor` does) and promote that. The first promotion of a property reaches
+this branch.
+-/
+@[expose]
+public def FlowModelImpl.tryMarkNonNullable (fmI : FlowModelImpl) (ref : PromotionKey)
+    (previousType : τ) : FlowModelImpl :=
+  match fmI.promotionInfo[ref]? with
+  | none => fmI
+  | some pmI =>
+    if pmI.writeCaptured then fmI else
+    let newType := NonNull previousType
+    if newType < previousType ∧ isPromotionChain (pmI.promotedTypes ++ [newType]) then
+      fmI.finishTypeTest ref pmI newType
+    else
+      fmI
+
+/--
+Mirrors `FlowModel.tryPromoteForTypeCast`: the effect on the flow model of casting the referent of
+`ref`, whose static type is `previousType`, to `T`.
+
+If `ref` has no promotion model, this returns `fmI` unchanged. As with `tryMarkNonNullable`, that
+departs from Dart's `infoFor`, which creates `PromotionModel.fresh(version: reference.version)`,
+but the branch is currently unreachable, because the `var` case of `elabExprImpl` throws unless
+the variable has a promotion model.
+
+TODO(stage 4): in the `none` branch, create a fresh promotion model at the reference's value
+version and promote that.
+-/
+@[expose]
+public def FlowModelImpl.tryPromoteForTypeCast (fmI : FlowModelImpl) (ref : PromotionKey)
+    (previousType T : τ) : FlowModelImpl :=
+  match fmI.promotionInfo[ref]? with
+  | none => fmI
+  | some pmI =>
+    if pmI.writeCaptured then fmI else
+    let newType := T
+    if newType < previousType ∧ isPromotionChain (pmI.promotedTypes ++ [newType]) then
+      fmI.finishTypeTest ref pmI newType
+    else
+      fmI
 
 mutual
 
@@ -99,19 +202,32 @@ public def elabExprImpl (e : Expr) :
       (LoweredExpr × ExprModelImpl) := do
   match e with
   | .var v =>
-    match (<- get).promotionInfo[v]? with
+    -- Mirrors `_FlowAnalysisImpl.variableRead`.
+    let k <- keyForVariableM v
+    match (<- get).current.promotionInfo[k]? with
     | some pm =>
         let T := pm.currentType v.type
-        pure (LoweredExpr.var v T, ⟨T, some (Key.var v), none⟩)
-    | none => throw s!"Undefined variable {v.name}"
+        pure (LoweredExpr.var v T, ⟨T, some k, none⟩)
+    | none =>
+      -- Referring to an undeclared variable is a compile-time error, which this `throw` models.
+      -- It is intended to stay, though it may move out of the flow analysis part of the model once
+      -- elaboration covers name resolution. Dart's `variableRead` doesn't fail here; it falls back
+      -- to a fresh promotion model instead. This `throw` is what makes the `none` branches of
+      -- `FlowModelImpl.tryMarkNonNullable` and `FlowModelImpl.tryPromoteForTypeCast` unreachable.
+      throw s!"Undefined variable {v.name}"
   | .nullCheck eInner =>
     let (m, emI) <- elabExprImpl eInner
-    let T' := NonNull emI.type
-    tryPromoteImpl emI.ref? T'
-    pure (m.nullCheck, ⟨T', none, none⟩)
+    modifyCurrent fun fmI =>
+      match emI.ref? with
+      | some ref => fmI.tryMarkNonNullable ref emI.type
+      | none => fmI
+    pure (m.nullCheck, ⟨NonNull emI.type, none, none⟩)
   | .as eInner T =>
     let (m, emI) <- elabExprImpl eInner
-    tryPromoteImpl emI.ref? T
+    modifyCurrent fun fmI =>
+      match emI.ref? with
+      | some ref => fmI.tryPromoteForTypeCast ref emI.type T
+      | none => fmI
     pure (m.as T, ⟨T, none, none⟩)
   | .null =>
     pure (.null, ⟨Γ.Null, none, none⟩)
@@ -120,10 +236,10 @@ public def elabStmtImpl (s : Stmt) :
     AlgM LoweredExpr := do
   match s with
   | .declare n T =>
-    modify (fun s =>
-      { s with
-        promotionInfo :=
-          s.promotionInfo.insert ⟨n, T⟩ ⟨[], [], true, false, some ValueVersion.unspecified⟩ })
+    -- Mirrors `_FlowAnalysisImpl.declare`.
+    let k <- keyForVariableM ⟨n, T⟩
+    modifyCurrent fun fmI =>
+      ⟨fmI.promotionInfo.insert k ⟨[], [], true, false, some ValueVersion.unspecified⟩⟩
     pure (LoweredExpr.declare ⟨n, T⟩ T)
   | .exprStmt e =>
     let (m, _) <- elabExprImpl e
@@ -133,15 +249,16 @@ public def elabStmtImpl (s : Stmt) :
     -- TODO: handle dynamic
     if em₁.type != Γ.bool then throw s!"Type of {e₁} is {em₁.type}, expected bool" else
     -- TODO: make a helper function for some of this logic?
-    let fm₁ <- get
+    let fm₁ := (<- get).current
     let (fm₁_true, fm₁_false) := em₁.boolInfo.getD (fm₁, fm₁)
-    set fm₁_true
+    setCurrent fm₁_true
     let m₂ <- elabStmtImpl s₂
-    let fm₂ <- get
-    set fm₁_false
+    let fm₂ := (<- get).current
+    -- Only the flow model is restored here; keys allocated while analyzing `s₂` stay allocated.
+    setCurrent fm₁_false
     let m₃ <- elabStmtImpl s₃
-    let fm₃ <- get
-    set (fm₂.join fm₃)
+    let fm₃ := (<- get).current
+    setCurrent (fm₂.join fm₃)
     pure (.cond m₁ m₂ m₃ Γ.Null)
   | .block stmts =>
     let loweredStmts <- elabStmtsImpl stmts
