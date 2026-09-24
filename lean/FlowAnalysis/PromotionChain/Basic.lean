@@ -52,7 +52,7 @@ theorem nil : isPromotionChain ([] : List τ) := by
 
 /-- A list with just one element is a promotion chain. -/
 @[simp]
-theorem singleton : ∀ T : τ, isPromotionChain [T] := by
+public theorem singleton : ∀ T : τ, isPromotionChain [T] := by
   simp [isPromotionChain]
 
 /-- The tail of a promotion chain is also a promotion chain. -/

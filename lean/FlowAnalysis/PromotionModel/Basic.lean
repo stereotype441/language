@@ -70,6 +70,27 @@ public def declared (version : ValueVersion) : PromotionModel where
   not_assigned_and_unassigned := by simp
   not_writeCaptured_and_unassigned := by simp
 
+/--
+Mirrors Dart's `PromotionModel.fresh(version: version)`: the promotion model that
+`FlowModel.infoFor` supplies for a reference that has no promotion model yet. It is unpromoted,
+untested, not write captured, and holds the value `version`.
+
+As in Dart, where `assigned` defaults to `false` and `unassigned` is `!assigned`, it is definitely
+unassigned. Nothing modelled so far consults definite assignment for properties.
+-/
+@[expose]
+public def fresh (version : ValueVersion) : PromotionModel where
+  promotedTypes := ∅
+  tested := ∅
+  assigned := false
+  unassigned := true
+  version? := some version
+  writeCaptured := false
+  writeCaptured_promotedTypes := by simp
+  version?_eq_none_iff := by simp
+  not_assigned_and_unassigned := by simp
+  not_writeCaptured_and_unassigned := by simp
+
 @[expose]
 public def currentType (pm : PromotionModel) (baseType : τ) :=
   match pm.promotedTypes.val.getLast? with
@@ -170,6 +191,14 @@ public def PromotionModelImpl.join (pmI₁ pmI₂ : PromotionModelImpl) : Promot
     ValueVersion.join? pmI₁.version? pmI₂.version?
   ⟩
 
+/--
+Mirrors Dart's `PromotionModel.fresh(version: version)`: unpromoted, untested, not definitely
+assigned, definitely unassigned, and holding the value `version`.
+-/
+@[expose]
+public def PromotionModelImpl.fresh (version : ValueVersion) : PromotionModelImpl :=
+  ⟨[], [], false, true, some version⟩
+
 @[expose]
 public def PromotionModelImpl.promotedType? (pmI : PromotionModelImpl) : Option τ :=
   pmI.promotedTypes.getLast?
@@ -258,6 +287,16 @@ public theorem PromotionModelImpl.refines.declared (version : ValueVersion) :
     (⟨[], [], true, false, some version⟩ : PromotionModelImpl).refines
       (PromotionModel.declared version) := by
   constructor <;> simp [PromotionModel.declared]
+
+/--
+The fresh promotion model that the algorithm creates for a reference with no promotion model refines
+the one the specification creates.
+-/
+@[simp]
+public theorem PromotionModelImpl.refines.fresh (version : ValueVersion) :
+    (PromotionModelImpl.fresh version : PromotionModelImpl).refines
+      (PromotionModel.fresh version) := by
+  constructor <;> simp [PromotionModelImpl.fresh, PromotionModel.fresh]
 
 public theorem PromotionModelImpl.refines.unique {pmI : PromotionModelImpl}
     {pm₁ pm₂ : PromotionModel} :

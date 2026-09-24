@@ -16,7 +16,8 @@ has. Distinct nodes have distinct paths, so distinct nodes mint distinct version
 
 Children are numbered as follows:
 
-- `Expr.nullCheck e₁`, `Expr.as e₁ T` and `Stmt.exprStmt e₁`: `e₁` is child `0`.
+- `Expr.nullCheck e₁`, `Expr.as e₁ T`, `Expr.property e₁ p` and `Stmt.exprStmt e₁`: `e₁` is child
+  `0`.
 - `Stmt.ifStmt e₁ s₂ s₃`: `e₁`, `s₂` and `s₃` are children `0`, `1` and `2`.
 - `Stmt.block ss`: the list `ss` is child `0`.
 - A nonempty statement list `s :: ss`: `s` is child `0`, and the list `ss` is child `1`.
@@ -24,12 +25,15 @@ Children are numbered as follows:
 public abbrev AstPath := List Nat
 
 local notation "Variable" => Variable (τ := τ)
+local notation "Property" => Property (τ := τ)
 
 public inductive Expr where
   | var (v : Variable)
   | nullCheck (e₁ : Expr)
   | as (e₁ : Expr) (T : τ)
   | null
+  /-- A read of property `p` of the value of `e₁` (`e₁.p`). -/
+  | property (e₁ : Expr) (p : Property)
   deriving Repr
 
 local notation "Expr" => Expr (τ := τ)

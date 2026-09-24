@@ -28,3 +28,18 @@ public instance Variable.instLawfulBEq : LawfulBEq Variable where
 
 public instance Variable.instLawfulHashable : LawfulHashable Variable where
   hash_eq := by simp_all
+
+/--
+A property (a getter or field) that can be read from an object. Mirrors the `propertyMember` passed
+to Dart's `propertyGet`, together with the information flow analysis needs about it.
+-/
+public structure Property where
+  name : String
+  /-- The static type of the property. -/
+  type : τ
+  /--
+  Whether the property is promotable. Mirrors Dart's
+  `operations.isPropertyPromotable(propertyMember) && fieldPromotionEnabled`.
+  -/
+  isPromotable : Bool
+  deriving Repr, BEq, DecidableEq
