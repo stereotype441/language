@@ -20,14 +20,18 @@ namespace FlowAnalysis
 open DartTypeRepr
 open PromotionChain
 
-variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ] [Inhabited ℓ]
+variable {τ : Type} [Γ : DartTypeRepr τ]
 
 local notation "Expr" => Expr (τ := τ)
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
 local notation "Stmt" => Stmt (τ := τ)
+local notation "Variable" => Variable (τ := τ)
+
+section
+variable {ℓ : Type} [DecidableEq ℓ]
+
 local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
 local notation "PromotionKeyStore" => PromotionKeyStore (τ := τ) (ℓ := ℓ)
-local notation "Variable" => Variable (τ := τ)
 
 /-- Not exposed so that proofs can't rely on it -/
 public def unspecifiedPromotionChain : List τ := []
@@ -67,7 +71,16 @@ public structure ExprModelImpl where
 
 local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
 
+/--
+The context in which a node is analyzed. Unlike `AlgState`, this is passed down the syntax tree
+but never back up.
+-/
 public structure Config where
+  /--
+  The AST path of the node being analyzed. Used to label the value versions the node creates, in
+  place of the object identity that Dart's `ValueVersion` objects have.
+  -/
+  path : AstPath
 
 /--
 Models the mutable state of Dart's `_FlowAnalysisImpl`, as far as it is modelled so far.
@@ -118,6 +131,14 @@ public def setCurrent (fmI : FlowModelImpl) : AlgM Unit :=
 @[expose]
 public def modifyCurrent (f : FlowModelImpl → FlowModelImpl) : AlgM Unit :=
   modify fun s => { s with current := f s.current }
+
+/--
+`withChild i x` runs `x` as the analysis of child `i` of the current node, by prepending `i` to the
+AST path in the `Config`. See `AstPath` for how children are numbered.
+-/
+@[expose]
+public def withChild {α : Type} (i : Nat) (x : AlgM α) : AlgM α :=
+  withReader (fun cfg => { cfg with path := i :: cfg.path }) x
 
 /--
 Mirrors `FlowModel._finishTypeTest`: the common core of `tryMarkNonNullable` and
@@ -194,6 +215,16 @@ public def FlowModelImpl.tryPromoteForTypeCast (fmI : FlowModelImpl) (ref : Prom
     else
       fmI
 
+end
+
+/-
+The elaboration functions label the value versions they create by AST paths, so from here on labels
+are `AstPath`s.
+-/
+
+local notation "AlgM" => AlgM (τ := τ) (ℓ := AstPath)
+local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := AstPath)
+
 mutual
 
 @[expose]
@@ -216,14 +247,14 @@ public def elabExprImpl (e : Expr) :
       -- `FlowModelImpl.tryMarkNonNullable` and `FlowModelImpl.tryPromoteForTypeCast` unreachable.
       throw s!"Undefined variable {v.name}"
   | .nullCheck eInner =>
-    let (m, emI) <- elabExprImpl eInner
+    let (m, emI) <- withChild 0 (elabExprImpl eInner)
     modifyCurrent fun fmI =>
       match emI.ref? with
       | some ref => fmI.tryMarkNonNullable ref emI.type
       | none => fmI
     pure (m.nullCheck, ⟨NonNull emI.type, none, none⟩)
   | .as eInner T =>
-    let (m, emI) <- elabExprImpl eInner
+    let (m, emI) <- withChild 0 (elabExprImpl eInner)
     modifyCurrent fun fmI =>
       match emI.ref? with
       | some ref => fmI.tryPromoteForTypeCast ref emI.type T
@@ -236,32 +267,34 @@ public def elabStmtImpl (s : Stmt) :
     AlgM LoweredExpr := do
   match s with
   | .declare n T =>
-    -- Mirrors `_FlowAnalysisImpl.declare`.
+    -- Mirrors `_FlowAnalysisImpl.declare`, whose `new ValueVersion()` is modelled by the root
+    -- labelled by this declaration's AST path.
     let k <- keyForVariableM ⟨n, T⟩
+    let π := (<- read).path
     modifyCurrent fun fmI =>
-      ⟨fmI.promotionInfo.insert k ⟨[], [], true, false, some ValueVersion.unspecified⟩⟩
+      ⟨fmI.promotionInfo.insert k ⟨[], [], true, false, some (ValueVersion.root π)⟩⟩
     pure (LoweredExpr.declare ⟨n, T⟩ T)
   | .exprStmt e =>
-    let (m, _) <- elabExprImpl e
+    let (m, _) <- withChild 0 (elabExprImpl e)
     pure m
   | .ifStmt e₁ s₂ s₃ =>
-    let (m₁, em₁) <- elabExprImpl e₁
+    let (m₁, em₁) <- withChild 0 (elabExprImpl e₁)
     -- TODO: handle dynamic
     if em₁.type != Γ.bool then throw s!"Type of {e₁} is {em₁.type}, expected bool" else
     -- TODO: make a helper function for some of this logic?
     let fm₁ := (<- get).current
     let (fm₁_true, fm₁_false) := em₁.boolInfo.getD (fm₁, fm₁)
     setCurrent fm₁_true
-    let m₂ <- elabStmtImpl s₂
+    let m₂ <- withChild 1 (elabStmtImpl s₂)
     let fm₂ := (<- get).current
     -- Only the flow model is restored here; keys allocated while analyzing `s₂` stay allocated.
     setCurrent fm₁_false
-    let m₃ <- elabStmtImpl s₃
+    let m₃ <- withChild 2 (elabStmtImpl s₃)
     let fm₃ := (<- get).current
     setCurrent (fm₂.join fm₃)
     pure (.cond m₁ m₂ m₃ Γ.Null)
   | .block stmts =>
-    let loweredStmts <- elabStmtsImpl stmts
+    let loweredStmts <- withChild 0 (elabStmtsImpl stmts)
     pure (LoweredExpr.block loweredStmts)
 
 public def elabStmtsImpl (ss : List Stmt) :
@@ -269,8 +302,8 @@ public def elabStmtsImpl (ss : List Stmt) :
   match ss with
   | [] => pure []
   | s :: ss' =>
-    let loweredS <- elabStmtImpl s
-    let loweredSS <- elabStmtsImpl ss'
+    let loweredS <- withChild 0 (elabStmtImpl s)
+    let loweredSS <- withChild 1 (elabStmtsImpl ss')
     pure (loweredS :: loweredSS)
 
 end
