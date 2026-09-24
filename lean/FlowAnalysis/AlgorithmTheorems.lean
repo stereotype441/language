@@ -48,6 +48,7 @@ variable {τ : Type} [Γ : DartTypeRepr τ] {ℓ : Type} [DecidableEq ℓ] [Inha
 variable {cfg : Config}
 
 local notation "AlgM" => AlgM (τ := τ) (ℓ := ℓ)
+local notation "AlgState" => AlgState (τ := τ) (ℓ := ℓ)
 local notation "Expr" => Expr (τ := τ)
 local notation "ExprModel" => ExprModel (τ := τ) (ℓ := ℓ)
 local notation "ExprModelImpl" => ExprModelImpl (τ := τ) (ℓ := ℓ)
@@ -55,6 +56,7 @@ local notation "FlowModel" => FlowModel (τ := τ) (ℓ := ℓ)
 local notation "FlowModelImpl" => FlowModelImpl (τ := τ) (ℓ := ℓ)
 local notation "Key" => Key (τ := τ) (ℓ := ℓ)
 local notation "PromotionChain" => PromotionChain (τ := τ)
+local notation "PromotionKeyStore" => PromotionKeyStore (τ := τ) (ℓ := ℓ)
 local notation "Stmt" => Stmt (τ := τ)
 local notation "PromotionModel" => PromotionModel (τ := τ) (ℓ := ℓ)
 local notation "PromotionModelImpl" => PromotionModelImpl (τ := τ) (ℓ := ℓ)
@@ -63,224 +65,367 @@ local notation "ValueVersion" => ValueVersion (ℓ := ℓ)
 -- These lemmas are about the shape of `AlgM`, so none of them need to know anything about labels.
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_get_eq {fm : FlowModelImpl} :
-  (get : AlgM _) cfg fm = Except.ok (fm, fm) := rfl
+theorem AlgM_get_eq {s : AlgState} :
+  (get : AlgM _) cfg s = Except.ok (s, s) := rfl
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_pure_eq {α} {fm : FlowModelImpl} {a : α} :
-  (pure a : AlgM _) cfg fm = Except.ok (a, fm) := rfl
+theorem AlgM_pure_eq {α} {s : AlgState} {a : α} :
+  (pure a : AlgM _) cfg s = Except.ok (a, s) := rfl
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_bind_eq {α β : Type} {x : AlgM α} {fm : FlowModelImpl}
+theorem AlgM_bind_eq {α β : Type} {x : AlgM α} {s : AlgState}
     {f : α → AlgM β} :
-  (x >>= f) cfg fm = match x cfg fm with
+  (x >>= f) cfg s = match x cfg s with
                  | Except.ok (a, hm') => f a cfg hm'
                  | Except.error e => Except.error e := by
   simp [bind, ReaderT.bind, StateT.bind]
-  cases x cfg fm <;> rfl
+  cases x cfg s <;> rfl
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_map_eq {α β : Type} {fm : FlowModelImpl} {f : α → β} {x : AlgM α} :
-  (f <$> x) cfg fm = match x cfg fm with
+theorem AlgM_map_eq {α β : Type} {s : AlgState} {f : α → β} {x : AlgM α} :
+  (f <$> x) cfg s = match x cfg s with
                  | Except.ok (a, hm') => Except.ok (f a, hm')
                  | Except.error e => Except.error e := by
   dsimp [Functor.map, StateT.instMonad, StateT.map, StateT.bind, StateT.pure, ExceptT.bind, ExceptT.pure, bind, pure]
-  cases x cfg fm <;> trivial
+  cases x cfg s <;> trivial
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_modify_eq {f} {fm : FlowModelImpl} :
-    (modify : _ → AlgM _) f cfg fm = Except.ok ((), f fm) := rfl
+theorem AlgM_modify_eq {f} {s : AlgState} :
+    (modify : _ → AlgM _) f cfg s = Except.ok ((), f s) := rfl
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_set_eq {fm fm' : FlowModelImpl} :
-    (set : _ → AlgM _) fm' cfg fm = Except.ok ((), fm') := rfl
+theorem AlgM_set_eq {s s' : AlgState} :
+    (set : _ → AlgM _) s' cfg s = Except.ok ((), s') := rfl
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 @[simp]
-theorem AlgM_throw_eq_ok_contra {α e x} {fmI₀ fmI : FlowModelImpl} :
-    (throw e : AlgM α) cfg fmI₀ = Except.ok (x, fmI) ↔ False := by
+theorem AlgM_throw_eq_ok_contra {α e x} {s₀ s : AlgState} :
+    (throw e : AlgM α) cfg s₀ = Except.ok (x, s) ↔ False := by
   constructor
   case mp => intro h; contradiction
   case mpr => intro h; exfalso; assumption
 
+omit [DecidableEq ℓ] [Inhabited ℓ] in
+@[simp]
+theorem keyForVariableM_eq {v : Variable} {s : AlgState} :
+    (keyForVariableM v : AlgM _) cfg s =
+      Except.ok ((s.promotionKeyStore.keyForVariable v).1,
+        { s with promotionKeyStore := (s.promotionKeyStore.keyForVariable v).2 }) := rfl
+
+omit [DecidableEq ℓ] [Inhabited ℓ] in
+@[simp]
+theorem setCurrent_eq {fmI : FlowModelImpl} {s : AlgState} :
+    (setCurrent fmI : AlgM _) cfg s = Except.ok ((), { s with current := fmI }) := rfl
+
+omit [DecidableEq ℓ] [Inhabited ℓ] in
+@[simp]
+theorem modifyCurrent_eq {f : FlowModelImpl → FlowModelImpl} {s : AlgState} :
+    (modifyCurrent f : AlgM _) cfg s = Except.ok ((), { s with current := f s.current }) := rfl
+
 /--
-`fmI.PromotionInfoRefinesAt fm v` says that the `promotionInfo` fields of the algorithm's flow model `fmI` and the
-specification's flow model `fm` agree about the variable `v`: either neither flow model has an entry
-for `v`, or both do, and the algorithm's variable model refines the specification's.
+`fmI.PromotionInfoRefinesAt fm k key` says that the `promotionInfo` fields of the algorithm's flow
+model `fmI` and the specification's flow model `fm` agree about the promotion key `k`, which stands
+for the specification key `key`: either neither flow model has an entry for it, or both do, and the
+algorithm's promotion model refines the specification's.
 -/
 inductive FlowModelImpl.PromotionInfoRefinesAt (fmI : FlowModelImpl)
-    (fm : FlowModel) (v : Variable) : Prop where
-  /-- `v` is absent from both flow models. -/
-  | absent (hlookupI : fmI.promotionInfo[v]? = none) (hlookup : fm.promotionInfo (.var v) = none)
-  /-- `v` is present in both flow models, and their variable models are related by `refines`. -/
+    (fm : FlowModel) (k : PromotionKey) (key : Key) : Prop where
+  /-- Neither flow model has an entry. -/
+  | absent (hlookupI : fmI.promotionInfo[k]? = none) (hlookup : fm.promotionInfo key = none)
+  /-- Both flow models have an entry, and their promotion models are related by `refines`. -/
   | present
-        {pmI : PromotionModelImpl} {pm : PromotionModel} (hlookupI : fmI.promotionInfo[v]? = some pmI)
-        (hlookup : fm.promotionInfo (.var v) = some pm) (hrefines_vm : pmI.refines pm)
+        {pmI : PromotionModelImpl} {pm : PromotionModel} (hlookupI : fmI.promotionInfo[k]? = some pmI)
+        (hlookup : fm.promotionInfo key = some pm) (hrefines_pm : pmI.refines pm)
 
 /--
-`fmI.refines fm` says that the algorithm's flow model `fmI` faithfully represents the
-specification's flow model `fm`.
+`fmI.refines ks fm` says that the algorithm's flow model `fmI`, whose promotion keys are interpreted
+by the key store `ks`, faithfully represents the specification's flow model `fm`.
+
+Each clause covers one way a promotion key can relate to a specification key.  Only the first says
+anything interesting; the other two ensure that neither flow model records anything the other has no
+way to name.
 -/
-structure FlowModelImpl.refines (fmI : FlowModelImpl)
+structure FlowModelImpl.refines (fmI : FlowModelImpl) (ks : PromotionKeyStore)
     (fm : FlowModel) : Prop where
-  /-- The two flow models' `promotionInfo` fields agree about every variable. -/
-  promotionInfos (v : Variable) : fmI.PromotionInfoRefinesAt fm v
-  /--
-  Neither flow model records anything about a property.
-
-  This is the degenerate form, at this stage, of the requirement that a key absent from the
-  algorithm's flow model reads as `none` in the specification's.  The algorithm's `promotionInfo` is
-  keyed by `Variable`, so it can't name a property at all; correspondingly, the specification's
-  flow model must leave every property key unset.
-
-  TODO(stage 4): once property reads allocate keys, this becomes a genuine agreement condition
-  rather than a blanket absence.
-  -/
-  locsAbsent (r : ValueVersion) (p : List String) : fm.promotionInfo (.loc r p) = none
+  /-- The two flow models agree about every allocated promotion key. -/
+  promotionInfos (k : PromotionKey) (key : Key) (hk : ks.keys[k]? = some key) :
+    fmI.PromotionInfoRefinesAt fm k key
+  /-- The specification's flow model records nothing about a key that no promotion key stands for. -/
+  unallocated (key : Key) (hunallocated : ∀ k : PromotionKey, ks.keys[k]? ≠ some key) :
+    fm.promotionInfo key = none
+  /-- The algorithm's flow model records nothing under a promotion key that hasn't been allocated. -/
+  beyondEnd (k : PromotionKey) (hk : ks.keys[k]? = none) : fmI.promotionInfo[k]? = none
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 /-- The algorithm's initial flow model refines the specification's initial flow model. -/
-theorem FlowModelImpl.refines.empty :
-    (.empty : FlowModelImpl).refines FlowModel.empty where
-  promotionInfos _ := .absent (by simp [FlowModelImpl.empty]) (by simp [FlowModel.empty])
-  locsAbsent _ _ := by simp [FlowModel.empty]
+theorem FlowModelImpl.refines.empty {ks : PromotionKeyStore} :
+    (.empty : FlowModelImpl).refines ks FlowModel.empty where
+  promotionInfos _ _ _ := .absent (by simp [FlowModelImpl.empty]) (by simp [FlowModel.empty])
+  unallocated _ _ := by simp [FlowModel.empty]
+  beyondEnd _ _ := by simp [FlowModelImpl.empty]
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
 A flow model refined by `fmI` maps every key to `none` precisely when `fmI`'s `promotionInfo` is empty.
 -/
-theorem FlowModelImpl.refines.isEmpty {fmI : FlowModelImpl} {fm : FlowModel}
-    (hrefines : fmI.refines fm) :
-    fmI.promotionInfo.isEmpty ↔ ∀ k : Key, fm.promotionInfo k = none := by
+theorem FlowModelImpl.refines.isEmpty {fmI : FlowModelImpl} {ks : PromotionKeyStore}
+    {fm : FlowModel} (hrefines : fmI.refines ks fm) :
+    fmI.promotionInfo.isEmpty ↔ ∀ key : Key, fm.promotionInfo key = none := by
   constructor
   case mp =>
-    intro hemptyI k
-    cases k
-    case loc r p => exact hrefines.locsAbsent r p
-    case var v =>
-      have : fmI.promotionInfo[v]? = none := by exact Std.HashMap.getElem?_of_isEmpty hemptyI
-      cases hrefines.promotionInfos v <;> simp_all
+    intro hemptyI key
+    by_cases hallocated : ∃ k : PromotionKey, ks.keys[k]? = some key
+    case pos =>
+      obtain ⟨k, hk⟩ := hallocated
+      have : fmI.promotionInfo[k]? = none := Std.HashMap.getElem?_of_isEmpty hemptyI
+      cases hrefines.promotionInfos k key hk <;> simp_all
+    case neg =>
+      exact hrefines.unallocated key fun k hk => hallocated ⟨k, hk⟩
   case mpr =>
     intro hempty
     rw [Std.HashMap.isEmpty_iff_forall_not_mem]
-    intro v
-    have := hempty (.var v)
-    cases hrefines.promotionInfos v <;> simp_all
+    intro k
+    cases hk : ks.keys[k]?
+    case none =>
+      have := hrefines.beyondEnd k hk
+      simp_all
+    case some key =>
+      have := hempty key
+      cases hrefines.promotionInfos k key hk <;> simp_all
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
-An algorithmic flow model whose `promotionInfo` is empty refines the specification's empty flow model.
+An algorithmic flow model whose `promotionInfo` is empty refines the specification's empty flow
+model, whatever the key store.
 
 The conclusion is spelled out as `⟨fun _ => none⟩` rather than `FlowModel.empty` because `simp`
 matches conclusions syntactically; stating it in terms of `FlowModel.empty` would stop this lemma
 from firing on the goals that arise in `FlowModelImpl.refines.join`.
 -/
 @[simp]
-theorem FlowModelImpl.refines.empty_of_isEmpty {fmI : FlowModelImpl}
-    (hempty : fmI.promotionInfo.isEmpty) : fmI.refines ⟨fun _ => none⟩ where
-  promotionInfos _ := .absent (Std.HashMap.getElem?_of_isEmpty hempty) (by simp)
-  locsAbsent _ _ := by simp
+theorem FlowModelImpl.refines.empty_of_isEmpty {fmI : FlowModelImpl} {ks : PromotionKeyStore}
+    (hempty : fmI.promotionInfo.isEmpty) : fmI.refines ks ⟨fun _ => none⟩ where
+  promotionInfos _ _ _ := .absent (Std.HashMap.getElem?_of_isEmpty hempty) (by simp)
+  unallocated _ _ := by simp
+  beyondEnd _ _ := Std.HashMap.getElem?_of_isEmpty hempty
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
-A single algorithmic flow model can't refine two different specification flow models, since it
-determines each variable's variable model up to `PromotionModelImpl.refines`, which is itself unique.
+A single algorithmic flow model can't refine two different specification flow models relative to the
+same key store, since it determines each allocated key's promotion model up to
+`PromotionModelImpl.refines`, which is itself unique, and every unallocated key reads as `none`.
 -/
-theorem FlowModelImpl.refines.unique {fmI : FlowModelImpl} {fm₁ fm₂ : FlowModel}
-    (hrefines₁ : fmI.refines fm₁) (hrefines₂ : fmI.refines fm₂) : fm₁ = fm₂ := by
-  apply FlowModel.extensionality; intro k
-  cases k
-  case loc r p => rw [hrefines₁.locsAbsent r p, hrefines₂.locsAbsent r p]
-  case var v =>
-  cases hrefines₁.promotionInfos v
-  case absent hlookupI₁ hlookup₁ => cases hrefines₂.promotionInfos v <;> simp_all
-  case present pmI₁ pm₁ hlookupI₁ hlookup₁ hrefines_vm₁ =>
-    cases hrefines₂.promotionInfos v
+theorem FlowModelImpl.refines.unique {fmI : FlowModelImpl} {ks : PromotionKeyStore}
+    {fm₁ fm₂ : FlowModel} (hrefines₁ : fmI.refines ks fm₁) (hrefines₂ : fmI.refines ks fm₂) :
+    fm₁ = fm₂ := by
+  apply FlowModel.extensionality; intro key
+  by_cases hallocated : ∃ k : PromotionKey, ks.keys[k]? = some key
+  case neg =>
+    have hunallocated : ∀ k : PromotionKey, ks.keys[k]? ≠ some key := fun k hk => hallocated ⟨k, hk⟩
+    rw [hrefines₁.unallocated key hunallocated, hrefines₂.unallocated key hunallocated]
+  case pos =>
+  obtain ⟨k, hk⟩ := hallocated
+  cases hrefines₁.promotionInfos k key hk
+  case absent hlookupI₁ hlookup₁ => cases hrefines₂.promotionInfos k key hk <;> simp_all
+  case present pmI₁ pm₁ hlookupI₁ hlookup₁ hrefines_pm₁ =>
+    cases hrefines₂.promotionInfos k key hk
     case absent hlookupI₂ hlookup₂ => simp_all
-    case present pmI₂ pm₂ hlookupI₂ hlookup₂ hrefines_vm₂ =>
-      -- `fmI` has a single entry for `v`, so `pm₁` and `pm₂` refine the same `PromotionModelImpl`,
-      -- and `PromotionModelImpl.refines` determines the variable model it refines uniquely.
-      have hvmIs : pmI₁ = pmI₂ := by simp_all
-      subst hvmIs
-      rw [hlookup₁, hlookup₂, hrefines_vm₁.unique hrefines_vm₂]
+    case present pmI₂ pm₂ hlookupI₂ hlookup₂ hrefines_pm₂ =>
+      -- `fmI` has a single entry for `k`, so `pm₁` and `pm₂` refine the same `PromotionModelImpl`,
+      -- and `PromotionModelImpl.refines` determines the promotion model it refines uniquely.
+      have hpmIs : pmI₁ = pmI₂ := by simp_all
+      subst hpmIs
+      rw [hlookup₁, hlookup₂, hrefines_pm₁.unique hrefines_pm₂]
+
+omit [DecidableEq ℓ] [Inhabited ℓ] in
+/--
+Refinement survives the allocation of more keys.
+
+This is what lets a flow model saved before analyzing one branch of an `if` statement be used after
+it: the branch may have allocated keys, but a key the saved flow model never heard of reads as
+`none` on both sides.  On the algorithm's side that is `beyondEnd`; on the specification's side, it
+takes `keys_inj` to see that no *old* key already stood for the same specification key.
+-/
+theorem FlowModelImpl.refines.mono {fmI : FlowModelImpl} {ks ks' : PromotionKeyStore}
+    {fm : FlowModel} (hrefines : fmI.refines ks fm) (hwf' : ks'.WellFormed)
+    (hext : ks.Extends ks') : fmI.refines ks' fm where
+  promotionInfos k key hk' := by
+    cases hk : ks.keys[k]?
+    case some key₀ =>
+      -- `k` was already allocated, and `Extends` says it still stands for the same key.
+      have heq : key₀ = key := by
+        have := hext k key₀ hk
+        rw [hk'] at this
+        exact (Option.some.inj this).symm
+      subst heq
+      exact hrefines.promotionInfos k key₀ hk
+    case none =>
+      -- `k` is newly allocated.  No old key stood for `key`, since `Extends` would have carried it
+      -- over to `ks'`, where `keys_inj` would have identified it with `k`.
+      refine .absent (hrefines.beyondEnd k hk) (hrefines.unallocated key ?_)
+      intro k'' hk''
+      have heq := hwf'.keys_inj k'' k key (hext k'' key hk'') hk'
+      subst heq
+      simp [hk] at hk''
+  unallocated key hunallocated' :=
+    hrefines.unallocated key fun k hk => hunallocated' k (hext k key hk)
+  beyondEnd k hk' := by
+    apply hrefines.beyondEnd k
+    cases hk : ks.keys[k]?
+    case none => rfl
+    case some key => simp [hext k key hk] at hk'
 
 omit [Inhabited ℓ] in
 /--
-Refinement is preserved by adding a variable to both flow models, provided the variable models
-being added are themselves related by `refines`.
+Refinement is preserved by adding an entry to both flow models, under a promotion key and the
+specification key it stands for, provided the promotion models being added are themselves related by
+`refines`.
 -/
-@[simp]
-theorem FlowModelImpl.refines.insert {fmI : FlowModelImpl} {fm : FlowModel}
-    {pmI : PromotionModelImpl} {pm : PromotionModel} (v : Variable)
-    (hrefines_fm : fmI.refines fm) (hrefines_vm : pmI.refines pm) :
-    (FlowModelImpl.mk (fmI.promotionInfo.insert v pmI)).refines (fm.set (.var v) pm) := by
+theorem FlowModelImpl.refines.insert {fmI : FlowModelImpl} {ks : PromotionKeyStore}
+    {fm : FlowModel} {pmI : PromotionModelImpl} {pm : PromotionModel} {k : PromotionKey}
+    {key : Key} (hrefines_fm : fmI.refines ks fm) (hwf : ks.WellFormed)
+    (hk : ks.keys[k]? = some key) (hrefines_pm : pmI.refines pm) :
+    (FlowModelImpl.mk (fmI.promotionInfo.insert k pmI)).refines ks (fm.set key pm) := by
   constructor
-  case locsAbsent =>
-    intro r p
-    simpa using hrefines_fm.locsAbsent r p
   case promotionInfos =>
-    intro v'
-    by_cases heq : v = v' <;> subst_eqs
+    intro k' key' hk'
+    by_cases heq : k = k'
     case pos =>
-      exact .present (by simp) (by simp) hrefines_vm
+      subst heq
+      have hkey : key = key' := by
+        rw [hk] at hk'
+        exact Option.some.inj hk'
+      subst hkey
+      exact .present (by simp) (by simp) hrefines_pm
     case neg =>
-      cases hrefines_fm.promotionInfos v'
+      -- Distinct promotion keys stand for distinct specification keys, so neither side's entry for
+      -- `k'` is disturbed.
+      have hne : key ≠ key' := by
+        rintro rfl
+        exact heq (hwf.keys_inj k k' key hk hk')
+      cases hrefines_fm.promotionInfos k' key' hk'
       case absent hlookupI hlookup =>
-        exact .absent (by simp_all) (by simp_all)
-      case present pmI' pm' hlookupI hlookup hrefines_vm' =>
-        exact .present (by simp_all [Std.HashMap.getElem?_insert]) (by simp_all) hrefines_vm'
+        exact .absent (by simp [Std.HashMap.getElem?_insert, heq, hlookupI]) (by simp [hne, hlookup])
+      case present pmI' pm' hlookupI hlookup hrefines_pm' =>
+        exact .present (by simp [Std.HashMap.getElem?_insert, heq, hlookupI])
+          (by simp [hne, hlookup]) hrefines_pm'
+  case unallocated =>
+    intro key' hunallocated
+    have hne : key ≠ key' := by
+      rintro rfl
+      exact hunallocated k hk
+    simp [hne, hrefines_fm.unallocated key' hunallocated]
+  case beyondEnd =>
+    intro k' hk'
+    have hne : k ≠ k' := by
+      rintro rfl
+      simp [hk] at hk'
+    simp [Std.HashMap.getElem?_insert, hne, hrefines_fm.beyondEnd k' hk']
 
 omit [Inhabited ℓ] in
 /--
-Running the algorithm's `tryPromoteImpl` on a flow model that refines `fm` succeeds, and produces a
-flow model that refines the result of the specification's `FlowModel.tryPromote`.
+`finishTypeTest` refines the specification's promotion of a single promotion model, whenever the
+promotion it records is one the algorithm has checked is valid.
 -/
-theorem FlowModelImpl.refines.tryPromote
-    {fmI : FlowModelImpl} {fm : FlowModel} (hrefines : fmI.refines fm) ref? T :
-    ∃ fmI', tryPromoteImpl ref? T cfg fmI = Except.ok ((), fmI') ∧
-    fmI'.refines (fm.tryPromote ref? T) := by
-  cases ref?
-  case none => simp [tryPromoteImpl, FlowModel.tryPromote]; exists fmI
-  case some ref =>
-    cases ref
-    case loc r p => simp [tryPromoteImpl, FlowModel.tryPromote]; exists fmI
-    case var v =>
-      simp [tryPromoteImpl, FlowModel.tryPromote]
-      cases hrefines.promotionInfos v <;> simp_all
-      case absent => exists fmI
-      case present pmI pm hlookupI hlookup hrefines_vm =>
-        -- Neither the algorithm nor the specification promotes a write-captured location, so
-        -- dispose of that case first; afterwards both guards reduce to the same conditions.
-        have hwcs : pmI.writeCaptured = pm.writeCaptured := hrefines_vm.writeCaptured
-        by_cases hwc : pm.writeCaptured
-        case pos => simp_all; exists fmI
+theorem FlowModelImpl.refines.finishTypeTest
+    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
+    (hwf : ks.WellFormed) {k : PromotionKey} {key : Key} (hk : ks.keys[k]? = some key)
+    {pmI : PromotionModelImpl} {pm : PromotionModel} (hrefines_pm : pmI.refines pm) {T : τ}
+    (hchain : isPromotionChain (pmI.promotedTypes ++ [T])) (hwc : ¬pm.writeCaptured) :
+    (fmI.finishTypeTest k pmI T).refines ks (fm.set key (pm.tryPromote T hwc)) :=
+  hrefines.insert hwf hk (hrefines_pm.promote hchain hwc)
+
+omit [Inhabited ℓ] in
+/--
+The algorithm's `tryPromoteForTypeCast` refines the specification's `FlowModel.tryPromote`.
+
+`tryMarkNonNullable` differs only in how it computes the type to promote to, so its counterpart,
+`FlowModelImpl.refines.tryMarkNonNullable`, is a corollary.
+-/
+theorem FlowModelImpl.refines.tryPromoteForTypeCast
+    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
+    (hwf : ks.WellFormed) {k : PromotionKey} {key : Key} (hk : ks.keys[k]? = some key)
+    (previousType T : τ) :
+    (fmI.tryPromoteForTypeCast k previousType T).refines ks
+      (fm.tryPromote (some key) previousType T) := by
+  simp only [FlowModelImpl.tryPromoteForTypeCast, FlowModel.tryPromote]
+  cases hrefines.promotionInfos k key hk
+  case absent hlookupI hlookup => simp [hlookupI, hlookup, hrefines]
+  case present pmI pm hlookupI hlookup hrefines_pm =>
+    simp only [hlookupI, hlookup]
+    -- Neither the algorithm nor the specification promotes a write-captured location, so dispose
+    -- of that case first; afterwards both guards reduce to the same conditions.
+    have hwcs : pmI.writeCaptured = pm.writeCaptured := hrefines_pm.writeCaptured
+    by_cases hwc : pm.writeCaptured
+    case pos => simp [hwcs, hwc, hrefines]
+    case neg =>
+      simp only [hwcs, hwc, Bool.false_eq_true, ↓reduceIte, not_false_eq_true, true_and]
+      by_cases hT_lt : T < previousType
+      case neg => simp [hT_lt, hrefines]
+      case pos =>
+        simp only [hT_lt, true_and, ↓reduceDIte]
+        -- Unlike `FlowModel.tryPromote`, which promotes using `PromotionChain.tryPromote`, the
+        -- algorithm checks explicitly whether appending `T` produces a valid promotion chain, and
+        -- leaves `promotionInfo` untouched if it doesn't. So we need to consider the two cases
+        -- separately.
+        by_cases hchain : isPromotionChain (pmI.promotedTypes ++ [T])
+        case pos =>
+          simp only [hchain, ↓reduceIte]
+          exact hrefines.finishTypeTest hwf hk hrefines_pm hchain hwc
         case neg =>
-          rw [hrefines_vm.currentTypes]
-          by_cases hT_lt_current : T < pm.currentType v.type <;> simp_all
-          case neg => exists fmI
-          case pos =>
-            -- Unlike `FlowModel.tryPromote`, which promotes using `PromotionChain.tryPromote`, the
-            -- algorithm checks explicitly whether appending `T` produces a valid promotion chain, and
-            -- leaves `promotionInfo` untouched if it doesn't. So we need to consider the two cases separately.
-            by_cases hchain : isPromotionChain (pmI.promotedTypes ++ [T]) <;> simp_all
-            case pos =>
-              -- `T` was appended to `v`'s promotion chain, in both the algorithm and the spec.
-              exists ⟨fmI.promotionInfo.insert v {pmI with promotedTypes := pmI.promotedTypes ++ [T]}⟩
-              refine ⟨by simp_all, ?_⟩
-              exact hrefines.insert v (hrefines_vm.promote hchain (by simp_all))
-            case neg =>
-              -- Neither the algorithm nor the spec promoted `v`, so neither one changed its state;
-              -- for the spec, this is because `PromotionModel.tryPromote` was a no-op, so the `set`
-              -- assigned `v` the variable model it already had.
-              exists fmI
-              refine ⟨rfl, ?_⟩
-              rw [hrefines_vm.tryPromote_eq_self hchain, FlowModel.set_self hlookup]
-              exact hrefines
+          -- Neither the algorithm nor the spec promoted `key`, so neither one changed its state;
+          -- for the spec, this is because `PromotionModel.tryPromote` was a no-op, so the `set`
+          -- assigned `key` the promotion model it already had.
+          simp only [hchain, ↓reduceIte]
+          rw [hrefines_pm.tryPromote_eq_self hchain, FlowModel.set_self hlookup]
+          exact hrefines
+
+omit [Inhabited ℓ] in
+/-- The algorithm's `tryMarkNonNullable` refines the specification's `promoteToNonNull`. -/
+theorem FlowModelImpl.refines.tryMarkNonNullable
+    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
+    (hwf : ks.WellFormed) {k : PromotionKey} {key : Key} (hk : ks.keys[k]? = some key)
+    (previousType : τ) :
+    (fmI.tryMarkNonNullable k previousType).refines ks
+      (fm.promoteToNonNull (some key) previousType) :=
+  hrefines.tryPromoteForTypeCast hwf hk previousType (NonNull previousType)
+
+omit [Inhabited ℓ] in
+/--
+The `as` elaboration case's call to `tryPromoteForTypeCast`, including the check for a missing
+reference that guards it, refines the specification's `FlowModel.tryPromote`.
+-/
+theorem FlowModelImpl.refines.tryPromoteForTypeCast?
+    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
+    (hwf : ks.WellFormed) {refI? : Option PromotionKey} {ref? : Option Key}
+    (hrefs : Option.Rel (fun k key => ks.keys[k]? = some key) refI? ref?) (previousType T : τ) :
+    (match refI? with
+      | some ref => fmI.tryPromoteForTypeCast ref previousType T
+      | none => fmI).refines ks (fm.tryPromote ref? previousType T) := by
+  cases hrefs
+  case none => exact hrefines
+  case some k key hk => exact hrefines.tryPromoteForTypeCast hwf hk previousType T
+
+omit [Inhabited ℓ] in
+/--
+The null check elaboration case's call to `tryMarkNonNullable`, including the check for a missing
+reference that guards it, refines the specification's `FlowModel.promoteToNonNull`.
+-/
+theorem FlowModelImpl.refines.tryMarkNonNullable?
+    {fmI : FlowModelImpl} {ks : PromotionKeyStore} {fm : FlowModel} (hrefines : fmI.refines ks fm)
+    (hwf : ks.WellFormed) {refI? : Option PromotionKey} {ref? : Option Key}
+    (hrefs : Option.Rel (fun k key => ks.keys[k]? = some key) refI? ref?) (previousType : τ) :
+    (match refI? with
+      | some ref => fmI.tryMarkNonNullable ref previousType
+      | none => fmI).refines ks (fm.promoteToNonNull ref? previousType) := by
+  cases hrefs
+  case none => exact hrefines
+  case some k key hk => exact hrefines.tryMarkNonNullable hwf hk previousType
 
 section
 variable {α β : Type} [BEq α] [LawfulBEq α] [Hashable α] [LawfulHashable α]
@@ -303,277 +448,330 @@ end
 
 omit [Inhabited ℓ] in
 /-- Refinement is preserved by joining the two flow models pointwise. -/
-theorem FlowModelImpl.refines.join {fmI₁ fmI₂ : FlowModelImpl}
-    {fm₁ fm₂ : FlowModel} (hrefines₁ : fmI₁.refines fm₁) (hrefines₂ : fmI₂.refines fm₂) :
-    (fmI₁.join fmI₂).refines (fm₁.join fm₂) := by
+theorem FlowModelImpl.refines.join {fmI₁ fmI₂ : FlowModelImpl} {ks : PromotionKeyStore}
+    {fm₁ fm₂ : FlowModel} (hrefines₁ : fmI₁.refines ks fm₁) (hrefines₂ : fmI₂.refines ks fm₂) :
+    (fmI₁.join fmI₂).refines ks (fm₁.join fm₂) := by
   simp [FlowModelImpl.join, FlowModel.join]
   by_cases_iff hrefines₁.isEmpty <;> simp_all
   case neg hnonEmpty₁ hnonEmptyI₁ =>
     by_cases_iff hrefines₂.isEmpty <;> simp_all
-    case pos => (conv => enter [2, 1, v]; tactic => split); simp_all
+    case pos => (conv => enter [3, 1, v]; tactic => split); simp_all
     case neg hnonEmpty₂ hnonEmptyI₂ =>
       constructor
-      case locsAbsent =>
-        intro r p
-        simp [hrefines₁.locsAbsent r p]
       case promotionInfos =>
-      intro v
-      cases hrefines₁.promotionInfos v
-      case absent hlookupI₁ hlookup₁ =>
-        exact .absent (by simp_all [mergeMaps_none₁]) (by simp_all)
-      case present pmI₁ pm₁ hlookupI₁ hlookup₁ hrefines_vm₁ =>
-        cases hrefines₂.promotionInfos v
-        case absent hlookupI₂ hlookup₂ =>
-          exact .absent (by simp_all [mergeMaps_none₂]) (by simp_all)
-        case present pmI₂ pm₂ hlookupI₂ hlookup₂ hrefines_vm₂ =>
-          exact .present
-            (by simp_all [mergeMaps_some])
-            (by simp_all)
-            (hrefines_vm₁.join hrefines_vm₂)
+        intro k key hk
+        cases hrefines₁.promotionInfos k key hk
+        case absent hlookupI₁ hlookup₁ =>
+          exact .absent (by simp_all [mergeMaps_none₁]) (by simp_all)
+        case present pmI₁ pm₁ hlookupI₁ hlookup₁ hrefines_pm₁ =>
+          cases hrefines₂.promotionInfos k key hk
+          case absent hlookupI₂ hlookup₂ =>
+            exact .absent (by simp_all [mergeMaps_none₂]) (by simp_all)
+          case present pmI₂ pm₂ hlookupI₂ hlookup₂ hrefines_pm₂ =>
+            exact .present
+              (by simp_all [mergeMaps_some])
+              (by simp_all)
+              (hrefines_pm₁.join hrefines_pm₂)
+      case unallocated =>
+        intro key hunallocated
+        simp [hrefines₁.unallocated key hunallocated]
+      case beyondEnd =>
+        intro k hk
+        have := hrefines₁.beyondEnd k hk
+        simp_all [mergeMaps_none₁]
 
 /--
-`emI.refines fmI em` says that the algorithm's expression model `emI`, interpreted in the
-algorithmic flow model `fmI` that the algorithm reached after analyzing the expression, faithfully
-represents the specification's expression model `em`.
+`emI.refines ks fmI em` says that the algorithm's expression model `emI`, interpreted in the
+algorithmic flow model `fmI` that the algorithm reached after analyzing the expression, and with its
+promotion keys interpreted by the key store `ks`, faithfully represents the specification's
+expression model `em`.
 
 `fmI` is needed because the algorithm only records flow models for an expression when they differ
 between the `true` and `false` cases, whereas the specification always records both.
 -/
-structure ExprModelImpl.refines (emI : ExprModelImpl)
+structure ExprModelImpl.refines (emI : ExprModelImpl) (ks : PromotionKeyStore)
     (fmI : FlowModelImpl) (em : ExprModel) :
     Prop where
   /-- The algorithm and the specification infer the same static type for the expression. -/
   types : emI.type = em.type
-  /-- The algorithm and the specification identify the same promotion target, if any. -/
-  ref?s : emI.ref? = em.ref?
+  /--
+  The algorithm and the specification identify the same promotion target, if any: either neither
+  has one, or the algorithm's is a promotion key standing for the specification's.
+  -/
+  ref?s : Option.Rel (fun k key => ks.keys[k]? = some key) emI.ref? em.ref?
   /-- The flow models that apply when the expression evaluates to `true` are related. -/
-  fm_trues : (emI.boolInfo.getD (fmI, fmI)).fst.refines em.fm_true
+  fm_trues : (emI.boolInfo.getD (fmI, fmI)).fst.refines ks em.fm_true
   /-- The flow models that apply when the expression evaluates to `false` are related. -/
-  fm_falses : (emI.boolInfo.getD (fmI, fmI)).snd.refines em.fm_false
+  fm_falses : (emI.boolInfo.getD (fmI, fmI)).snd.refines ks em.fm_false
 
 omit [DecidableEq ℓ] [Inhabited ℓ] in
 /--
 An algorithmic expression model that records no boolean information refines a specification
 expression model whose `true` and `false` flow models are both the flow model the algorithm reached.
 -/
-theorem ExprModelImpl.refines.noBoolInfo {fmI fm} (hrefines : fmI.refines fm) T ref? :
-    (⟨T, ref?, none⟩ : ExprModelImpl).refines fmI ⟨T, ref?, fm, fm⟩ := by
-  constructor <;> simp_all
+theorem ExprModelImpl.refines.noBoolInfo {fmI : FlowModelImpl} {ks : PromotionKeyStore}
+    {fm : FlowModel} (hrefines : fmI.refines ks fm) (T : τ) {refI? : Option PromotionKey}
+    {ref? : Option Key} (hrefs : Option.Rel (fun k key => ks.keys[k]? = some key) refI? ref?) :
+    (⟨T, refI?, none⟩ : ExprModelImpl).refines ks fmI ⟨T, ref?, fm, fm⟩ :=
+  ⟨rfl, hrefs, hrefines, hrefines⟩
+
+/--
+`s.refines fm` says that the algorithm's state `s` faithfully represents the specification's flow
+model `fm`: the key store is well formed, and the current flow model refines `fm` relative to it.
+-/
+structure AlgState.refines (s : AlgState) (fm : FlowModel) : Prop where
+  /-- The key store is well formed. -/
+  wf : s.promotionKeyStore.WellFormed
+  /-- The current flow model refines `fm`. -/
+  current : s.current.refines s.promotionKeyStore fm
+
+omit [DecidableEq ℓ] [Inhabited ℓ] in
+/-- The algorithm's initial state refines the specification's initial flow model. -/
+theorem AlgState.refines.initial : (AlgState.initial : AlgState).refines FlowModel.empty :=
+  ⟨PromotionKeyStore.WellFormed.empty, FlowModelImpl.refines.empty⟩
+
+omit [DecidableEq ℓ] [Inhabited ℓ] in
+/--
+Looking up the key for a variable, allocating it if necessary, preserves refinement, and yields a
+key that stands for the variable.
+-/
+theorem AlgState.refines.keyForVariable {s : AlgState} {fm : FlowModel} (hrefines : s.refines fm)
+    (v : Variable) :
+    ∃ k ks, s.promotionKeyStore.keyForVariable v = (k, ks) ∧ ks.keys[k]? = some (.var v) ∧
+      s.promotionKeyStore.Extends ks ∧
+      ({ s with promotionKeyStore := ks } : AlgState).refines fm := by
+  rcases hr : s.promotionKeyStore.keyForVariable v with ⟨k, ks⟩
+  have hwf' := PromotionKeyStore.keyForVariable_wellFormed hrefines.wf hr
+  have hext := PromotionKeyStore.keyForVariable_extends hr
+  exact ⟨k, ks, rfl, PromotionKeyStore.keyForVariable_keys hrefines.wf hr, hext,
+    ⟨hwf', hrefines.current.mono hwf' hext⟩⟩
 
 structure elabExprImpl.Correctness (e : Expr) : Prop where
-  complete : ∀ {fm₀ m em} {fmI₀ : FlowModelImpl}, fmI₀.refines fm₀ →
-    ElabExpr fm₀ e m em → ∃ fmI emI,
-      elabExprImpl e cfg fmI₀ = Except.ok ((m, emI), fmI) ∧
-      fmI.refines em.fm_after ∧ emI.refines fmI em
-  sound : ∀ {fm₀ m emI fmI} {fmI₀ : FlowModelImpl}, fmI₀.refines fm₀ →
-      elabExprImpl e cfg fmI₀ = Except.ok ((m, emI), fmI) → ∃ em,
-      ElabExpr fm₀ e m em ∧ fmI.refines em.fm_after ∧ emI.refines fmI em
+  complete : ∀ {fm₀ m em} {s₀ : AlgState}, s₀.refines fm₀ →
+    ElabExpr fm₀ e m em → ∃ s emI,
+      elabExprImpl e cfg s₀ = Except.ok ((m, emI), s) ∧
+      s₀.promotionKeyStore.Extends s.promotionKeyStore ∧
+      s.refines em.fm_after ∧ emI.refines s.promotionKeyStore s.current em
+  sound : ∀ {fm₀ m emI s} {s₀ : AlgState}, s₀.refines fm₀ →
+      elabExprImpl e cfg s₀ = Except.ok ((m, emI), s) → ∃ em,
+      ElabExpr fm₀ e m em ∧ s₀.promotionKeyStore.Extends s.promotionKeyStore ∧
+      s.refines em.fm_after ∧ emI.refines s.promotionKeyStore s.current em
 
 theorem elabExprImpl.correct.var (v : Variable) :
     elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.var v : Expr) := by
   constructor
   case complete =>
-    intro fm₀ m em fmI₀ hrefines_fm₀ helab; simp [elabExprImpl]
-    cases helab; case var pm T hlookup hcurrentType =>
-      cases hrefines_fm₀.promotionInfos v <;> simp_all; subst_eqs
-      case present pmI hlookupI hlookup hrefines_vm =>
-        simp [hrefines_vm.currentTypes]
-        refine ⟨?_, ?_, ?_, ?_, ?_⟩; rotate_left 2
-        · congr; rfl; rfl
-        · assumption
-        · constructor <;> simp <;> assumption
+    intro fm₀ m em s₀ hrefines₀ helab
+    cases helab; case var pm T hlookup hT =>
+    subst hT
+    simp only [ExprModel.simple_after]
+    obtain ⟨k, ks₁, hr, hk, hext, hrefines₁⟩ := hrefines₀.keyForVariable v
+    cases hrefines₁.current.promotionInfos k (.var v) hk
+    case absent hlookupI hlookup' => simp_all
+    case present pmI pm' hlookupI hlookup' hrefines_pm =>
+      have hpm : pm' = pm := by simp_all
+      subst hpm
+      refine ⟨{ s₀ with promotionKeyStore := ks₁ }, ⟨pm'.currentType v.type, some k, none⟩,
+        ?_, hext, hrefines₁, ExprModelImpl.refines.noBoolInfo hrefines₁.current _ (.some hk)⟩
+      simp [elabExprImpl, hr, hlookupI, hrefines_pm.currentTypes]
   case sound =>
-    intro fm₀ m emI fmI fmI₀ hrefines_fm₀ hok; simp [elabExprImpl] at hok
-    cases hrefines_fm₀.promotionInfos v <;> simp_all
-    case present pmI pm hlookupI hlookup hrefines_vm =>
-      simp_all [hrefines_vm.currentTypes]
+    intro fm₀ m emI s s₀ hrefines₀ hok
+    obtain ⟨k, ks₁, hr, hk, hext, hrefines₁⟩ := hrefines₀.keyForVariable v
+    simp only [elabExprImpl, AlgM_bind_eq, keyForVariableM_eq, AlgM_get_eq, hr] at hok
+    cases hrefines₁.current.promotionInfos k (.var v) hk
+    case absent hlookupI hlookup => simp_all
+    case present pmI pm hlookupI hlookup hrefines_pm =>
+      simp [hlookupI, hrefines_pm.currentTypes] at hok
       rcases hok with ⟨⟨rfl, rfl⟩, rfl⟩
-      exists ⟨pm.currentType v.type, some (.var v), fm₀, fm₀⟩; simp_all
-      constructor
-      · exact ElabExpr.var hlookup rfl
-      · exact ExprModelImpl.refines.noBoolInfo
-          hrefines_fm₀ (pm.currentType v.type) (some (Key.var v))
+      refine ⟨⟨pm.currentType v.type, some (.var v), fm₀, fm₀⟩, ElabExpr.var hlookup rfl, hext,
+        ?_, ExprModelImpl.refines.noBoolInfo hrefines₁.current _ (.some hk)⟩
+      simp only [ExprModel.simple_after]
+      exact hrefines₁
 
 theorem elabExprImpl.correct.nullCheck (e₁ : Expr) (hcorrect₁ :
     elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁) :
     elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁.nullCheck := by
   constructor
   case complete =>
-    intro fm₀ m em fmI₀ hrefines_fm₀ helab; simp [elabExprImpl]
-    cases helab; case nullCheck m₁ em₁ fm htryPromote helab₁ =>
-      rcases em₁ with ⟨T₁, ref?₁, fm_true₁, fm_false₁⟩; simp_all
-      obtain ⟨fmI₁, ⟨T₁', ref?₁', boolInfo₁⟩, hok₁, hrefines_fm₁, hrefines_em₁⟩ :=
-        hcorrect₁.complete hrefines_fm₀ helab₁; simp_all
-      rcases hrefines_em₁.types with rfl; simp_all
-      rcases hrefines_em₁.ref?s with rfl; simp_all
-      obtain ⟨fmI, hok_tryPromote, hrefines_fmI⟩ :=
-        hrefines_fm₁.tryPromote (cfg := cfg) ref?₁' (NonNull T₁'); simp_all
-      refine ⟨?_, ?_, ?_, ?_, ?_⟩; rotate_left 2
-      · congr; rfl; rfl
-      · assumption
-      · constructor <;> simp <;> assumption
+    intro fm₀ m em s₀ hrefines₀ helab
+    cases helab; case nullCheck m₁ em₁ fm hfm helab₁ =>
+    subst hfm
+    obtain ⟨s₁, emI₁, hok₁, hext₁, hrefines₁, hrefines_em₁⟩ := hcorrect₁.complete hrefines₀ helab₁
+    have hrefines_fm :=
+      hrefines₁.current.tryMarkNonNullable? hrefines₁.wf hrefines_em₁.ref?s emI₁.type
+    simp only [← hrefines_em₁.types, ExprModel.simple_after]
+    refine ⟨{ s₁ with
+        current :=
+          match emI₁.ref? with
+          | some ref => s₁.current.tryMarkNonNullable ref emI₁.type
+          | none => s₁.current },
+      ⟨NonNull emI₁.type, none, none⟩, ?_, hext₁,
+      ⟨hrefines₁.wf, hrefines_fm⟩, ExprModelImpl.refines.noBoolInfo hrefines_fm _ .none⟩
+    -- The two sides' `match`es are distinct auxiliary definitions, so `simp` can't identify them,
+    -- but they unfold to the same term.
+    simp [elabExprImpl, hok₁]
+    rfl
   case sound =>
-    intro fm₀ m emI fmI fmI₀ hrefines_fm₀ hok; simp [elabExprImpl] at hok
-    cases hok₁ : elabExprImpl e₁ cfg fmI₀ <;> simp_all
+    intro fm₀ m emI s s₀ hrefines₀ hok
+    simp only [elabExprImpl, AlgM_bind_eq] at hok
+    cases hok₁ : elabExprImpl e₁ cfg s₀
+    case error => simp [hok₁] at hok
     case ok result₁ =>
-      rcases result₁ with ⟨⟨m₁, ⟨T₁, ref?₁, boolInfo₁⟩⟩, fmI₁⟩; simp_all
-      rcases hcorrect₁.sound hrefines_fm₀ hok₁ with ⟨em₁, helab₁, hrefines_fm₁, hrefines_em₁⟩
-      generalize hfm₁ : em₁.fm_after = fm₁; simp_all
-      rcases em₁ with ⟨T₁', ref?₁', fm_true₁, fm_false₁⟩
-      rcases hrefines_em₁.types with rfl; simp_all
-      rcases hrefines_em₁.ref?s with rfl; simp_all
-      obtain ⟨fmI', hok_tryPromote, hrefines_fmI'⟩ :=
-        hrefines_fm₁.tryPromote (cfg := cfg) ref?₁ (NonNull T₁); simp_all
-      generalize hfm : (FlowModel.tryPromote ref?₁ (NonNull T₁) fm₁) = fm; simp_all
-      generalize hem : (⟨NonNull T₁, none, fm, fm⟩ : ExprModel) = em
-      injections; subst fmI m emI
-      have hrefines_em := ExprModelImpl.refines.noBoolInfo hrefines_fmI' (NonNull T₁) none;
-        rw [hem] at hrefines_em
-      exists em
-      refine ⟨?_, ?_, ?_⟩
-      · subst hem; apply ElabExpr.nullCheck helab₁ (by simp_all)
-      · subst hem; simp [ExprModel.fm_after]; assumption
-      · assumption
+    rcases result₁ with ⟨⟨m₁, emI₁⟩, s₁⟩
+    simp [hok₁] at hok
+    rcases hok with ⟨⟨rfl, rfl⟩, rfl⟩
+    obtain ⟨em₁, helab₁, hext₁, hrefines₁, hrefines_em₁⟩ := hcorrect₁.sound hrefines₀ hok₁
+    have hrefines_fm :=
+      hrefines₁.current.tryMarkNonNullable? hrefines₁.wf hrefines_em₁.ref?s emI₁.type
+    refine ⟨_, ElabExpr.nullCheck helab₁ rfl, hext₁, ?_, ?_⟩
+    all_goals simp only [← hrefines_em₁.types, ExprModel.simple_after]
+    · exact ⟨hrefines₁.wf, hrefines_fm⟩
+    · exact ExprModelImpl.refines.noBoolInfo hrefines_fm _ .none
 
 theorem elabExprImpl.correct.asExpr (e₁ : Expr) T
     (hcorrect₁ : elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁) :
     elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) (e₁.as T) := by
   constructor
   case complete =>
-    intro fmI₀ fm₀ m em hrefines_fm₀ helab; simp [elabExprImpl]
-    cases helab; case asExpr m₁ em₁ fm helab₁ htryPromote =>
-      rcases em₁ with ⟨T₁, ref?₁, fm_true₁, fm_false₁⟩; simp_all
-      obtain ⟨fmI₁, ⟨T₁', ref?₁', boolInfo₁⟩, hok₁, hrefines_fm₁, hrefines_em₁⟩ :=
-        hcorrect₁.complete hrefines_fm₀ helab₁; simp_all
-      rcases hrefines_em₁.types with rfl; simp_all
-      rcases hrefines_em₁.ref?s with rfl; simp_all
-      obtain ⟨fmI, hok_tryPromote, hrefines_fmI⟩ :=
-        hrefines_fm₁.tryPromote (cfg := cfg) ref?₁' T; simp_all
-      refine ⟨?_, ?_, ?_, ?_, ?_⟩; rotate_left 2
-      · congr; rfl; rfl
-      · assumption
-      · constructor <;> simp <;> assumption
+    intro fm₀ m em s₀ hrefines₀ helab
+    cases helab; case asExpr m₁ em₁ fm helab₁ hfm =>
+    subst hfm
+    obtain ⟨s₁, emI₁, hok₁, hext₁, hrefines₁, hrefines_em₁⟩ := hcorrect₁.complete hrefines₀ helab₁
+    have hrefines_fm :=
+      hrefines₁.current.tryPromoteForTypeCast? hrefines₁.wf hrefines_em₁.ref?s emI₁.type T
+    simp only [← hrefines_em₁.types, ExprModel.simple_after]
+    refine ⟨{ s₁ with
+        current :=
+          match emI₁.ref? with
+          | some ref => s₁.current.tryPromoteForTypeCast ref emI₁.type T
+          | none => s₁.current },
+      ⟨T, none, none⟩, ?_, hext₁, ⟨hrefines₁.wf, hrefines_fm⟩,
+      ExprModelImpl.refines.noBoolInfo hrefines_fm _ .none⟩
+    -- The two sides' `match`es are distinct auxiliary definitions, so `simp` can't identify them,
+    -- but they unfold to the same term.
+    simp [elabExprImpl, hok₁]
+    rfl
   case sound =>
-    intro fm₀ m emI fmI fmI₀ hrefines_fm₀ hok; simp [elabExprImpl] at hok
-    cases hok₁ : elabExprImpl e₁ cfg fmI₀ <;> simp_all
+    intro fm₀ m emI s s₀ hrefines₀ hok
+    simp only [elabExprImpl, AlgM_bind_eq] at hok
+    cases hok₁ : elabExprImpl e₁ cfg s₀
+    case error => simp [hok₁] at hok
     case ok result₁ =>
-      rcases result₁ with ⟨⟨m₁, ⟨T₁, ref?₁, boolInfo₁⟩⟩, fmI₁⟩; simp_all
-      rcases hcorrect₁.sound hrefines_fm₀ hok₁ with ⟨em₁, helab₁, hrefines_fm₁, hrefines_em₁⟩
-      generalize hfm₁ : em₁.fm_after = fm₁; simp_all
-      rcases em₁ with ⟨T₁', ref?₁', fm_true₁, fm_false₁⟩
-      rcases hrefines_em₁.types with rfl; simp_all
-      rcases hrefines_em₁.ref?s with rfl; simp_all
-      obtain ⟨fmI', hok_tryPromote, hrefines_fmI'⟩ :=
-        hrefines_fm₁.tryPromote (cfg := cfg) ref?₁ T; simp_all
-      generalize hfm : (FlowModel.tryPromote ref?₁ T fm₁) = fm; simp_all
-      generalize hem : (⟨T, none, fm, fm⟩ : ExprModel) = em
-      injections; subst fmI' m emI
-      have hrefines_em := ExprModelImpl.refines.noBoolInfo hrefines_fmI' T none;
-        rw [hem] at hrefines_em
-      exists em
-      refine ⟨?_, ?_, ?_⟩
-      · subst hem; apply ElabExpr.asExpr helab₁ (by simp_all)
-      · subst hem; simp [ExprModel.fm_after]; assumption
-      · assumption
+    rcases result₁ with ⟨⟨m₁, emI₁⟩, s₁⟩
+    simp [hok₁] at hok
+    rcases hok with ⟨⟨rfl, rfl⟩, rfl⟩
+    obtain ⟨em₁, helab₁, hext₁, hrefines₁, hrefines_em₁⟩ := hcorrect₁.sound hrefines₀ hok₁
+    have hrefines_fm :=
+      hrefines₁.current.tryPromoteForTypeCast? hrefines₁.wf hrefines_em₁.ref?s emI₁.type T
+    refine ⟨_, ElabExpr.asExpr helab₁ rfl, hext₁, ?_, ?_⟩
+    all_goals simp only [← hrefines_em₁.types, ExprModel.simple_after]
+    · exact ⟨hrefines₁.wf, hrefines_fm⟩
+    · exact ExprModelImpl.refines.noBoolInfo hrefines_fm _ .none
 
 theorem elabExprImpl.correct.nullLiteral :
     elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.null : Expr) := by
   constructor
   case complete =>
-    intro fmI₀ fm₀ m em hrefines_fm₀ helab; simp [elabExprImpl]
-    cases helab; simp; case nullLiteral =>
-      refine ⟨?_, ?_, ?_, ?_, ?_⟩; rotate_left 2
-      · congr; rfl; rfl
-      · assumption
-      · constructor <;> simp <;> assumption
+    intro fm₀ m em s₀ hrefines₀ helab
+    cases helab; case nullLiteral =>
+    simp only [ExprModel.simple_after]
+    refine ⟨s₀, ⟨Γ.Null, none, none⟩, ?_, .refl _, hrefines₀,
+      ExprModelImpl.refines.noBoolInfo hrefines₀.current _ .none⟩
+    simp [elabExprImpl]
   case sound =>
-    intro fm₀ m emI fmI fmI₀ hrefines_fm₀ hok; simp [elabExprImpl] at hok
+    intro fm₀ m emI s s₀ hrefines₀ hok; simp [elabExprImpl] at hok
     rcases hok with ⟨⟨rfl, rfl⟩, rfl⟩
-    exists ⟨Γ.Null, none, fm₀, fm₀⟩; simp_all
-    constructor
-    · apply ElabExpr.nullLiteral
-    · exact ExprModelImpl.refines.noBoolInfo hrefines_fm₀ Γ.Null none
+    refine ⟨⟨Γ.Null, none, fm₀, fm₀⟩, ElabExpr.nullLiteral, .refl _, ?_,
+      ExprModelImpl.refines.noBoolInfo hrefines₀.current _ .none⟩
+    simp only [ExprModel.simple_after]
+    exact hrefines₀
 
 theorem elabExprImpl.correct (e : Expr) :
     elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e := by
   constructor
   case complete =>
-    intro fmI₀ fm₀ m em hrefines_fm₀ helab
+    intro fm₀ m em s₀ hrefines₀ helab
     cases h : e <;> rw [h] at helab
-    case var v => apply (elabExprImpl.correct.var v).complete hrefines_fm₀ helab
+    case var v => apply (elabExprImpl.correct.var v).complete hrefines₀ helab
     case nullCheck e₁ =>
-      apply (elabExprImpl.correct.nullCheck e₁ (elabExprImpl.correct e₁)).complete hrefines_fm₀ helab
+      apply (elabExprImpl.correct.nullCheck e₁ (elabExprImpl.correct e₁)).complete hrefines₀ helab
     case as e₁ T =>
-      apply (elabExprImpl.correct.asExpr e₁ T (elabExprImpl.correct e₁)).complete hrefines_fm₀ helab
-    case null => apply elabExprImpl.correct.nullLiteral.complete hrefines_fm₀ helab
+      apply (elabExprImpl.correct.asExpr e₁ T (elabExprImpl.correct e₁)).complete hrefines₀ helab
+    case null => apply elabExprImpl.correct.nullLiteral.complete hrefines₀ helab
   case sound =>
-    intro fm₀ m emI fmI fmI₀ hrefines_fm₀ hok
+    intro fm₀ m emI s s₀ hrefines₀ hok
     cases h : e <;> rw [h] at hok
-    case var v => apply (elabExprImpl.correct.var v).sound hrefines_fm₀ hok
+    case var v => apply (elabExprImpl.correct.var v).sound hrefines₀ hok
     case nullCheck e₁ =>
-      apply (elabExprImpl.correct.nullCheck e₁ (elabExprImpl.correct e₁)).sound hrefines_fm₀ hok
+      apply (elabExprImpl.correct.nullCheck e₁ (elabExprImpl.correct e₁)).sound hrefines₀ hok
     case as e₁ T =>
-      apply (elabExprImpl.correct.asExpr e₁ T (elabExprImpl.correct e₁)).sound hrefines_fm₀ hok
-    case null => apply elabExprImpl.correct.nullLiteral.sound hrefines_fm₀ hok
+      apply (elabExprImpl.correct.asExpr e₁ T (elabExprImpl.correct e₁)).sound hrefines₀ hok
+    case null => apply elabExprImpl.correct.nullLiteral.sound hrefines₀ hok
 
 structure elabStmtImpl.Correctness (s : Stmt) : Prop where
   complete :
-    ∀ {fm₀ m fm} {fmI₀ : FlowModelImpl}, fmI₀.refines fm₀ →
+    ∀ {fm₀ m fm} {s₀ : AlgState}, s₀.refines fm₀ →
       ElabStmt fm₀ s m fm →
-      ∃ fmI, elabStmtImpl s cfg fmI₀ = Except.ok (m, fmI) ∧ fmI.refines fm
+      ∃ sI, elabStmtImpl s cfg s₀ = Except.ok (m, sI) ∧
+        s₀.promotionKeyStore.Extends sI.promotionKeyStore ∧ sI.refines fm
   sound :
-    ∀ {fm₀ m fmI} {fmI₀ : FlowModelImpl},
-      fmI₀.refines fm₀ → elabStmtImpl s cfg fmI₀ = Except.ok (m, fmI) →
-      ∃ fm, ElabStmt fm₀ s m fm ∧ fmI.refines fm
+    ∀ {fm₀ m sI} {s₀ : AlgState},
+      s₀.refines fm₀ → elabStmtImpl s cfg s₀ = Except.ok (m, sI) →
+      ∃ fm, ElabStmt fm₀ s m fm ∧
+        s₀.promotionKeyStore.Extends sI.promotionKeyStore ∧ sI.refines fm
 
 structure elabStmtsImpl.Correctness (ss : List Stmt) : Prop where
   complete :
-    ∀ {fm₀ m fm} {fmI₀ : FlowModelImpl}, fmI₀.refines fm₀ →
+    ∀ {fm₀ m fm} {s₀ : AlgState}, s₀.refines fm₀ →
       ElabStmts fm₀ ss m fm →
-      ∃ fmI, elabStmtsImpl ss cfg fmI₀ = Except.ok (m, fmI) ∧ fmI.refines fm
+      ∃ sI, elabStmtsImpl ss cfg s₀ = Except.ok (m, sI) ∧
+        s₀.promotionKeyStore.Extends sI.promotionKeyStore ∧ sI.refines fm
   sound :
-    ∀ {fm₀ m fmI} {fmI₀ : FlowModelImpl},
-      fmI₀.refines fm₀ → elabStmtsImpl ss cfg fmI₀ = Except.ok (m, fmI) →
-      ∃ fm, ElabStmts fm₀ ss m fm ∧ fmI.refines fm
+    ∀ {fm₀ m sI} {s₀ : AlgState},
+      s₀.refines fm₀ → elabStmtsImpl ss cfg s₀ = Except.ok (m, sI) →
+      ∃ fm, ElabStmts fm₀ ss m fm ∧
+        s₀.promotionKeyStore.Extends sI.promotionKeyStore ∧ sI.refines fm
 
 theorem elabStmtImpl.correct.declare (n : String) (T : τ) :
     elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.declare n T) := by
   constructor
   case complete =>
-    intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtImpl]
+    intro fm₀ m fm s₀ hrefines₀ helab
     cases helab; case declare =>
-      refine ⟨?_, ?_, ?_⟩; rotate_left
-      · congr; rfl
-      · apply hrefines_fm₀.insert ⟨n, T⟩ (PromotionModelImpl.refines.declared _)
+    obtain ⟨k, ks₁, hr, hk, hext, hrefines₁⟩ := hrefines₀.keyForVariable ⟨n, T⟩
+    refine ⟨⟨⟨s₀.current.promotionInfo.insert k
+          ⟨[], [], true, false, some ValueVersion.unspecified⟩⟩, ks₁⟩, ?_, hext, ⟨hrefines₁.wf,
+      hrefines₁.current.insert hrefines₁.wf hk (PromotionModelImpl.refines.declared _)⟩⟩
+    simp [elabStmtImpl, hr]
   case sound =>
-    intro fm₀ m fmI fmI₀ hrefines_fm₀ hok; simp [elabStmtImpl] at hok
+    intro fm₀ m sI s₀ hrefines₀ hok
+    obtain ⟨k, ks₁, hr, hk, hext, hrefines₁⟩ := hrefines₀.keyForVariable ⟨n, T⟩
+    simp [elabStmtImpl, hr] at hok
     rcases hok with ⟨rfl, rfl⟩
-    exists fm₀.set (.var ⟨n, T⟩) (PromotionModel.declared ValueVersion.unspecified)
-    constructor
-    · apply ElabStmt.declare fm₀ n T
-    · apply hrefines_fm₀.insert ⟨n, T⟩ (PromotionModelImpl.refines.declared _)
+    refine ⟨_, ElabStmt.declare fm₀ n T, hext, ⟨hrefines₁.wf,
+      hrefines₁.current.insert hrefines₁.wf hk (PromotionModelImpl.refines.declared _)⟩⟩
 
 theorem elabStmtImpl.correct.exprStmt
     (e₁ : Expr) (hcorrect₁ : elabExprImpl.Correctness (cfg := cfg) (ℓ := ℓ) e₁) :
     elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.exprStmt e₁) := by
   constructor
   case complete =>
-    intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtImpl]
+    intro fm₀ m fm s₀ hrefines₀ helab
     cases helab; case exprStmt em₁ helab₁ =>
-      rcases em₁ with ⟨T₁, ref?₁, fm_true₁, fm_false₁⟩
-      obtain ⟨fmI₁, ⟨T₁', ref?₁', boolInfo₁⟩, hok₁, hrefines_fm₁, hrefines_em₁⟩ :=
-        hcorrect₁.complete hrefines_fm₀ helab₁; simp_all
-      refine ⟨?_, ?_, ?_⟩; rotate_left
-      · congr; rfl
-      · assumption
+    obtain ⟨s₁, emI₁, hok₁, hext₁, hrefines₁, -⟩ := hcorrect₁.complete hrefines₀ helab₁
+    refine ⟨s₁, ?_, hext₁, hrefines₁⟩
+    simp [elabStmtImpl, hok₁]
   case sound =>
-    intro fm₀ m fmI fmI₀ hrefines_fm₀ hok; simp [elabStmtImpl] at hok
-    cases hok₁ : elabExprImpl e₁ cfg fmI₀ <;> simp_all; case ok result₁ =>
-    injections; subst m fmI
-    rcases result₁ with ⟨⟨m₁, emI₁⟩, fmI₁⟩; simp_all
-    rcases hcorrect₁.sound hrefines_fm₀ hok₁ with ⟨em₁, helab₁, hrefines_fm₁, hrefines_em₁⟩
-    exists em₁.fm_after; simp_all
-    exact ElabStmt.exprStmt helab₁
+    intro fm₀ m sI s₀ hrefines₀ hok
+    simp only [elabStmtImpl, AlgM_bind_eq] at hok
+    cases hok₁ : elabExprImpl e₁ cfg s₀
+    case error => simp [hok₁] at hok
+    case ok result₁ =>
+    rcases result₁ with ⟨⟨m₁, emI₁⟩, s₁⟩
+    simp [hok₁] at hok
+    rcases hok with ⟨rfl, rfl⟩
+    obtain ⟨em₁, helab₁, hext₁, hrefines₁, -⟩ := hcorrect₁.sound hrefines₀ hok₁
+    exact ⟨_, ElabStmt.exprStmt helab₁, hext₁, hrefines₁⟩
 
 theorem elabStmtImpl.correct.ifStmt
     (e₁ : Expr) (s₂ s₃ : Stmt)
@@ -583,76 +781,99 @@ theorem elabStmtImpl.correct.ifStmt
     elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.ifStmt e₁ s₂ s₃) := by
   constructor
   case complete =>
-    intro fm₀ m em fmI₀ hrefines_fm₀ helab; simp [elabStmtImpl]
+    intro fm₀ m fm s₀ hrefines₀ helab
     cases helab; case ifStmt m₁ em₁ m₂ fm₂ m₃ fm₃ his_bool helab₁ helab₂ helab₃ =>
-      rcases em₁ with ⟨T₁, ref?₁, fm_true₁, fm_false₁⟩; simp_all
-      obtain ⟨fmI₁, ⟨T₁', ref?₁', boolInfo₁⟩, hok₁, hrefines_fm₁, hrefines_em₁⟩ :=
-        hcorrect₁.complete hrefines_fm₀ helab₁
-      rcases hrefines_em₁.types with rfl; simp_all
-      rcases hrefines_em₁.ref?s with rfl; simp_all
-      obtain hrefines_fm₁_true := hrefines_em₁.fm_trues; simp_all
-      obtain ⟨fmI₂, hok₂, hrefines_fm₂⟩ := hcorrect₂.complete hrefines_fm₁_true helab₂;
-        simp_all
-      obtain hrefines_fm₁_false := hrefines_em₁.fm_falses; simp_all
-      obtain ⟨fmI₃, hok₃, hrefines_fm₃⟩ := hcorrect₃.complete hrefines_fm₁_false helab₃; simp_all
-      refine ⟨?_, ?_, ?_⟩; rotate_left
-      · congr; rfl
-      · exact FlowModelImpl.refines.join hrefines_fm₂ hrefines_fm₃
+    obtain ⟨s₁, emI₁, hok₁, hext₁, hrefines₁, hrefines_em₁⟩ := hcorrect₁.complete hrefines₀ helab₁
+    -- Analyze the `then` branch, starting from the flow model for when the condition is true.
+    obtain ⟨sI₂, hok₂, hext₂, hrefines₂⟩ :=
+      hcorrect₂.complete
+        (s₀ := { s₁ with current := (emI₁.boolInfo.getD (s₁.current, s₁.current)).fst })
+        ⟨hrefines₁.wf, hrefines_em₁.fm_trues⟩ helab₂
+    -- Analyze the `else` branch, starting from the flow model for when the condition is false.  That
+    -- flow model was computed before the `then` branch was analyzed, which may have allocated keys,
+    -- so its refinement has to be carried over to the enlarged key store.
+    obtain ⟨sI₃, hok₃, hext₃, hrefines₃⟩ :=
+      hcorrect₃.complete
+        (s₀ := { sI₂ with current := (emI₁.boolInfo.getD (s₁.current, s₁.current)).snd })
+        ⟨hrefines₂.wf, hrefines_em₁.fm_falses.mono hrefines₂.wf hext₂⟩ helab₃
+    -- Likewise, the `then` branch's final flow model has to be carried over to the key store as
+    -- enlarged by the `else` branch.
+    refine ⟨{ sI₃ with current := sI₂.current.join sI₃.current }, ?_, hext₁.trans (hext₂.trans hext₃),
+      ⟨hrefines₃.wf, (hrefines₂.current.mono hrefines₃.wf hext₃).join hrefines₃.current⟩⟩
+    have his_boolI : emI₁.type = Γ.bool := hrefines_em₁.types.trans his_bool
+    simp [elabStmtImpl, hok₁, his_boolI, hok₂, hok₃]
   case sound =>
-    intro fm₀ m fmI fmI₀ hrefines_fm₀ hok; simp [elabStmtImpl] at hok
-    cases hok₁ : elabExprImpl e₁ cfg fmI₀ <;> simp_all; case ok result₁ =>
-    rcases result₁ with ⟨⟨m₁, emI₁⟩, fmI₁⟩; simp_all
-    rcases hcorrect₁.sound hrefines_fm₀ hok₁ with ⟨em₁, helab₁, hrefines_fm₁, hrefines_em₁⟩
-    rcases emI₁ with ⟨T₁, ref?₁, boolInfo₁⟩
-    rcases hrefines_em₁.types with rfl; simp_all
-    by_cases his_bool : em₁.type = Γ.bool <;>
-      simp_all;
-      case pos =>
-    cases hok₂ : elabStmtImpl s₂ cfg (boolInfo₁.getD (fmI₁, fmI₁)).fst <;> simp_all;
-      case ok result₂ =>
-    rcases result₂ with ⟨m₂, fmI₂⟩; simp_all
-    rcases hcorrect₂.sound hrefines_em₁.fm_trues hok₂ with ⟨fm₂, helab₂, hrefines_fm₂⟩
-    cases hok₃ : elabStmtImpl s₃ cfg (boolInfo₁.getD (fmI₁, fmI₁)).snd <;> simp_all; case ok result₃ =>
-    rcases result₃ with ⟨m₃, fmI₃⟩; simp_all
-    rcases hcorrect₃.sound hrefines_em₁.fm_falses hok₃ with ⟨fm₃, helab₃, hrefines_fm₃⟩
+    intro fm₀ m sI s₀ hrefines₀ hok
+    simp only [elabStmtImpl, AlgM_bind_eq] at hok
+    cases hok₁ : elabExprImpl e₁ cfg s₀
+    case error => simp [hok₁] at hok
+    case ok result₁ =>
+    rcases result₁ with ⟨⟨m₁, emI₁⟩, s₁⟩
+    obtain ⟨em₁, helab₁, hext₁, hrefines₁, hrefines_em₁⟩ := hcorrect₁.sound hrefines₀ hok₁
+    by_cases his_bool : em₁.type = Γ.bool
+    case neg =>
+      have : emI₁.type ≠ Γ.bool := by rw [hrefines_em₁.types]; exact his_bool
+      simp [hok₁, this] at hok
+    case pos =>
+    have his_boolI : emI₁.type = Γ.bool := hrefines_em₁.types.trans his_bool
+    simp [hok₁, his_boolI] at hok
+    cases hok₂ :
+        elabStmtImpl s₂ cfg { s₁ with current := (emI₁.boolInfo.getD (s₁.current, s₁.current)).fst }
+    case error => simp [hok₂] at hok
+    case ok result₂ =>
+    rcases result₂ with ⟨m₂, sI₂⟩
+    obtain ⟨fm₂, helab₂, hext₂, hrefines₂⟩ :=
+      hcorrect₂.sound
+        (s₀ := { s₁ with current := (emI₁.boolInfo.getD (s₁.current, s₁.current)).fst })
+        ⟨hrefines₁.wf, hrefines_em₁.fm_trues⟩ hok₂
+    cases hok₃ :
+        elabStmtImpl s₃ cfg { sI₂ with current := (emI₁.boolInfo.getD (s₁.current, s₁.current)).snd }
+    case error => simp [hok₂, hok₃] at hok
+    case ok result₃ =>
+    rcases result₃ with ⟨m₃, sI₃⟩
+    obtain ⟨fm₃, helab₃, hext₃, hrefines₃⟩ :=
+      hcorrect₃.sound
+        (s₀ := { sI₂ with current := (emI₁.boolInfo.getD (s₁.current, s₁.current)).snd })
+        ⟨hrefines₂.wf, hrefines_em₁.fm_falses.mono hrefines₂.wf hext₂⟩ hok₃
+    simp [hok₂, hok₃] at hok
     rcases hok with ⟨rfl, rfl⟩
-    exists fm₂.join fm₃
-    constructor
-    · apply ElabStmt.ifStmt helab₁ his_bool helab₂ helab₃
-    · exact FlowModelImpl.refines.join hrefines_fm₂ hrefines_fm₃
+    exact ⟨fm₂.join fm₃, ElabStmt.ifStmt helab₁ his_bool helab₂ helab₃,
+      hext₁.trans (hext₂.trans hext₃),
+      ⟨hrefines₃.wf, (hrefines₂.current.mono hrefines₃.wf hext₃).join hrefines₃.current⟩⟩
 
 theorem elabStmtImpl.correct.block
     (ss₁ : List Stmt) (hcorrect₁ : elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) ss₁) :
     elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) (.block ss₁) := by
   constructor
   case complete =>
-    intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtImpl]
+    intro fm₀ m fm s₀ hrefines₀ helab
     cases helab; case block ms₁ helab₁ =>
-    obtain ⟨fmI₁, hok₁, hrefines_fm₁⟩ := hcorrect₁.complete hrefines_fm₀ helab₁; simp_all
-    refine ⟨?_, ?_, ?_⟩; rotate_left
-    · congr; rfl
-    · assumption
+    obtain ⟨sI₁, hok₁, hext₁, hrefines₁⟩ := hcorrect₁.complete hrefines₀ helab₁
+    refine ⟨sI₁, ?_, hext₁, hrefines₁⟩
+    simp [elabStmtImpl, hok₁]
   case sound =>
-    intro fm₀ m fmI fmI₀ hrefines_fm₀ hok; simp [elabStmtImpl] at hok
-    cases hok₁ : elabStmtsImpl ss₁ cfg fmI₀ <;> simp_all; case ok result₁ =>
-    rcases result₁ with ⟨m₁, fmI₂⟩; simp_all
-    rcases hcorrect₁.sound hrefines_fm₀ hok₁ with ⟨fm₁, helab₁, hrefines_fm₁⟩
+    intro fm₀ m sI s₀ hrefines₀ hok
+    simp only [elabStmtImpl, AlgM_bind_eq] at hok
+    cases hok₁ : elabStmtsImpl ss₁ cfg s₀
+    case error => simp [hok₁] at hok
+    case ok result₁ =>
+    rcases result₁ with ⟨m₁, sI₁⟩
+    simp [hok₁] at hok
     rcases hok with ⟨rfl, rfl⟩
-    exists fm₁; simp_all
-    exact ElabStmt.block helab₁
+    obtain ⟨fm₁, helab₁, hext₁, hrefines₁⟩ := hcorrect₁.sound hrefines₀ hok₁
+    exact ⟨fm₁, ElabStmt.block helab₁, hext₁, hrefines₁⟩
 
 theorem elabStmtsImpl.correct.nil :
     elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) ([] : List Stmt) := by
   constructor
   case complete =>
-    intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtsImpl]
+    intro fm₀ m fm s₀ hrefines₀ helab
     cases helab; case nil =>
-      exists fmI₀
+    exact ⟨s₀, by simp [elabStmtsImpl], .refl _, hrefines₀⟩
   case sound =>
-    intro fm₀ m fmI fmI₀ hrefines_fm₀ hok; simp [elabStmtsImpl] at hok
+    intro fm₀ m sI s₀ hrefines₀ hok; simp [elabStmtsImpl] at hok
     rcases hok with ⟨rfl, rfl⟩
-    exists fm₀; simp_all
-    exact ElabStmts.nil
+    exact ⟨fm₀, ElabStmts.nil, .refl _, hrefines₀⟩
 
 theorem elabStmtsImpl.correct.cons
     (s₁ : Stmt) (ss₂ : List Stmt)
@@ -661,73 +882,77 @@ theorem elabStmtsImpl.correct.cons
     elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) (s₁ :: ss₂) := by
   constructor
   case complete =>
-    intro fm₀ m fm fmI₀ hrefines_fm₀ helab; simp [elabStmtsImpl]
+    intro fm₀ m fm s₀ hrefines₀ helab
     cases helab; case cons fm₁ m₁ ms₂ helab₁ helab₂ =>
-      obtain ⟨fmI₁, hok₁, hrefines_fm₁⟩ := hcorrect₁.complete hrefines_fm₀ helab₁; simp_all
-      obtain ⟨fmI₂, hok₂, hrefines_fm₂⟩ := hcorrect₂.complete hrefines_fm₁ helab₂; simp_all
-      refine ⟨?_, ?_, ?_⟩; rotate_left
-      · congr; rfl
-      · assumption
+    obtain ⟨sI₁, hok₁, hext₁, hrefines₁⟩ := hcorrect₁.complete hrefines₀ helab₁
+    obtain ⟨sI₂, hok₂, hext₂, hrefines₂⟩ := hcorrect₂.complete hrefines₁ helab₂
+    refine ⟨sI₂, ?_, hext₁.trans hext₂, hrefines₂⟩
+    simp [elabStmtsImpl, hok₁, hok₂]
   case sound =>
-    intro fm₀ m fmI fmI₀ hrefines_fm₀ hok; simp [elabStmtsImpl] at hok
-    cases hok₁ : elabStmtImpl s₁ cfg fmI₀ <;> simp_all; case ok result₁ =>
-    rcases result₁ with ⟨m₁, fmI₁⟩; simp_all
-    rcases hcorrect₁.sound hrefines_fm₀ hok₁ with ⟨fm₁, helab₁, hrefines_fm₁⟩
-    cases hok₂ : elabStmtsImpl ss₂ cfg fmI₁ <;> simp_all; case ok result₂ =>
-    rcases result₂ with ⟨m₂, fmI₂⟩; simp_all
-    rcases hcorrect₂.sound hrefines_fm₁ hok₂ with ⟨fm₂, helab₂, hrefines_fm₂⟩
+    intro fm₀ m sI s₀ hrefines₀ hok
+    simp only [elabStmtsImpl, AlgM_bind_eq] at hok
+    cases hok₁ : elabStmtImpl s₁ cfg s₀
+    case error => simp [hok₁] at hok
+    case ok result₁ =>
+    rcases result₁ with ⟨m₁, sI₁⟩
+    obtain ⟨fm₁, helab₁, hext₁, hrefines₁⟩ := hcorrect₁.sound hrefines₀ hok₁
+    cases hok₂ : elabStmtsImpl ss₂ cfg sI₁
+    case error => simp [hok₁, hok₂] at hok
+    case ok result₂ =>
+    rcases result₂ with ⟨m₂, sI₂⟩
+    obtain ⟨fm₂, helab₂, hext₂, hrefines₂⟩ := hcorrect₂.sound hrefines₁ hok₂
+    simp [hok₁, hok₂] at hok
     rcases hok with ⟨rfl, rfl⟩
-    exists fm₂; simp_all
-    apply ElabStmts.cons helab₁ helab₂
+    exact ⟨fm₂, ElabStmts.cons helab₁ helab₂, hext₁.trans hext₂, hrefines₂⟩
 
 mutual
 theorem elabStmtImpl.correct (s : Stmt) :
     elabStmtImpl.Correctness (cfg := cfg) (ℓ := ℓ) s := by
   constructor
   case complete =>
-    intro fm₀ m fm fmI₀ hrefines_fm₀ helab
+    intro fm₀ m fm s₀ hrefines₀ helab
     cases h : s <;> rw [h] at helab
-    case declare n T => apply (elabStmtImpl.correct.declare n T).complete hrefines_fm₀ helab
+    case declare n T => apply (elabStmtImpl.correct.declare n T).complete hrefines₀ helab
     case exprStmt e₁ =>
-      apply (elabStmtImpl.correct.exprStmt e₁ (elabExprImpl.correct e₁)).complete hrefines_fm₀ helab
+      apply (elabStmtImpl.correct.exprStmt e₁ (elabExprImpl.correct e₁)).complete hrefines₀ helab
     case ifStmt e₁ s₂ s₃ =>
       apply
         (elabStmtImpl.correct.ifStmt
             e₁ s₂ s₃ (elabExprImpl.correct e₁) (elabStmtImpl.correct s₂) (elabStmtImpl.correct s₃)).complete
-          hrefines_fm₀ helab
+          hrefines₀ helab
     case block ss =>
-      apply (elabStmtImpl.correct.block ss (elabStmtsImpl.correct ss)).complete hrefines_fm₀ helab
+      apply (elabStmtImpl.correct.block ss (elabStmtsImpl.correct ss)).complete hrefines₀ helab
   case sound =>
-    intro fm₀ m fmI fmI₀ hrefines_fm₀ hok
+    intro fm₀ m sI s₀ hrefines₀ hok
     cases h : s <;> rw [h] at hok
-    case declare n T => apply (elabStmtImpl.correct.declare n T).sound hrefines_fm₀ hok
+    case declare n T => apply (elabStmtImpl.correct.declare n T).sound hrefines₀ hok
     case exprStmt e₁ =>
-      apply (elabStmtImpl.correct.exprStmt e₁ (elabExprImpl.correct e₁)).sound hrefines_fm₀ hok
+      apply (elabStmtImpl.correct.exprStmt e₁ (elabExprImpl.correct e₁)).sound hrefines₀ hok
     case ifStmt e₁ s₂ s₃ =>
       apply
         (elabStmtImpl.correct.ifStmt
             e₁ s₂ s₃ (elabExprImpl.correct e₁) (elabStmtImpl.correct s₂) (elabStmtImpl.correct s₃)).sound
-          hrefines_fm₀ hok
+          hrefines₀ hok
     case block ss =>
-      apply (elabStmtImpl.correct.block ss (elabStmtsImpl.correct ss)).sound hrefines_fm₀ hok
+      apply (elabStmtImpl.correct.block ss (elabStmtsImpl.correct ss)).sound hrefines₀ hok
 
 theorem elabStmtsImpl.correct (ss : List Stmt) :
     elabStmtsImpl.Correctness (cfg := cfg) (ℓ := ℓ) ss := by
   constructor
   case complete =>
-    intro fm₀ m fm fmI₀ hrefines_fm₀ helab
+    intro fm₀ m fm s₀ hrefines₀ helab
     cases h : ss <;> rw [h] at helab
-    case nil => apply elabStmtsImpl.correct.nil.complete hrefines_fm₀ helab
+    case nil => apply elabStmtsImpl.correct.nil.complete hrefines₀ helab
     case cons s ss =>
       apply (elabStmtsImpl.correct.cons s ss (elabStmtImpl.correct s) (elabStmtsImpl.correct ss)).complete
-        hrefines_fm₀ helab
+        hrefines₀ helab
   case sound =>
-    intro fm₀ m fmI fmI₀ hrefines_fm₀ hok
+    intro fm₀ m sI s₀ hrefines₀ hok
     cases h : ss <;> rw [h] at hok
-    case nil => apply elabStmtsImpl.correct.nil.sound hrefines_fm₀ hok
+    case nil => apply elabStmtsImpl.correct.nil.sound hrefines₀ hok
     case cons s ss =>
       apply (elabStmtsImpl.correct.cons s ss (elabStmtImpl.correct s) (elabStmtsImpl.correct ss)).sound
-        hrefines_fm₀ hok
+        hrefines₀ hok
 end
 
 end FlowAnalysis
