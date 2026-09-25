@@ -181,15 +181,15 @@ public theorem FlowModel.WellFormed.join {fm₁ fm₂ : FlowModel} (hwf₁ : fm�
 
 omit [DecidableEq ℓ] in
 /--
-In a well-formed flow model, the promotion model that `infoFor` supplies for a well-formed reference
-carries the version named by the reference's key.
+In a well-formed flow model, the promotion model that `infoFor` supplies for a reference carries the
+version named by the reference's key.
 
-A stored model does so because the flow model is well formed, and a fresh model does so because the
-reference is. This is the hypothesis `FlowModel.WellFormed.set` needs in order to store the model
-back, after promoting it.
+A stored model does so because the flow model is well formed, and a fresh model does so because
+every reference does (`Reference.version?_of_key_loc`). This is the hypothesis
+`FlowModel.WellFormed.set` needs in order to store the model back, after promoting it.
 -/
 public theorem FlowModel.WellFormed.infoFor {fm : FlowModel} (hwf : fm.WellFormed) {r : Reference}
-    (hr : r.WellFormed) {pm : PromotionModel} (h : fm.infoFor r = some pm) :
+    {pm : PromotionModel} (h : fm.infoFor r = some pm) :
     ∀ v q, r.key = .loc v q → pm.version? = some v := by
   intro v q hkey
   simp only [FlowModel.infoFor] at h
@@ -200,7 +200,7 @@ public theorem FlowModel.WellFormed.infoFor {fm : FlowModel} (hwf : fm.WellForme
     exact hwf v q _ hlookup
   case h_2 =>
     obtain ⟨v', hv', rfl⟩ := Option.map_eq_some_iff.mp h
-    have := hr v q hkey
+    have := Reference.version?_of_key_loc hkey
     simp_all [PromotionModel.fresh]
 
 public structure ExprModel where

@@ -64,11 +64,11 @@ public def FlowModel.promoteToNonNull (ref? : Option Reference) (previousType : 
   fm.tryPromote ref? previousType (NonNull previousType)
 
 /--
-Promoting a well-formed reference preserves well-formedness: the model stored back under the key is
-the one `infoFor` supplied, with an extra promoted type, so it holds the same version.
+Promoting a reference preserves well-formedness: the model stored back under the key is the one
+`infoFor` supplied, with an extra promoted type, so it holds the same version.
 -/
 public theorem FlowModel.WellFormed.tryPromote {fm : FlowModel} (hwf : fm.WellFormed)
-    {ref? : Option Reference} (href : ∀ r, ref? = some r → r.WellFormed) (previousType T : τ) :
+    (ref? : Option Reference) (previousType T : τ) :
     (fm.tryPromote ref? previousType T).WellFormed := by
   simp only [FlowModel.tryPromote]
   split
@@ -77,7 +77,7 @@ public theorem FlowModel.WellFormed.tryPromote {fm : FlowModel} (hwf : fm.WellFo
     split
     case h_1 pm hinfo =>
       split
-      case isTrue => exact hwf.set fun v q hkey => hwf.infoFor (href r rfl) hinfo v q hkey
+      case isTrue => exact hwf.set fun v q hkey => hwf.infoFor hinfo v q hkey
       case isFalse => exact hwf
     case h_2 => exact hwf
 
@@ -109,7 +109,7 @@ public inductive ElabExpr : AstPath → FlowModel → Expr →
   | var {π fm v pm T} :
       (fm : FlowModel).promotionInfo (.var v) = some pm →
       T = pm.currentType v.type →
-      ElabExpr π fm (.var v) (.var v T) ⟨T, some ⟨.var v, pm.version?⟩, fm, fm⟩
+      ElabExpr π fm (.var v) (.var v T) ⟨T, some (.var v pm.version?), fm, fm⟩
   /-- Null check operator (`e₁!`). -/
   | nullCheck {π fm₀ e₁ m₁ em₁ fm} :
       ElabExpr (0 :: π) fm₀ e₁ m₁ em₁ →
@@ -198,8 +198,7 @@ public theorem ElabExpr.boolInfo_onlyIf_bool {π} {fm : FlowModel} {e m} {em : E
   induction hDeriv <;> simp_all
 
 /--
-Elaborating an expression from a well-formed flow model produces well-formed flow models, and a
-well-formed reference.
+Elaborating an expression from a well-formed flow model produces well-formed flow models.
 
 The only interesting case is the promotion of a property: the promotion model it stores under the
 property's key is either the one already there, or a fresh one holding the version recorded in the
@@ -207,27 +206,22 @@ reference, which is the version named by the key.
 -/
 public theorem ElabExpr.wellFormed {π} {fm₀ : FlowModel} {e m} {em : ExprModel}
     (helab : ElabExpr π fm₀ e m em) (hwf : fm₀.WellFormed) :
-    em.fm_true.WellFormed ∧ em.fm_false.WellFormed ∧ ∀ r, em.ref? = some r → r.WellFormed := by
+    em.fm_true.WellFormed ∧ em.fm_false.WellFormed := by
   induction helab
-  case var =>
-    refine ⟨hwf, hwf, ?_⟩
-    rintro r ⟨⟩ v q ⟨⟩
+  case var => exact ⟨hwf, hwf⟩
   case nullCheck ih =>
-    obtain ⟨hwf_true, hwf_false, href⟩ := ih hwf
+    obtain ⟨hwf_true, hwf_false⟩ := ih hwf
     subst_vars
-    refine ⟨?_, ?_, by simp⟩ <;> exact (hwf_true.join hwf_false).tryPromote href _ _
+    exact ⟨(hwf_true.join hwf_false).tryPromote _ _ _, (hwf_true.join hwf_false).tryPromote _ _ _⟩
   case asExpr ih =>
-    obtain ⟨hwf_true, hwf_false, href⟩ := ih hwf
+    obtain ⟨hwf_true, hwf_false⟩ := ih hwf
     subst_vars
-    refine ⟨?_, ?_, by simp⟩ <;> exact (hwf_true.join hwf_false).tryPromote href _ _
-  case nullLiteral => exact ⟨hwf, hwf, by simp⟩
+    exact ⟨(hwf_true.join hwf_false).tryPromote _ _ _, (hwf_true.join hwf_false).tryPromote _ _ _⟩
+  case nullLiteral => exact ⟨hwf, hwf⟩
   case propertyGet ih =>
-    obtain ⟨hwf_true, hwf_false, -⟩ := ih hwf
+    obtain ⟨hwf_true, hwf_false⟩ := ih hwf
     subst_vars
-    refine ⟨hwf_true.join hwf_false, hwf_true.join hwf_false, ?_⟩
-    intro r hr
-    obtain ⟨r₁, -, hr₁⟩ := Option.bind_eq_some_iff.mp hr
-    exact Reference.WellFormed.property? hr₁
+    exact ⟨hwf_true.join hwf_false, hwf_true.join hwf_false⟩
 
 mutual
 
@@ -236,10 +230,10 @@ public theorem ElabStmt.wellFormed {π} {fm₀ : FlowModel} {s m fm} :
     ElabStmt π fm₀ s m fm → fm₀.WellFormed → fm.WellFormed
   | .declare _ _ _ _, hwf => hwf.set (by rintro r p ⟨⟩)
   | .exprStmt helab, hwf =>
-    have ⟨hwf_true, hwf_false, _⟩ := helab.wellFormed hwf
+    have ⟨hwf_true, hwf_false⟩ := helab.wellFormed hwf
     hwf_true.join hwf_false
   | .ifStmt helab₁ _ helab₂ helab₃, hwf =>
-    have ⟨hwf_true, hwf_false, _⟩ := helab₁.wellFormed hwf
+    have ⟨hwf_true, hwf_false⟩ := helab₁.wellFormed hwf
     (helab₂.wellFormed hwf_true).join (helab₃.wellFormed hwf_false)
   | .block helab, hwf => helab.wellFormed hwf
 

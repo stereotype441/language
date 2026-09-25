@@ -616,32 +616,32 @@ theorem handlePropertyM.correct {s₁ : AlgState} {fm : FlowModel} (hrefines : s
     case none =>
       have hvI : rI.version? = none := by simp [hr.version?, hv]
       refine ⟨s₁, none, ?_, .refl _, hrefines, ?_⟩
-      · simp [handlePropertyM, hvI, Reference.property?, hv, FlowModel.currentTypeOf]
-      · simp [Reference.property?, hv]
+      · simp [handlePropertyM, hvI, Reference.property?_eq, hv, FlowModel.currentTypeOf]
+      · simp [Reference.property?_eq, hv]
     case some v =>
       have hvI : rI.version? = some ⟨v, r.key.path⟩ := by simp [hr.version?, hv]
       cases hp : p.isPromotable
       case false =>
         refine ⟨s₁, none, ?_, .refl _, hrefines, ?_⟩
-        · simp [handlePropertyM, hvI, hp, Reference.property?, FlowModel.currentTypeOf]
-        · simp [Reference.property?, hp]
+        · simp [handlePropertyM, hvI, hp, Reference.property?_eq, FlowModel.currentTypeOf]
+        · simp [Reference.property?_eq, hp]
       case true =>
         obtain ⟨k, ks, hr', hk, hext, hrefines'⟩ :=
           hrefines.getOrCreatePropertyVersion ⟨v, r.key.path⟩ p.name
+        have hproperty : r.property? p = some (.property v (r.key.path ++ [p.name])) := by
+          simp [Reference.property?_eq, hp, hv]
         refine ⟨{ s₁ with promotionKeyStore := ks },
           some ⟨k, some ⟨v, r.key.path ++ [p.name]⟩⟩, ?_, hext, hrefines', ?_⟩
         · -- The type is the property's promoted type, if the flow model has a promotion model for
           -- it, on both sides.
-          have hproperty : r.property? p = some ⟨r.key.property v p.name, some v⟩ := by
-            simp [Reference.property?, hp, hv]
           simp only [handlePropertyM, hvI, hp, Option.bind_some, AlgM_bind_eq,
             getOrCreatePropertyVersionM_eq, hr', AlgM_get_eq, AlgM_pure_eq, hproperty,
-            FlowModel.currentTypeOf, Key.property]
+            FlowModel.currentTypeOf, Reference.key_property]
           cases hrefines'.current.promotionInfos k _ hk
           case absent hlookupI hlookup => simp_all
           case present pmI pm hlookupI hlookup hrefines_pm =>
             simp_all [hrefines_pm.currentTypes]
-        · simp only [Option.bind_some, Reference.property?, hp, hv, ↓reduceIte, Option.map_some]
+        · simp only [Option.bind_some, hproperty]
           exact .some ⟨hk, by simp⟩
 
 end
@@ -742,7 +742,7 @@ theorem elabExprImpl.correct.var {π} (v : Variable) :
     case present pmI pm hlookupI hlookup hrefines_pm =>
       simp [hlookupI, hrefines_pm.currentTypes] at hok
       rcases hok with ⟨⟨rfl, rfl⟩, rfl⟩
-      refine ⟨⟨pm.currentType v.type, some ⟨.var v, pm.version?⟩, fm₀, fm₀⟩,
+      refine ⟨⟨pm.currentType v.type, some (.var v pm.version?), fm₀, fm₀⟩,
         ElabExpr.var hlookup rfl, hext, ?_,
         ExprModelImpl.refines.noBoolInfo hrefines₁.current _
           (.some ⟨hk, by simp [hrefines_pm.version?]⟩)⟩
