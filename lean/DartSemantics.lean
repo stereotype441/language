@@ -10,6 +10,7 @@ public import DartSemantics.Language
 public import DartSemantics.PrimitiveLaws
 public import DartSemantics.ProofMode
 public import DartSemantics.Resolve
+public import DartSemantics.Safety
 public import DartSemantics.SemanticTyping
 public import DartSemantics.State
 
