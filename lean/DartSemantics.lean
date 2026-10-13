@@ -2,6 +2,7 @@ module
 public import DartLang
 public import DartSemantics.Bind
 public import DartSemantics.Compat
+public import DartSemantics.Corollaries
 public import DartSemantics.GhostState
 public import DartSemantics.HeadStep
 public import DartSemantics.Heap
