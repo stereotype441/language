@@ -103,10 +103,14 @@ What exists so far:
   (`Language`). It also has the interpreter (`Interpreter`), proved to agree with the semantics,
   and the program logic: iris-lean's weakest-precondition logic, instantiated with a ghost heap
   that mirrors the run-time heap, with adequacy (`GhostState`), one law per head-step rule
-  (`PrimitiveLaws`), and proof-mode tactics (`ProofMode`). Proving flow analysis sound with it
-  comes next.
-- `Tests` has tests of the run-time subtype check and of the interpreter, and specs of small
-  programs proved with the program logic.
+  (`PrimitiveLaws`), and proof-mode tactics (`ProofMode`). On top of the program logic, it has a
+  semantic typing judgment (`SemanticTyping`, with binding lemmas in `Bind`), typing rules proved
+  sound (`Compat`), a safety theorem (`Safety`), and two small programs proved safe with them
+  (`Corollaries`): the basis for proving flow analysis sound. Connecting this to the model of flow
+  analysis comes next.
+- `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
+  proved with the program logic, and a check that `SimpleType` obeys the laws that the typing
+  rules assume.
 - The Kernel translator hasn't been started.
 
 ## Documentation conventions
