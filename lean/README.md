@@ -65,6 +65,59 @@ of `LoweredExpr`, which defines how a program runs, one small step at a time:
   - **Program verification**: specific functions or methods (translated from Kernel) meet their
     specifications.
 
+## How flow analysis soundness is proved
+
+Flow analysis and the program logic describe what is known at a point in a program at three
+levels:
+
+```mermaid
+flowchart LR
+  M["Flow models (FlowAnalysis)"] -- "translation (planned)" --> F["Facts (Fact, Ctx)"]
+  F -- "interpCtx" --> I["Iris propositions (IProp)"]
+```
+
+- **Flow models** are what flow analysis tracks at each point in a program (in the Dart
+  implementation, `FlowModel`): for each variable, its promotion chain, whether it's definitely
+  assigned, the types it has been tested against, and so on. Much of this only matters to the
+  analysis itself, for example to decide what is known after a join.
+- **Facts** (`Fact`, in `DartSemantics/SemanticTyping.lean`) are simple statements that a running
+  program can rely on at a point, such as "`x` holds a value that satisfies `T`" (`Fact.var x T`),
+  or "`x` refers to an object whose instance variable `f` holds a value that satisfies `T`"
+  (`Fact.field x f T`). A *context* (`Ctx`) is a list of facts.
+- **Iris propositions** (`IProp`) are statements in the program logic about the run-time heap.
+  Each fact means an Iris proposition (`interpFact`), and a context means that all of its facts
+  hold (`interpCtx`). For example, `Fact.var x T` means that `x` is bound to a cell, which holds a
+  value whose dynamic type is a subtype of `T` (`interpVal`).
+
+The semantic typing judgment `SemTyped Δb m T Δa` connects facts to how programs run: if the facts
+in `Δb` hold before `m` runs, then `m` doesn't get stuck, and if it completes normally with a value
+`v`, then `v` satisfies `T`, and the facts in `Δa v` hold afterwards. It is defined with an Iris
+weakest precondition, so it is proved with the program logic. `Compat.lean` proves a typing rule
+for each kind of expression, and the safety theorem (`safety`, in `Safety.lean`) turns the judgment
+into a statement about runs that doesn't mention Iris: an expression that is semantically well
+typed, started in a state where the facts in `Δb` hold, never gets stuck. When the semantics checks
+promotions (`PromotionChecks.verify`), a promotion check that fails gets stuck, so this includes
+every promotion check passing.
+
+The soundness theorem for flow analysis, which comes next, will connect flow models to facts:
+
+1. Translate each flow model to the facts it implies, with an ordinary Lean function.
+2. Prove that, for each construct, the `LoweredExpr` that flow analysis produces is semantically
+   well typed, from the facts of the flow model before it to the facts of the flow model after it,
+   using the typing rules.
+
+Then `safety` says that every program that flow analysis accepts runs without getting stuck, and
+agrees with the types and promotions that flow analysis computed. Keeping the levels separate
+means that the proofs about flow models (joins, demotions and so on) are ordinary Lean proofs,
+without Iris, and that the program logic doesn't depend on how flow analysis represents its models.
+
+For example, `Tests/DartSemantics/Corollaries.lean` proves `{ x as T; x }` (`castThenRead`) safe
+this way. Beforehand, `x` holds a value that satisfies some subtype `U` of its static type: the
+fact `Fact.var x U`. The cast promotes `x` to `T`, which flow analysis records in `x`'s promotion
+chain. The typing rule for the cast (`SemTyped.as_var`) guarantees the matching fact
+`Fact.var x T` afterwards, which is what the typing rule for the promoted read of `x`
+(`SemTyped.var`) relies on.
+
 ## Reading the Iris parts
 
 The program logic (`DartSemantics/GhostState.lean` onward) uses iris-lean, whose notation and
@@ -176,10 +229,13 @@ What exists so far:
   (`Language`). It also has the interpreter (`Interpreter`), proved to agree with the semantics,
   and the program logic: iris-lean's weakest-precondition logic, instantiated with a ghost heap
   that mirrors the run-time heap, with adequacy (`GhostState`), one law per head-step rule
-  (`PrimitiveLaws`), and proof-mode tactics (`ProofMode`). Proving flow analysis sound with it
-  comes next.
-- `Tests` has tests of the run-time subtype check and of the interpreter, and specs of small
-  programs proved with the program logic.
+  (`PrimitiveLaws`), and proof-mode tactics (`ProofMode`). On top of the program logic, it has a
+  semantic typing judgment (`SemanticTyping`, with binding lemmas in `Bind`), typing rules proved
+  sound (`Compat`), and a safety theorem (`Safety`): the basis for proving flow analysis sound.
+  Connecting this to the model of flow analysis comes next.
+- `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
+  proved with the program logic, two small programs proved safe with the typing rules
+  (`Corollaries`), and a check that `SimpleType` obeys the laws that the typing rules assume.
 - The Kernel translator hasn't been started.
 
 ## Documentation conventions
