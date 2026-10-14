@@ -100,9 +100,13 @@ What exists so far:
 - `DartSemantics` has the run-time semantics of `LoweredExpr`: the run-time state (`State`), how
   declarations resolve variable references to heap cells (`Resolve`), and the head-step relation
   (`HeadStep`), which is the definition of the semantics, made into an iris-lean language
-  (`Language`). It also has the interpreter (`Interpreter`), proved to agree with the semantics.
-  The program logic comes next.
-- `Tests` has tests of the run-time subtype check and of the interpreter.
+  (`Language`). It also has the interpreter (`Interpreter`), proved to agree with the semantics,
+  and the program logic: iris-lean's weakest-precondition logic, instantiated with a ghost heap
+  that mirrors the run-time heap, with adequacy (`GhostState`), one law per head-step rule
+  (`PrimitiveLaws`), and proof-mode tactics (`ProofMode`). Proving flow analysis sound with it
+  comes next.
+- `Tests` has tests of the run-time subtype check and of the interpreter, and specs of small
+  programs proved with the program logic.
 - The Kernel translator hasn't been started.
 
 ## Documentation conventions
