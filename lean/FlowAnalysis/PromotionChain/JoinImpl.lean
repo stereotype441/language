@@ -222,7 +222,7 @@ theorem joinPromotedTypesImpl'_correct [Monad m] [Lean.Order.MonadTail m]
 Specification (and correctness proof) for `joinPromotedTypesImpl`: it leaves the state unchanged
 (`stateIs s₀`) and returns the join of the two chains (`r = (c₁.join c₂).val`).
 -/
-public theorem joinPromotedTypesImpl_correct [Monad m] [Lean.Order.MonadTail m]
+theorem joinPromotedTypesImpl_correct [Monad m] [Lean.Order.MonadTail m]
     [WPMonad m ps] (c₁ c₂ : PromotionChain) :
     ⦃stateIs s₀⦄ (joinPromotedTypesImpl c₁.val c₂.val : m _)
     ⦃⇓ r => stateIs s₀ ∧ ⌜r = (c₁.join c₂).val⌝⦄ := by
@@ -248,5 +248,20 @@ public theorem joinPromotedTypesImpl_correct [Monad m] [Lean.Order.MonadTail m]
     intro hc₁_shorter; mintro hstate; simp; mspec joinPromotedTypesImpl'_correct
     · grind
     · order
+
+/--
+Correctness of `joinPromotedTypesImpl`, run in the pure monad `Id`: it returns the join of the two
+chains (`(c₁.join c₂).val`).
+-/
+public theorem joinPromotedTypesImpl_pure_correct (c₁ c₂ : PromotionChain) :
+    (joinPromotedTypesImpl c₁.val c₂.val : Id _).run = (c₁.join c₂).val := by
+  symm; apply Id.of_wp_run_eq (prog := (joinPromotedTypesImpl c₁.val c₂.val : Id _))
+  · rfl
+  · mspec joinPromotedTypesImpl_correct
+    rename_i r
+    mrename_i h
+    mcases h with ⟨hstate, hr⟩
+    mpure_intro
+    simp [hr]
 
 end FlowAnalysis.PromotionChain

@@ -4,6 +4,7 @@ import Batteries.Data.List.Basic
 import Batteries.Data.List.Lemmas
 public import DartLang.Types
 public import Mathlib.Data.Finset.Basic
+public import Mathlib.Data.List.DropRight
 import Mathlib.Data.Set.Finite.Basic
 
 namespace FlowAnalysis
@@ -24,13 +25,20 @@ namespace isPromotionChain
 Equivalent formulation of `isPromotionChain` in terms of Lean's built-in notation of a chain (which
 is defined recursively, so it's a bit more convenient to use in proofs).
 -/
-theorem iff_isChain (c : List τ) :
+public theorem iff_isChain (c : List τ) :
     isPromotionChain c ↔ c.IsChain (fun T U => U < T) := by
   rw [isPromotionChain, List.isChain_iff_getElem]
   constructor
   · intro h i hi; apply h; omega
   · intro h i hi; apply h
 
+public instance instDecidable (c : List τ) : Decidable (isPromotionChain c) :=
+  iff_eq_eq.mp (iff_isChain c) ▸ inferInstance
+
+/--
+Equivalently, `c` is a promotion chain iff each type in it is a strict supertype of every type
+after it (`c.Pairwise (fun T U => U < T)`).
+-/
 lemma iff_pairwise (c : List τ) :
     isPromotionChain c ↔ c.Pairwise (fun T U => U < T) := by
   rw [iff_isChain, List.isChain_iff_pairwise]
@@ -50,7 +58,7 @@ theorem nil : isPromotionChain ([] : List τ) := by
 
 /-- A list with just one element is a promotion chain. -/
 @[simp]
-theorem singleton : ∀ T : τ, isPromotionChain [T] := by
+public theorem singleton : ∀ T : τ, isPromotionChain [T] := by
   simp [isPromotionChain]
 
 /-- The tail of a promotion chain (`hvalid`) is also a promotion chain. -/
@@ -189,7 +197,54 @@ public def single (T : τ) : PromotionChain := ⟨[T], by simp⟩
 public theorem val_single {T : τ} : (single T).val = [T] := by rfl
 
 /-- A promotion chain `c` is strictly bounded by `T` iff `T::c` is a promotion chain. -/
+@[expose]
 public def strictly_bounded_by (c : PromotionChain) (T : τ) : Prop := isPromotionChain (T::c)
+
+public instance strictly_bounded_by.instDecidable (c : PromotionChain) (T : τ) :
+    Decidable (c.strictly_bounded_by T) :=
+  strictly_bounded_by.eq_1 c T ▸ inferInstance
+
+/-- A promotion chain `c` strictly bounds `T` iff `c++[T]` is a promotion chain. -/
+@[expose]
+public def strictly_bounds (c : PromotionChain) (T : τ) : Prop := isPromotionChain (c.val++[T])
+
+public instance strictly_bounds.instDecidable (c : PromotionChain) (T : τ) :
+    Decidable (c.strictly_bounds T) :=
+  strictly_bounds.eq_1 c T ▸ inferInstance
+
+/-- Constructs a new promotion chain by appending a type to the back. -/
+public def promote (c : PromotionChain) {T : τ} (h : c.strictly_bounds T) : PromotionChain :=
+  ⟨c.val++[T], h⟩
+
+/-- Simplification theorem: the types in `c.promote h` are those of `c`, followed by `T`. -/
+@[simp]
+public theorem val_promote {c : PromotionChain} {T : τ} {h : c.strictly_bounds T} :
+    (c.promote h).val = c.val ++ [T] := by rfl
+
+/--
+Constructs a new promotion chain by appending a type to the back, if the resulting chain would be
+valid. Otherwise returns the original chain unchanged.
+-/
+@[expose]
+public def tryPromote (c : PromotionChain) (T : τ) : PromotionChain :=
+  if h : c.strictly_bounds T then c.promote h else c
+
+/--
+If appending `T` to `c` would produce a valid promotion chain, then `c.tryPromote T` does so.
+-/
+@[simp]
+public theorem val_tryPromote_of_strictly_bounds {c : PromotionChain} {T : τ}
+    (h : c.strictly_bounds T) : (c.tryPromote T).val = c.val ++ [T] := by
+  simp [tryPromote, h]
+
+/--
+If appending `T` to `c` would not produce a valid promotion chain, then `c.tryPromote T` leaves `c`
+unchanged.
+-/
+@[simp]
+public theorem tryPromote_of_not_strictly_bounds {c : PromotionChain} {T : τ}
+    (h : ¬c.strictly_bounds T) : c.tryPromote T = c := by
+  simp [tryPromote, h]
 
 /-- Analogous to `List.filter` but for promotion chains. -/
 public def filter (p : τ → Bool) (c : PromotionChain) : PromotionChain := .mk (c.val.filter p) <| by
@@ -324,14 +379,14 @@ public instance join.instIdempotentOp :
     Std.IdempotentOp (join (τ := τ)) where
   idempotent := join_self
 
-/-- The join operation is commutative (`c₁.join c₂ = c₂.join c₁`). -/
+/-- The join operation is commutative (`join c₁ c₂ = join c₂ c₁`). -/
 public theorem join_comm (c₁ c₂ : PromotionChain) : c₁.join c₂ = c₂.join c₁ := by
   rw [ext_iff_mem]; simp; aesop
 
 public instance join.instCommutative : Std.Commutative (join (τ := τ)) where
   comm := join_comm
 
-/-- The join operation is associative (`(c₁.join c₂).join c₃ = c₁.join (c₂.join c₃)`) -/
+/-- The join operation is associative (`join (join c₁ c₂) c₃ = join c₁ (join c₂ c₃)`). -/
 public theorem join_assoc (c₁ c₂ c₃ : PromotionChain) :
     (c₁.join c₂).join c₃ = c₁.join (c₂.join c₃) := by
   rw [ext_iff_mem]; simp; aesop
@@ -435,4 +490,60 @@ public theorem join.heads_ne_not_le {T₁ T₂ : τ} {ts₁' ts₂' : List τ}
   have := hvalid₂.lt_of_mem_tail T h
   grind
 
+/--
+`c.demote writtenType` is the promotion chain `c` after a value of type `writtenType` is assigned:
+the promoted types that `writtenType` is a subtype of. Mirrors the specification's
+`demote(promotionChain, written)` (in the flow analysis specification's "Promotion" section): the
+subsequence of `c` of the types `T` with `writtenType <: T`.
+-/
+@[expose]
+public def demote (writtenType : τ) (c : PromotionChain) : PromotionChain :=
+  c.filter (fun T => decide (writtenType ≤ T))
+
+/--
+The types in `c.demote writtenType` are those of `c` that `writtenType` is a subtype of
+(`c.val.filter (fun T => decide (writtenType ≤ T))`).
+-/
+@[simp]
+public theorem val_demote {writtenType : τ} {c : PromotionChain} :
+    (c.demote writtenType).val = c.val.filter (fun T => decide (writtenType ≤ T)) := by
+  simp [demote]
+
+/-- Demoting the empty promotion chain leaves it empty. -/
+@[simp]
+public theorem empty_demote (writtenType : τ) : (∅ : PromotionChain).demote writtenType = ∅ :=
+  ext (by simp [val_empty])
+
 end «PromotionChain»
+
+/--
+Mirrors Dart's `PromotionModel._demoteViaAssignment`: drops promoted types from the end of
+`promotedTypes` until reaching one that `writtenType` is a subtype of (or none are left).
+-/
+@[expose]
+public def demoteViaAssignmentImpl (writtenType : τ) (promotedTypes : List τ) : List τ :=
+  promotedTypes.rdropWhile (fun T => !decide (writtenType ≤ T))
+
+/--
+On a promotion chain, `demoteViaAssignmentImpl` computes `PromotionChain.demote`. In a promotion
+chain, each type is a strict subtype of the ones before it, so if `writtenType` is a subtype of a
+type, it's a subtype of all the types before it too: the types it's a subtype of form a prefix,
+which dropping types from the end finds.
+-/
+public theorem demoteViaAssignmentImpl_correct (writtenType : τ) (c : PromotionChain) :
+    demoteViaAssignmentImpl writtenType c.val = (c.demote writtenType).val := by
+  obtain ⟨l, hl⟩ := c
+  simp only [demoteViaAssignmentImpl, PromotionChain.val_demote]
+  rw [isPromotionChain.iff_pairwise] at hl
+  induction l using List.reverseRecOn with
+  | nil => rfl
+  | append_singleton l x ih =>
+    rw [List.pairwise_append] at hl
+    obtain ⟨hl, -, hx⟩ := hl
+    have hx : ∀ T ∈ l, x < T := fun T hT => hx T hT x (List.mem_singleton_self x)
+    by_cases hw : writtenType ≤ x
+    · rw [List.rdropWhile_concat_neg _ _ x (by simpa using hw), List.filter_append,
+        List.filter_eq_self.2 (fun T hT => by simpa using le_trans hw (hx T hT).le)]
+      simp [hw]
+    · rw [List.rdropWhile_concat_pos _ _ x (by simpa using hw), List.filter_append, ih hl]
+      simp [hw]
