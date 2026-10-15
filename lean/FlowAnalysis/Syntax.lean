@@ -68,8 +68,8 @@ public instance Expr.instToString : ToString Expr where
 
 /-- A surface Dart statement. -/
 public inductive Stmt where
-  /-- A local variable declaration, `T n;`, with no initializer. -/
-  | declare (n : String) (T : τ)
+  /-- A local variable declaration, `T n;` (or `final T n;`, if `isFinal`), with no initializer. -/
+  | declare (n : String) (T : τ) (isFinal : Bool := false)
   /-- An expression statement (`e;`). -/
   | exprStmt (e : Expr)
   /-- An `if` statement (`if (e₁) s₂ else s₃`). -/
@@ -105,7 +105,7 @@ statement list are analyzed in: `σ`, plus the variable that `s` declares, if an
 -/
 @[expose]
 public def Stmt.extendScope (σ : Scope) (π : AstPath) : Stmt → Scope
-  | .declare n T => (n, ⟨n, T⟩, π) :: σ
+  | .declare n T isFinal => (n, ⟨n, T, isFinal⟩, π) :: σ
   | _ => σ
 
 end FlowAnalysis

@@ -179,12 +179,18 @@ public inductive ElabExpr : AstPath → Scope → FlowModel → Expr →
   gets a new value version, labeled by the assignment's AST path.
 
   The assignment's value is not a reference to `v`, so it can't promote `v`.
+
+  If `v` is `final`, it must be definitely unassigned (the null-safety feature's rule: "It is a
+  compile time error to assign a value to a `final`, non-`late` local variable which is potentially
+  assigned"). This is checked in the flow model *after* `e₁`, since `e₁` is evaluated before the
+  assignment, and may itself assign to `v`: `final Object x; x = (x = 1);` is an error.
   -/
   | assign {π σ fm₀ n e₁ m₁ em₁ v decl pm fm} :
       ElabExpr (0 :: π) σ fm₀ e₁ m₁ em₁ →
       σ.lookup n = some (v, decl) →
       em₁.fm_after.promotionInfo (.var decl) = some pm →
       em₁.type ≤ v.type →
+      (v.isFinal = true → pm.unassigned = true) →
       fm = em₁.fm_after.set (.var decl) (pm.write em₁.type (ValueVersion.root π)) →
       ElabExpr π σ fm₀ (.assign n e₁) (.variableSet v m₁) ⟨em₁.type, none, fm, fm⟩
 
@@ -207,11 +213,12 @@ public inductive ElabStmt : AstPath → Scope → FlowModel → Stmt →
   including re-declarations of the same variable, get distinct versions. The variable itself is
   identified by the same path (see `Scope`), so its promotion model is recorded under `.var π`.
   Declarations have no initializers yet, so the variable starts out definitely unassigned. It starts
-  out holding the null object if its type is nullable (`Variable.startsNull`).
+  out holding the null object if it isn't `final` and its type is nullable (`Variable.startsNull`);
+  a `final` variable can't be read before it's assigned, so it starts out unassigned at run time.
   -/
-  | declare π σ fm n T :
-      ElabStmt π σ fm (.declare n T)
-        (.declare ⟨n, T⟩ T (Variable.startsNull ⟨n, T⟩))
+  | declare π σ fm n T isFinal :
+      ElabStmt π σ fm (.declare n T isFinal)
+        (.declare ⟨n, T, isFinal⟩ T (Variable.startsNull ⟨n, T, isFinal⟩))
         (fm.set (.var π) (PromotionModel.declared false (ValueVersion.root π)))
   /-- Expression statement. -/
   | exprStmt {π σ fm₀ e m em} :
@@ -303,7 +310,7 @@ model (`fm.WellFormed`).
 public theorem ElabStmt.wellFormed {π σ} {fm₀ : FlowModel} {s m fm}
     (helab : ElabStmt π σ fm₀ s m fm) (hwf : fm₀.WellFormed) : fm.WellFormed :=
   match helab, hwf with
-  | .declare _ _ _ _ _, hwf => hwf.set (by rintro r p ⟨⟩)
+  | .declare _ _ _ _ _ _, hwf => hwf.set (by rintro r p ⟨⟩)
   | .exprStmt helab, hwf =>
     have ⟨hwf_true, hwf_false⟩ := helab.wellFormed hwf
     hwf_true.join hwf_false

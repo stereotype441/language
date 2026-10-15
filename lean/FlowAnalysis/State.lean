@@ -266,20 +266,20 @@ public theorem ExprModel.simple_after {ref? : Option Reference} {T : τ}
 
 /--
 Whether the variable `v` starts out holding the null object when it's declared with no initializer:
-its type is nullable. (This follows the null-safety feature's rules for non-`late` local
-variables.)
+it isn't `final`, and its type is nullable. (This follows the null-safety feature's rules for
+non-`late` local variables.)
 -/
 @[expose]
 public def _root_.DartLang.Variable.startsNull (v : Variable (τ := τ)) : Bool :=
-  decide (DartTypeRepr.Null ≤ v.type)
+  !v.isFinal && decide (DartTypeRepr.Null ≤ v.type)
 
 /--
-The variable `v` starts out holding the null object (`v.startsNull = true`) exactly when its type
-is nullable (`DartTypeRepr.Null ≤ v.type`).
+The variable `v` starts out holding the null object (`v.startsNull = true`) exactly when it isn't
+`final` and its type is nullable (`v.isFinal = false ∧ DartTypeRepr.Null ≤ v.type`).
 -/
 @[simp]
 public theorem _root_.DartLang.Variable.startsNull_eq_true {v : Variable (τ := τ)} :
-    v.startsNull = true ↔ DartTypeRepr.Null ≤ v.type := by
+    v.startsNull = true ↔ v.isFinal = false ∧ DartTypeRepr.Null ≤ v.type := by
   simp [Variable.startsNull]
 
 /--
