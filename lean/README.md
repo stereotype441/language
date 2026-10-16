@@ -162,9 +162,10 @@ What exists so far:
   (`PrimitiveLaws`), and proof-mode tactics (`ProofMode`). On top of the program logic, it has a
   semantic typing judgment (`SemanticTyping`, with binding lemmas in `Bind`), typing rules proved
   sound (`Compat`), and a safety theorem (`Safety`): the basis for proving flow analysis sound.
-  Connecting this to the model of flow analysis comes next.
+  Assignments to local variables are covered throughout; `final` locals aren't yet. Connecting
+  this to the model of flow analysis comes next.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
-  proved with the program logic, two small programs proved safe with the typing rules
+  proved with the program logic, small programs proved safe with the typing rules
   (`Corollaries`), and a check that `SimpleType` obeys the laws that the typing rules assume.
 - The Kernel translator hasn't been started.
 
