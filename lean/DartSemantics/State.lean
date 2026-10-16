@@ -81,6 +81,14 @@ public def State.fresh (σ : State) : Loc := ⟨σ.heap.size⟩
 public def State.alloc (σ : State) (c : Cell) : State := { σ with heap := σ.heap.push c }
 
 /--
+Replace the cell at location `ℓ` with `c`, if `ℓ` has been allocated (otherwise, leave the state
+alone). Like `alloc`, this updates the array in place if the state is used linearly.
+-/
+@[expose]
+public def State.update (σ : State) (ℓ : Loc) (c : Cell) : State :=
+  { σ with heap := σ.heap.set! ℓ.n c }
+
+/--
 The dynamic type of value `v`, in the specification's sense: the class of the object that `v`
 represents.
 
@@ -107,5 +115,44 @@ omit Γ in
 public theorem State.lookup_alloc_fresh (σ : State) (c : Cell) :
     (σ.alloc c).lookup σ.fresh = some c := by
   simp [State.lookup, State.alloc, State.fresh]
+
+omit Γ in
+/-- Updating an allocated cell replaces what it holds. -/
+public theorem State.lookup_update_self {σ : State} {ℓ : Loc} {c₀ : Cell} (h : σ.lookup ℓ = some c₀)
+    (c : Cell) : (σ.update ℓ c).lookup ℓ = some c := by
+  simp only [State.lookup] at h
+  have hlt : ℓ.n < σ.heap.size := by
+    by_contra hge
+    simp [Array.getElem?_eq_none (Nat.le_of_not_lt hge)] at h
+  simp [State.lookup, State.update, hlt]
+
+omit Γ in
+/-- Updating a cell leaves every other cell alone. -/
+public theorem State.lookup_update_ne {σ : State} {ℓ ℓ' : Loc} (hne : ℓ' ≠ ℓ) (c : Cell) :
+    (σ.update ℓ c).lookup ℓ' = σ.lookup ℓ' := by
+  have hn : ℓ.n ≠ ℓ'.n := fun h => hne (by cases ℓ; cases ℓ'; simp_all)
+  simp [State.lookup, State.update, Array.getElem?_setIfInBounds_ne hn]
+
+/--
+Updating a cell that isn't an object's own cell, with something that isn't one either, doesn't
+change any value's dynamic type.
+-/
+public theorem State.dynamicType_update {σ : State} {ℓ : Loc} {c₀ c : Cell}
+    (h : σ.lookup ℓ = some c₀) (hc₀ : ∀ C fs, c₀ ≠ .object C fs) (hc : ∀ C fs, c ≠ .object C fs)
+    (v : Value) : (σ.update ℓ c).dynamicType v = σ.dynamicType v := by
+  cases v with
+  | obj ℓ' =>
+    simp only [State.dynamicType]
+    by_cases hℓ : ℓ' = ℓ
+    · subst hℓ
+      rw [State.lookup_update_self h, h]
+      cases c₀ with
+      | object C fs => exact absurd rfl (hc₀ C fs)
+      | _ =>
+        cases c with
+        | object C fs => exact absurd rfl (hc C fs)
+        | _ => rfl
+    · rw [State.lookup_update_ne hℓ]
+  | _ => rfl
 
 end DartSemantics

@@ -166,6 +166,59 @@ def runClosed (P : SemanticParams SimpleType) (m : LoweredExpr) : Std.Format :=
 #guard_msgs in
 #eval runWithX verify (.seq (.block [.declare x ObjectQ true]) (.nullCheck (.var x ObjectQ)))
 
+/-! ## Assignments -/
+
+-- `x = null` evaluates to the value assigned.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
+#guard_msgs in
+#eval runWithX verify (.variableSet x .null)
+
+-- `{ Object y; y = x; y as int }`: assigning to `y` initializes it, so reading it doesn't get
+-- stuck. Parameter `x` refers to an `int` (see `runWithX`), so the cast succeeds.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
+#guard_msgs in
+#eval runWithX verify
+  (.block [.declare y Object false, .variableSet y (.var x ObjectQ), .as (.var y Object) int])
+
+-- `x = null; x!`: after the assignment, `x` holds the null object, so `x!` throws, although
+-- parameter `x` started out referring to an `int` (see `runWithX`).
+/-- info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError)) -/
+#guard_msgs in
+#eval runWithX verify (.seq (.variableSet x .null) (.nullCheck (.var x ObjectQ)))
+
+-- `x = null!`: the exception propagates out of the assignment.
+/-- info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError)) -/
+#guard_msgs in
+#eval runWithX verify (.variableSet x (.nullCheck .null))
+
+-- `{ x as int; x = null; x }`, where the last read of `x` is (wrongly) still promoted to `int`:
+-- flow analysis must demote `x` when it's assigned. With promotion checks, the read gets stuck.
+/--
+info: stuck at: DartLang.LoweredExpr.seq
+  (DartLang.LoweredExpr.varAt
+    { name := "x", type := DartLang.SimpleType.ObjectQ }
+    (DartLang.SimpleType.int)
+    { n := 2 })
+  (DartLang.LoweredExpr.block [])
+-/
+#guard_msgs (whitespace := lax) in
+#eval runWithX verify (.block [.as (.var x ObjectQ) int, .variableSet x .null, .var x int])
+
+-- The same program, without promotion checks, completes.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
+#guard_msgs in
+#eval runWithX trust (.block [.as (.var x ObjectQ) int, .variableSet x .null, .var x int])
+
+-- An assignment to an object's own cell (which flow analysis never produces) gets stuck.
+/--
+info: stuck at: DartLang.LoweredExpr.variableSetAt
+  { name := "x", type := DartLang.SimpleType.ObjectQ }
+  { n := 0 }
+  (DartLang.LoweredExpr.val (DartLang.Value.null))
+-/
+#guard_msgs in
+#eval runWithX verify (.variableSetAt x ⟨0⟩ (.val .null))
+
 /-! ## Programs that throw -/
 
 -- `null!`

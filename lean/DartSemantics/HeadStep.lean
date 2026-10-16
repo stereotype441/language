@@ -196,6 +196,14 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | varAt {x : Variable (τ := τ)} {T : τ} {ℓ : Loc} {v : Value} {σ : State}
       (hℓ : σ.lookup ℓ = some (.val v)) (hv : PassesPromotionCheck σ v T) :
       HeadStep (.varAt x T ℓ) σ (.val v) σ
+  /--
+  An assignment to a local variable stores the value in the variable's cell, and evaluates to
+  that value. The cell must be a variable's (holding a value or uninitialized), not an object's
+  own cell.
+  -/
+  | variableSetAt {x : Variable (τ := τ)} {ℓ : Loc} {w : Value} {c : Cell} {σ : State}
+      (hℓ : σ.lookup ℓ = some c) (hc : ∀ C fs, c ≠ .object C fs) :
+      HeadStep (.variableSetAt x ℓ (.val w)) σ (.val w) (σ.update ℓ (.val w))
   /-- A null check on the null object is a dynamic type error. -/
   | nullCheckNull {σ : State} :
       HeadStep (.nullCheck (.val .null)) σ (.throwing (.error .typeError)) σ

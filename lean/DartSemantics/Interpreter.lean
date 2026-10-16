@@ -125,12 +125,19 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
       match P.getterImpl p v σ with
       | some w => promotionCheck fuel σ w T (.next (.val w) σ)
       | none => .stuck
+  | .variableSetAt _ ℓ (.val w) =>
+    -- Inspect the cell before updating it, so that the update can be done in place.
+    match σ.lookup ℓ with
+    | some (.object _ _) => .stuck
+    | some _ => .next (.val w) (σ.update ℓ (.val w))
+    | none => .stuck
   | .nullCheck (.throwing v) => .next (.throwing v) σ
   | .as (.throwing v) _ => .next (.throwing v) σ
   | .is (.throwing v) _ => .next (.throwing v) σ
   | .cond (.throwing v) _ _ _ => .next (.throwing v) σ
   | .propertyGet (.throwing v) _ _ => .next (.throwing v) σ
   | .seq (.throwing v) _ => .next (.throwing v) σ
+  | .variableSetAt _ _ (.throwing v) => .next (.throwing v) σ
   | _ => .stuck
 
 /--
@@ -155,6 +162,9 @@ public def primStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     else stepIn (.propertyGet p T) (primStep fuel m σ)
   | .seq m₁ m₂ =>
     if m₁.toOutcome?.isSome then headStep fuel e σ else stepIn (.seq m₂) (primStep fuel m₁ σ)
+  | .variableSetAt x ℓ m =>
+    if m.toOutcome?.isSome then headStep fuel e σ
+    else stepIn (.variableSetAt x ℓ) (primStep fuel m σ)
   | _ => headStep fuel e σ
 termination_by structural e
 
@@ -340,6 +350,10 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
   | propertyGetGetter hf hg hc =>
     exact .inl (Converges.congr (fun fuel => by simp [headStep, hf, hg])
       (promotionCheck_converges hc _))
+  | @variableSetAt x ℓ w c σ hℓ hc =>
+    cases c
+    case object C fs => exact absurd rfl (hc C fs)
+    all_goals exact .inl (Converges.of_eq fun _ => by simp [headStep, hℓ])
   | @bubble Ki v σ =>
     cases Ki <;> exact .inl (Converges.of_eq fun _ => rfl)
 
@@ -362,7 +376,8 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubble (Ki := .is _)
          | exact .bubble (Ki := .cond _ _ _)
          | exact .bubble (Ki := .propertyGet _ _)
-         | exact .bubble (Ki := .seq _))
+         | exact .bubble (Ki := .seq _)
+         | exact .bubble (Ki := .variableSetAt _ _))
     | (obtain ⟨hc, hr⟩ := promotionCheck_eq_next h
        obtain ⟨rfl, rfl⟩ := StepResult.next.inj hr
        first
@@ -413,6 +428,7 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
   | cond m₁ m₂ m₃ T => simp [primStep, hin (.cond m₂ m₃ T) m₁ rfl]
   | propertyGet m p T => simp [primStep, hin (.propertyGet p T) m rfl]
   | seq m₁ m₂ => simp [primStep, hin (.seq m₂) m₁ rfl]
+  | variableSetAt x ℓ m => simp [primStep, hin (.variableSetAt x ℓ) m rfl]
   | _ => rfl
 
 omit [RtSubChecker τ] in
