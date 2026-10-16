@@ -100,6 +100,11 @@ public inductive LoweredExpr where
   (after any promotion) is `T`.
   -/
   | propertyGet (m : LoweredExpr) (p : Property) (T : τ)
+  /--
+  An assignment to local variable or formal parameter `v`, `v = m`: evaluates `m`, stores its
+  value in `v`, and evaluates to that value. (Kernel calls this a `VariableSet`.)
+  -/
+  | variableSet (v : Variable) (m : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -116,6 +121,11 @@ public inductive LoweredExpr where
   | varAt (v : Variable) (T : τ) (ℓ : Loc)
   /-- Evaluate `m₁`, discard its value, then evaluate `m₂`. A block runs as a sequence. -/
   | seq (m₁ m₂ : LoweredExpr)
+  /--
+  An assignment to local variable or formal parameter `v`, resolved to the heap cell at `ℓ`.
+  Declaring a variable resolves each `variableSet v m` in its scope to `variableSetAt v ℓ m`.
+  -/
+  | variableSetAt (v : Variable) (ℓ : Loc) (m : LoweredExpr)
 
 /--
 An evaluation context item: an expression with a hole in the position that evaluates next. See
@@ -134,6 +144,8 @@ public inductive EctxItem where
   | propertyGet (p : Property) (T : τ)
   /-- `seq(□, m₂)` -/
   | seq (m₂ : LoweredExpr)
+  /-- `v = □`, with `v` resolved to the heap cell at `ℓ` -/
+  | variableSetAt (v : Variable) (ℓ : Loc)
 
 end
 
@@ -174,10 +186,12 @@ public def LoweredExpr.typeOf :
   | cond _ _ _ T => T
   | block _ => Γ.Null
   | propertyGet _ _ T => T
+  | variableSet _ m => m.typeOf
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | varAt _ T _ => T
   | seq _ m₂ => m₂.typeOf
+  | variableSetAt _ _ m => m.typeOf
 
 local notation "EctxItem" => EctxItem (τ := τ)
 
@@ -232,6 +246,7 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .cond m₂ m₃ T, m => .cond m m₂ m₃ T
   | .propertyGet p T, m => .propertyGet m p T
   | .seq m₂, m => .seq m m₂
+  | .variableSetAt v ℓ, m => .variableSetAt v ℓ m
 
 omit Γ in
 /-- An expression with a hole plugged (`Ki.fill m`) hasn't completed (`toOutcome? = none`). -/
