@@ -12,10 +12,11 @@ cells before running it.
 
 *Resolving* (`LoweredExpr.resolve`, and `LoweredExpr.resolveBlock` for the elements of a block) is
 the basic operation, for one variable `x` and one location `ℓ`. It replaces each reference to `x`
-that isn't shadowed (`var x T`) with `varAt x T ℓ`. `resolveBlock` stops at a declaration of `x`,
-which shadows it for the rest of the block. The semantics resolves during execution: when a block
-declares `v`, the head step allocates a cell for `v`, and resolves `v` to it in the rest of the
-block (see `HeadStep.blockDeclare`).
+that isn't shadowed: `var x T` becomes `varAt x T ℓ`, and `variableSet x m'` becomes
+`variableSetAt x ℓ m'`. `resolveBlock` stops at a declaration of `x`, which shadows it for the rest
+of the block. The semantics resolves during execution: when a block declares `v`, the head step
+allocates a cell for `v`, and resolves `v` to it in the rest of the block (see
+`HeadStep.blockDeclare`).
 
 *Binding* (`LoweredExpr.bindVariables`, and `LoweredExpr.bindBlock` for the elements of a block)
 resolves each variable in a list of bindings in turn. It's for an expression's free variables (such
@@ -60,6 +61,9 @@ public theorem LoweredExpr.resolve_ne_declare {m : LoweredExpr}
     simp only [resolve] at h
     split at h <;> simp at h
   | declare v' T' sN' => exact hm v' T' sN' rfl
+  | variableSet v' m' =>
+    simp only [resolve] at h
+    split at h <;> simp at h
   | _ => simp [resolve] at h
 
 /--
@@ -95,10 +99,19 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
     simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂, resolve_comm hne m₃]
   | .block ms => by simp only [resolve, resolveBlock_comm hne ms]
   | .propertyGet m p T => by simp only [resolve, resolve_comm hne m]
+  | .variableSet v m => by
+    by_cases hx : v = x
+    · subst hx
+      simp [resolve, hne, resolve_comm hne m]
+    · by_cases hy : v = y
+      · subst hy
+        simp [resolve, hx, resolve_comm hne m]
+      · simp [resolve, hx, hy, resolve_comm hne m]
   | .val _ => rfl
   | .throwing _ => rfl
   | .varAt _ _ _ => rfl
   | .seq m₁ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
+  | .variableSetAt _ _ m => by simp only [resolve, resolve_comm hne m]
 
 /-- Resolving two different variables (`hne`) in a block gives the same result in either order. -/
 public theorem LoweredExpr.resolveBlock_comm {x y : Variable} {ℓ ℓ' : Loc} (hne : x ≠ y) :

@@ -27,7 +27,8 @@ mutual
 
 /--
 Resolve each reference to variable `x` in `m` to the cell at `ℓ`: replace each `var x T` that `x`
-isn't shadowed for with `varAt x T ℓ`.
+isn't shadowed for with `varAt x T ℓ`, and each assignment `variableSet x m'` with
+`variableSetAt x ℓ m'`.
 
 Values (in `val` and `throwing`) are left alone, since they contain no variable references.
 -/
@@ -42,10 +43,14 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .cond m₁ m₂ m₃ T => .cond (m₁.resolve x ℓ) (m₂.resolve x ℓ) (m₃.resolve x ℓ) T
   | .block ms => .block (LoweredExpr.resolveBlock x ℓ ms)
   | .propertyGet m p T => .propertyGet (m.resolve x ℓ) p T
+  | .variableSet v m =>
+    if v = x then .variableSetAt v ℓ (m.resolve x ℓ) else .variableSet v (m.resolve x ℓ)
   | .val v => .val v
   | .throwing v => .throwing v
   | .varAt v T ℓ' => .varAt v T ℓ'
   | .seq m₁ m₂ => .seq (m₁.resolve x ℓ) (m₂.resolve x ℓ)
+  -- The target is already resolved, but `x` may still occur in the right-hand side.
+  | .variableSetAt v ℓ' m => .variableSetAt v ℓ' (m.resolve x ℓ)
 
 /--
 Resolve each reference to variable `x` in the elements `ms` of a block to the cell at `ℓ`, as
