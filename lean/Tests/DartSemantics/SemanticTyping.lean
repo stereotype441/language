@@ -59,22 +59,24 @@ attribute [local instance] verify
 With promotion checks, `{ x as int; x }` is safe whenever `x` holds a value that satisfies
 `Object?`: the second read of `x`, promoted to `int`, passes its promotion check.
 -/
-example (σ : State) (bindings : List (Variable × Loc)) (h : FactHolds σ bindings (.var x ObjectQ)) :
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (h : FactHolds σ bindings (.var x ObjectQ)) :
     adequate .NotStuck ((castThenRead x ObjectQ int).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings h
+  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h
 
 /--
 With promotion checks, `{ x._f!; x._f }` is safe whenever `x` refers to an object whose instance
 variable `_f` holds a value that satisfies `Object?`: the second read of `x._f`, promoted to
 `Object`, passes its promotion check.
 -/
-example (σ : State) (bindings : List (Variable × Loc)) (hx : FactHolds σ bindings (.var x Object))
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x Object))
     (hf : FactHolds σ bindings (.field x "_f" ObjectQ)) :
     adequate .NotStuck ((nullCheckThenRead x ObjectQ f ObjectQ).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
   nullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) typeLaws (by decide) σ bindings
-    hx hf
+    hb hx hf
 
 end Verify
 
@@ -83,10 +85,11 @@ section Trust
 attribute [local instance] trust
 
 /-- Without promotion checks, `{ x as int; x }` is safe too. -/
-example (σ : State) (bindings : List (Variable × Loc)) (h : FactHolds σ bindings (.var x ObjectQ)) :
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (h : FactHolds σ bindings (.var x ObjectQ)) :
     adequate .NotStuck ((castThenRead x ObjectQ int).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings h
+  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h
 
 end Trust
 

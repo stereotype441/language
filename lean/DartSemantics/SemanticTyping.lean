@@ -45,12 +45,20 @@ before it to the facts of the model after it. That is the soundness theorem for 
 Keeping the translation separate keeps the program logic out of reasoning about models (joins,
 demotions, and so on), and keeps this file independent of how flow analysis represents them.
 
-## Simplifications
+## Local variables' cells
 
-The subset of Dart modeled so far has no assignments, so a variable's cell never changes once it
-has been initialized. The judgment exploits this: a context's promises about a variable are backed
-by a persistent points-to for its cell. Once the semantics has assignments, this will need iris
-invariants and ghost state instead.
+A local variable's cell can change (an assignment stores a new value in it), so a context's
+promises about a variable can't be backed by a persistent points-to for its cell. Instead, the
+judgment owns the cells of the variables in scope exclusively (`interpEnv`), and describes their
+contents with an *environment* (`Env`), a function from variables to cells. The facts
+(`interpFact`) are persistent statements about the environment. Until the semantics has closures
+or `async`, a local variable's cell is never shared, so exclusive ownership is enough: no iris
+invariants or ghost state are needed.
+
+The semantics doesn't have assignments to instance variables yet, so a fact about an instance
+variable is still backed by persistent points-tos for its cell and its object's own cell.
+
+## Simplifications
 
 A property read is only typed when its receiver is a variable `x`, and the context promises that
 `x` refers to an object with an instance variable of that name (`Fact.field`). Reading a property
@@ -96,6 +104,11 @@ public def ValOk : Value → τ → Prop
 A fact that a context records: what is known about a variable at a point in the program.
 -/
 public inductive Fact where
+  /--
+  Variable `x` is in scope: it is bound to a cell. (This survives joins that lose what `x` holds:
+  after `int x; if (b) { x = 1; }`, `x` may not be assigned, but it can still be assigned to.)
+  -/
+  | decl (x : Variable)
   /-- Variable `x` holds a value that satisfies `T`. -/
   | var (x : Variable) (T : τ)
   /--
@@ -104,8 +117,7 @@ public inductive Fact where
 
   This only describes one step from a variable, so properties of properties (`x._y._z`) can't be
   read or promoted yet. Generalizing to property paths (`x` followed by a list of instance variable
-  names, like flow analysis's promotion keys) is straightforward; it is left until the semantics has
-  writes, which must invalidate facts about every path through what they write.
+  names, like flow analysis's promotion keys) is straightforward, and planned.
   -/
   | field (x : Variable) (name : String) (T : τ)
   deriving DecidableEq
@@ -115,6 +127,7 @@ local notation "Fact" => Fact (τ := τ)
 /-- The variable that a fact is about. -/
 @[expose]
 public def Fact.variable : Fact → Variable
+  | .decl x => x
   | .var x _ => x
   | .field x _ _ => x
 
@@ -150,6 +163,50 @@ omit Γ in
 public theorem Ctx.byCondition_false (Δt Δf : Ctx) : Ctx.byCondition Δt Δf (.bool false) = Δf :=
   rfl
 
+/--
+An environment: the contents of the cells of the variables in scope (see the module doc).
+
+It's a total function (`Variable → Cell`, not `Variable → Option Cell`), although only the
+variables in scope have cells. That's harmless, because its values at other variables never
+matter:
+- every use of an environment is guarded by a lookup in `bindings`: `interpEnv` only looks at the
+  variables that `bindings` binds, and `interpFact` looks at `env x` only together with
+  `bindings.lookup x = some ℓ`. Since `SemTyped` quantifies over every environment, the typing
+  rules can't depend on its values at other variables either; and
+- the one place that builds an environment from scratch (`envOf`, which `safety` uses to start
+  from a state) reads each bound variable's cell from the state, and picks `.uninit`, arbitrarily,
+  for every other variable.
+-/
+public abbrev Env := Variable → Cell
+
+local notation "Env" => Env (τ := τ)
+
+/-- The environment `env`, with variable `x`'s cell holding `c`. -/
+@[expose]
+public def Env.set (env : Env) (x : Variable) (c : Cell) : Env :=
+  fun y => if y = x then c else env y
+
+/-- In `env.set x c`, `x`'s cell holds `c`. -/
+@[simp]
+public theorem Env.set_self (env : Env) (x : Variable) (c : Cell) : env.set x c x = c := by
+  simp [Env.set]
+
+/-- In `env.set x c`, the cell of a variable `y` other than `x` (`h`) holds what it did in `env`. -/
+public theorem Env.set_ne {env : Env} {x y : Variable} (h : y ≠ x) (c : Cell) :
+    env.set x c y = env y := by
+  simp [Env.set, h]
+
+/--
+Setting a variable's cell to what it already holds doesn't change an environment
+(`env.set x (env x) = env`).
+-/
+public theorem Env.set_eq_self (env : Env) (x : Variable) : env.set x (env x) = env := by
+  funext y
+  by_cases h : y = x
+  · subst h
+    simp
+  · exact Env.set_ne h _
+
 section Interp
 
 variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
@@ -169,41 +226,61 @@ public instance interpVal_persistent (T : τ) (v : Value) :
   infer_instance
 
 /--
-The interpretation of a fact, given the cells that variables are bound to (`bindings`). The cells
-of the variables, and of the instance variables, are owned persistently: they never change.
+Ownership of the cell of a local variable at `ℓ`, holding `c`, which must be a variable's cell (a
+value, or uninitialized), not an object's own cell.
 -/
 @[expose, reducible]
-public def interpFact (bindings : List (Variable × Loc)) : Fact → IProp GF
-  | .var x T => iprop(∃ ℓ v, ⌜bindings.lookup x = some ℓ⌝ ∗ ℓ ↦{.discard} (.val v : Cell) ∗
-      interpVal T v)
-  | .field x name T => iprop(∃ ℓ ℓo C fs ℓf w,
-      ⌜bindings.lookup x = some ℓ ∧ fs.lookup name = some ℓf⌝ ∗
-      ℓ ↦{.discard} (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object C fs : Cell) ∗
-      ℓf ↦{.discard} (.val w : Cell) ∗ interpVal T w)
+public def interpCell (ℓ : Loc) (c : Cell) : IProp GF :=
+  iprop(⌜∀ C fs, c ≠ .object C fs⌝ ∗ ℓ ↦ c)
 
-public instance interpFact_persistent (bindings : List (Variable × Loc)) (f : Fact) :
-    Persistent (interpFact (GF := GF) bindings f) := by
+/--
+The interpretation of an environment: exclusive ownership of the cell of each variable in
+`bindings`, holding what `env` says. (The judgment only uses lists of bindings that bind each
+variable at most once; see `SemTyped`.)
+-/
+@[expose]
+public def interpEnv : List (Variable × Loc) → Env → IProp GF
+  | [], _ => iprop(emp)
+  | (x, ℓ) :: bs, env => iprop(interpCell ℓ (env x) ∗ interpEnv bs env)
+
+/--
+The interpretation of a fact, given the cells that variables are bound to (`bindings`), and what
+they hold (`env`). The cells of instance variables, and objects' own cells, are owned
+persistently: they never change.
+-/
+@[expose, reducible]
+public def interpFact (bindings : List (Variable × Loc)) (env : Env) : Fact → IProp GF
+  | .decl x => iprop(⌜∃ ℓ, bindings.lookup x = some ℓ⌝)
+  | .var x T => iprop(∃ ℓ v, ⌜bindings.lookup x = some ℓ ∧ env x = .val v⌝ ∗ interpVal T v)
+  | .field x name T => iprop(∃ ℓ ℓo C fs ℓf w,
+      ⌜bindings.lookup x = some ℓ ∧ env x = .val (.obj ℓo) ∧ fs.lookup name = some ℓf⌝ ∗
+      ℓo ↦{.discard} (.object C fs : Cell) ∗ ℓf ↦{.discard} (.val w : Cell) ∗ interpVal T w)
+
+public instance interpFact_persistent (bindings : List (Variable × Loc)) (env : Env) (f : Fact) :
+    Persistent (interpFact (GF := GF) bindings env f) := by
   cases f <;> unfold interpFact <;> infer_instance
 
 /-- The interpretation of a context: every fact in it holds. -/
 @[expose]
-public def interpCtx (bindings : List (Variable × Loc)) (Δ : Ctx) : IProp GF :=
-  iprop(□ ∀ f, ⌜f ∈ Δ⌝ → interpFact bindings f)
+public def interpCtx (bindings : List (Variable × Loc)) (env : Env) (Δ : Ctx) : IProp GF :=
+  iprop(□ ∀ f, ⌜f ∈ Δ⌝ → interpFact bindings env f)
 
-public instance interpCtx_persistent (bindings : List (Variable × Loc)) (Δ : Ctx) :
-    Persistent (interpCtx (GF := GF) bindings Δ) := by
+public instance interpCtx_persistent (bindings : List (Variable × Loc)) (env : Env) (Δ : Ctx) :
+    Persistent (interpCtx (GF := GF) bindings env Δ) := by
   unfold interpCtx
   infer_instance
 
 /--
 What an expression of static type `T` promises when it completes with outcome `o`: if it completes
-normally with value `v`, then `v` satisfies `T`, and the facts `Δa v` hold afterwards. If it
-throws, nothing.
+normally with value `v`, then `v` satisfies `T`, and for some environment `env'` (what the
+variables' cells hold afterwards), the cells are owned, and the facts `Δa v` hold. If it throws,
+nothing.
 -/
 @[expose]
 public def interpOutcome (bindings : List (Variable × Loc)) (T : τ) (Δa : Value → Ctx) :
     DartLang.Outcome (τ := τ) → IProp GF
-  | .normal v => iprop(interpVal T v ∗ interpCtx bindings (Δa v))
+  | .normal v => iprop(∃ env', interpEnv bindings env' ∗ interpVal T v ∗
+      interpCtx bindings env' (Δa v))
   | .throwing _ => iprop(True)
 
 variable [SemanticParams τ]
@@ -211,13 +288,16 @@ variable [SemanticParams τ]
 variable (GF) in
 /--
 The semantic typing judgment `SemTyped Δb m T Δa`: whatever cells the variables in scope are bound
-to (`bindings`), if the facts in `Δb` hold before, then running `m` doesn't get stuck, and if it
-completes normally with value `v`, then `v` satisfies `T`, and the facts `Δa v` hold after.
+to (`bindings`, which binds each variable at most once), and whatever those cells hold (`env`), if
+the cells are owned and the facts in `Δb` hold before, then running `m` doesn't get stuck, and if
+it completes normally with value `v`, then `v` satisfies `T`, and afterwards the cells are owned
+and the facts `Δa v` hold.
 -/
 @[expose]
 public def SemTyped (Δb : Ctx) (m : LoweredExpr) (T : τ) (Δa : Value → Ctx) : Prop :=
-  ∀ bindings, interpCtx (GF := GF) bindings Δb ⊢
-    WP (m.bindVariables bindings) {{ o, interpOutcome bindings T Δa o }}
+  ∀ bindings, (bindings.map (·.1)).Nodup → ∀ env,
+    interpEnv (GF := GF) bindings env ∗ interpCtx bindings env Δb ⊢
+      WP (m.bindVariables bindings) {{ o, interpOutcome bindings T Δa o }}
 
 /-! ### The value interpretation -/
 
@@ -317,16 +397,22 @@ public theorem interpVal_nonNull (L : TypeLaws τ) {T : τ} {v : Value} (hv : v 
 /-! ### Contexts -/
 
 omit [SemanticParams τ] in
-/-- A fact about `x` only depends on the cell that `x` is bound to. -/
-public theorem interpFact_congr {bindings bindings' : List (Variable × Loc)} {f : Fact}
-    (h : bindings.lookup f.variable = bindings'.lookup f.variable) :
-    interpFact (GF := GF) bindings f ⊢ interpFact bindings' f := by
-  cases f <;> simp only [Fact.variable] at h <;> simp only [interpFact, h] <;> exact .rfl
+/--
+A fact about `x` only depends on the cell that `x` is bound to, and what it holds: `f` holds for
+`bindings'` and `env'` if it holds for `bindings` and `env`, and:
+- `bindings` and `bindings'` bind `f`'s variable to the same cell (`h`); and
+- `env` and `env'` agree on what that cell holds (`he`).
+-/
+public theorem interpFact_congr {bindings bindings' : List (Variable × Loc)} {env env' : Env}
+    {f : Fact} (h : bindings.lookup f.variable = bindings'.lookup f.variable)
+    (he : env f.variable = env' f.variable) :
+    interpFact (GF := GF) bindings env f ⊢ interpFact bindings' env' f := by
+  cases f <;> simp only [Fact.variable] at h he <;> simp only [interpFact, h, he] <;> exact .rfl
 
 omit [SemanticParams τ] in
 /-- If a context `Δ₀` holds, every context `Δ` with fewer facts (`h`) holds too. -/
-public theorem interpCtx_mono {bindings : List (Variable × Loc)} {Δ Δ₀ : Ctx}
-    (h : ∀ f ∈ Δ, f ∈ Δ₀) : interpCtx (GF := GF) bindings Δ₀ ⊢ interpCtx bindings Δ := by
+public theorem interpCtx_mono {bindings : List (Variable × Loc)} {env : Env} {Δ Δ₀ : Ctx}
+    (h : ∀ f ∈ Δ, f ∈ Δ₀) : interpCtx (GF := GF) bindings env Δ₀ ⊢ interpCtx bindings env Δ := by
   unfold interpCtx
   iintro #H
   imodintro
@@ -337,8 +423,8 @@ public theorem interpCtx_mono {bindings : List (Variable × Loc)} {Δ Δ₀ : Ct
 
 omit [SemanticParams τ] in
 /-- A fact `f` in a context `Δ` (`h`) holds if the whole context holds. -/
-public theorem interpCtx_elim {bindings : List (Variable × Loc)} {Δ : Ctx} {f : Fact}
-    (h : f ∈ Δ) : interpCtx (GF := GF) bindings Δ ⊢ interpFact bindings f := by
+public theorem interpCtx_elim {bindings : List (Variable × Loc)} {env : Env} {Δ : Ctx} {f : Fact}
+    (h : f ∈ Δ) : interpCtx (GF := GF) bindings env Δ ⊢ interpFact bindings env f := by
   unfold interpCtx
   iintro #H
   iapply H
@@ -347,8 +433,8 @@ public theorem interpCtx_elim {bindings : List (Variable × Loc)} {Δ : Ctx} {f 
 
 omit [SemanticParams τ] in
 /-- The empty context promises nothing. -/
-public theorem interpCtx_nil (bindings : List (Variable × Loc)) :
-    ⊢ interpCtx (GF := GF) bindings ([] : Ctx) := by
+public theorem interpCtx_nil (bindings : List (Variable × Loc)) (env : Env) :
+    ⊢ interpCtx (GF := GF) bindings env ([] : Ctx) := by
   unfold interpCtx
   imodintro
   iintro %f %hf
@@ -356,11 +442,12 @@ public theorem interpCtx_nil (bindings : List (Variable × Loc)) :
 
 omit [SemanticParams τ] in
 /--
-A context holds (`interpCtx bindings (f :: Δ)`) if one of its facts holds
-(`interpFact bindings f`) and the rest of it holds (`interpCtx bindings Δ`).
+A context holds (`interpCtx bindings env (f :: Δ)`) if one of its facts holds
+(`interpFact bindings env f`) and the rest of it holds (`interpCtx bindings env Δ`).
 -/
-public theorem interpCtx_cons {bindings : List (Variable × Loc)} {f : Fact} {Δ : Ctx} :
-    interpFact (GF := GF) bindings f ∗ interpCtx bindings Δ ⊢ interpCtx bindings (f :: Δ) := by
+public theorem interpCtx_cons {bindings : List (Variable × Loc)} {env : Env} {f : Fact} {Δ : Ctx} :
+    interpFact (GF := GF) bindings env f ∗ interpCtx bindings env Δ ⊢
+      interpCtx bindings env (f :: Δ) := by
   unfold interpCtx
   iintro ⟨#Hf, #H⟩
   imodintro
@@ -372,18 +459,125 @@ public theorem interpCtx_cons {bindings : List (Variable × Loc)} {f : Fact} {Δ
     exact h
 
 omit [SemanticParams τ] in
-/-- A context only depends on the cells that the variables it has facts about are bound to. -/
-public theorem interpCtx_congr {bindings bindings' : List (Variable × Loc)} {Δ : Ctx}
-    (h : ∀ f ∈ Δ, bindings.lookup f.variable = bindings'.lookup f.variable) :
-    interpCtx (GF := GF) bindings Δ ⊢ interpCtx bindings' Δ := by
+/--
+A context only depends on the cells that the variables it has facts about are bound to, and what
+they hold: `Δ` holds for `bindings'` and `env'` if it holds for `bindings` and `env`, and, for each
+of its facts `f`:
+- `bindings` and `bindings'` bind `f`'s variable to the same cell (`h`); and
+- `env` and `env'` agree on what that variable's cell holds (`he`).
+-/
+public theorem interpCtx_congr {bindings bindings' : List (Variable × Loc)} {env env' : Env}
+    {Δ : Ctx} (h : ∀ f ∈ Δ, bindings.lookup f.variable = bindings'.lookup f.variable)
+    (he : ∀ f ∈ Δ, env f.variable = env' f.variable) :
+    interpCtx (GF := GF) bindings env Δ ⊢ interpCtx bindings' env' Δ := by
   unfold interpCtx
   iintro #H
   imodintro
   iintro %f %hf
-  iapply interpFact_congr (h f hf)
+  iapply interpFact_congr (h f hf) (he f hf)
   iapply H
   ipureintro
   exact hf
+
+/-! ### Environments -/
+
+omit Γ [SemanticParams τ] in
+/--
+The interpretation of an environment only depends on what it says about the variables bound: it's
+the same for `env` and `env'` if they agree on every variable in `bindings` (`h`).
+-/
+public theorem interpEnv_congr {bindings : List (Variable × Loc)} {env env' : Env}
+    (h : ∀ b ∈ bindings, env b.1 = env' b.1) :
+    interpEnv (GF := GF) bindings env = interpEnv bindings env' := by
+  induction bindings with
+  | nil => rfl
+  | cons b bs ih =>
+    obtain ⟨x, ℓ⟩ := b
+    simp only [interpEnv, h (x, ℓ) (List.mem_cons_self ..),
+      ih (fun b hb => h b (List.mem_cons_of_mem _ hb))]
+
+omit [SemanticParams τ] in
+/--
+Access to the cell of variable `x`, bound to `ℓ` (`bindings.lookup x = some ℓ`), when each variable
+is bound at most once (`hnd`): the interpretation of the environment (`interpEnv bindings env`)
+gives
+- the ownership of `x`'s cell, holding what `env` says (`interpCell ℓ (env x)`); and
+- a way to get back the interpretation of the environment updated with whatever cell `c` the
+  ownership is returned with (`∀ c, interpCell ℓ c -∗ interpEnv bindings (env.set x c)`).
+-/
+public theorem interpEnv_acc {bindings : List (Variable × Loc)} {env : Env} {x : Variable}
+    {ℓ : Loc} (hnd : (bindings.map (·.1)).Nodup) (hl : bindings.lookup x = some ℓ) :
+    interpEnv (GF := GF) bindings env ⊢
+      interpCell ℓ (env x) ∗ (∀ c, interpCell ℓ c -∗ interpEnv bindings (env.set x c)) := by
+  induction bindings with
+  | nil => simp at hl
+  | cons b bs ih =>
+    obtain ⟨y, ℓy⟩ := b
+    simp only [List.map_cons, List.nodup_cons] at hnd
+    by_cases hxy : x = y
+    · subst hxy
+      simp only [List.lookup_cons_self, Option.some.injEq] at hl
+      subst hl
+      have hrest : ∀ c, interpEnv (GF := GF) bs (env.set x c) = interpEnv bs env := fun c =>
+        interpEnv_congr fun b hb => Env.set_ne (fun h => hnd.1 (List.mem_map.2 ⟨b, hb, h⟩)) c
+      simp only [interpEnv]
+      iintro ⟨Hc, Hrest⟩
+      iframe Hc
+      iintro %c Hc
+      rw [hrest c, Env.set_self]
+      iframe Hc
+      iexact Hrest
+    · rw [lookup_cons_ne hxy] at hl
+      simp only [interpEnv]
+      iintro ⟨Hy, Hrest⟩
+      icases ih hnd.2 hl $$ Hrest with ⟨Hc, Hback⟩
+      iframe Hc
+      iintro %c Hc
+      rw [Env.set_ne (Ne.symm hxy)]
+      iframe Hy
+      iapply Hback $$ Hc
+
+omit [SemanticParams τ] in
+/--
+Access to the cell of variable `x`, bound to `ℓ` (`bindings.lookup x = some ℓ`), for reading it,
+when each variable is bound at most once (`hnd`): the interpretation of the environment
+(`interpEnv bindings env`) gives
+- the ownership of `x`'s cell, holding what `env` says (`interpCell ℓ (env x)`); and
+- a way to get back the interpretation of the same environment when the ownership is returned
+  unchanged (`interpCell ℓ (env x) -∗ interpEnv bindings env`).
+-/
+public theorem interpEnv_acc_read {bindings : List (Variable × Loc)} {env : Env} {x : Variable}
+    {ℓ : Loc} (hnd : (bindings.map (·.1)).Nodup) (hl : bindings.lookup x = some ℓ) :
+    interpEnv (GF := GF) bindings env ⊢
+      interpCell ℓ (env x) ∗ (interpCell ℓ (env x) -∗ interpEnv bindings env) := by
+  refine (interpEnv_acc (env := env) hnd hl).trans (sep_mono_right ?_)
+  have h : (∀ c, interpCell (GF := GF) ℓ c -∗ interpEnv bindings (env.set x c)) ⊢
+      (interpCell ℓ (env x) -∗ interpEnv bindings (env.set x (env x))) := forall_elim (env x)
+  rw [Env.set_eq_self] at h
+  exact h
+
+omit [SemanticParams τ] in
+/--
+The interpretation of an environment is equivalent to the separating conjunction of the part for
+the bindings of `v` (`bindings.filter (fun b => b.1 = v)`) and the part for the others
+(`bindings.filter (fun b => b.1 ≠ v)`).
+-/
+public theorem interpEnv_split (bindings : List (Variable × Loc)) (env : Env) (v : Variable) :
+    interpEnv (GF := GF) bindings env ⊣⊢
+      interpEnv (bindings.filter (fun b => b.1 = v)) env ∗
+        interpEnv (bindings.filter (fun b => b.1 ≠ v)) env := by
+  induction bindings with
+  | nil => exact emp_sep.symm
+  | cons b bs ih =>
+    obtain ⟨y, ℓ⟩ := b
+    by_cases hy : y = v
+    · simp only [List.filter_cons, hy, decide_true, ne_eq, not_true_eq_false, decide_false,
+        interpEnv]
+      exact (sep_congr .rfl ih).trans sep_assoc.symm
+    · simp only [List.filter_cons, hy, decide_false, ne_eq, not_false_eq_true, decide_true,
+        interpEnv]
+      refine (sep_congr .rfl ih).trans ?_
+      exact sep_left_comm
 
 /-! ### Structural rules -/
 
@@ -397,10 +591,18 @@ precondition and postcondition of a Hoare triple.
 public theorem SemTyped.weaken {Δb Δb' : Ctx} {m : LoweredExpr} {T T' : τ}
     {Δa Δa' : Value → Ctx} (h : SemTyped GF Δb m T Δa) (hin : ∀ f ∈ Δb, f ∈ Δb')
     (hT : T ≤ T') (hout : ∀ v, ∀ f ∈ Δa' v, f ∈ Δa v) : SemTyped GF Δb' m T' Δa' := by
-  intro bindings
-  refine (interpCtx_mono hin).trans ((h bindings).trans (wp_mono fun o => ?_))
+  intro bindings hnd env
+  refine (sep_mono_right (interpCtx_mono hin)).trans
+    ((h bindings hnd env).trans (wp_mono fun o => ?_))
   cases o with
-  | normal v => exact sep_mono (interpVal_mono hT) (interpCtx_mono (hout v))
+  | normal v =>
+    simp only [interpOutcome]
+    iintro ⟨%env', He, #Hv, #H⟩
+    iexists env'
+    iframe He
+    isplitr
+    · iapply interpVal_mono hT $$ Hv
+    · iapply interpCtx_mono (hout v) $$ H
   | throwing _ => exact .rfl
 
 /--
@@ -409,19 +611,23 @@ Running an evaluation context item `Ki` around an expression `e` satisfies a pos
 - given `P`, `e` satisfies the typing postcondition for static type `T` and guaranteed facts `Δa`
   afterwards (`H`);
 - for each value `v` that `e` can complete normally with, running `Ki` around `v` satisfies `Ψ`,
-  given the fact that `v` satisfies `T` (`interpVal T v`) and the guaranteed facts
-  (`interpCtx bindings (Δa v)`) (`Hn`); and
+  given the ownership of the cells (`interpEnv bindings env'`), the fact that `v` satisfies `T`
+  (`interpVal T v`), and the guaranteed facts (`interpCtx bindings env' (Δa v)`) (`Hn`); and
 - `Ψ` holds of throwing any exception (`Ht`): an exception thrown by `e` propagates out of `Ki`.
 -/
 public theorem wp_fill_typed {P : IProp GF} {Ki : EctxItem (τ := τ)} {e : LoweredExpr}
     {bindings : List (Variable × Loc)} {T : τ} {Δa : Value → Ctx}
     {Ψ : DartLang.Outcome (τ := τ) → IProp GF}
     (H : P ⊢ WP e {{ o, interpOutcome bindings T Δa o }})
-    (Hn : ∀ v, interpVal T v ∗ interpCtx bindings (Δa v) ⊢ WP (Ki.fill (.val v)) {{ Ψ }})
+    (Hn : ∀ v env', interpEnv bindings env' ∗ interpVal T v ∗ interpCtx bindings env' (Δa v) ⊢
+      WP (Ki.fill (.val v)) {{ Ψ }})
     (Ht : ∀ v, ⊢ Ψ (.throwing v)) : P ⊢ WP (Ki.fill e) {{ Ψ }} := by
   refine H.trans ((wp_mono fun o => ?_).trans (wp_bind_item Ki))
   cases o with
-  | normal v => exact Hn v
+  | normal v =>
+    simp only [interpOutcome, DartLang.Outcome.toExpr]
+    iintro ⟨%env', H⟩
+    iapply Hn v env' $$ H
   | throwing v =>
     refine .trans ?_ (wp_bubble Ki v)
     iintro -

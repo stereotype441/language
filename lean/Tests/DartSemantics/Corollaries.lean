@@ -51,17 +51,18 @@ public theorem castThenRead_typed {hlc : HasLC} {GF : BundledGFunctors} [DartGS 
 /--
 `{ x as T; x }`, started in state `σ` with its variables bound by `bindings`, never gets stuck, and
 every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`), if:
-- `U` is a subtype of `x`'s static type `Tx` (`hU`); and
+- `U` is a subtype of `x`'s static type `Tx` (`hU`);
+- the bindings are suitable (`hb`); and
 - `x` holds a value that satisfies `U` in `σ` (`hσ`).
 
 In particular, the read of `x` promoted to `T` never fails its promotion check.
 -/
 public theorem castThenRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     {x : Variable} {U Tx T : τ} (hU : U ≤ Tx) (σ : State) (bindings : List (Variable × Loc))
-    (hσ : FactHolds σ bindings (.var x U)) :
+    (hb : BindingsOk σ bindings) (hσ : FactHolds σ bindings (.var x U)) :
     adequate .NotStuck ((castThenRead x Tx T).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (castThenRead_typed hU) fun f hf => by
+  safety (GF := GF) σ bindings (castThenRead_typed hU) hb fun f hf => by
     rw [List.mem_singleton.1 hf]
     exact hσ
 
@@ -95,6 +96,7 @@ public theorem nullCheckThenRead_typed {hlc : HasLC} {GF : BundledGFunctors} [Da
 `{ x._f!; x._f }`, started in state `σ` with its variables bound by `bindings`, never gets stuck,
 and every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`), if:
 - `U` is a subtype of `x`'s static type `Tx` (`hU`);
+- the bindings are suitable (`hb`);
 - `x` holds a value that satisfies `U` in `σ` (`hx`); and
 - that value refers to an object with an instance variable named `p.name`, holding a value that
   satisfies `W` in `σ` (`hf`).
@@ -103,12 +105,12 @@ In particular, the read of `x._f` promoted to `NonNull W` never fails its promot
 -/
 public theorem nullCheckThenRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     (L : TypeLaws τ) {x : Variable} {p : Property} {U Tx W : τ} (hU : U ≤ Tx) (σ : State)
-    (bindings : List (Variable × Loc)) (hx : FactHolds σ bindings (.var x U))
-    (hf : FactHolds σ bindings (.field x p.name W)) :
+    (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x U)) (hf : FactHolds σ bindings (.field x p.name W)) :
     adequate .NotStuck ((nullCheckThenRead x Tx p W).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (nullCheckThenRead_typed L hU) fun f hf' => by
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hf'
+  safety (GF := GF) σ bindings (nullCheckThenRead_typed L hU) hb fun f hf' => by
+    simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf'
     rcases hf' with rfl | rfl
     · exact hx
     · exact hf

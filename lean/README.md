@@ -81,23 +81,26 @@ flowchart LR
   assigned, the types it has been tested against, and so on. Much of this only matters to the
   analysis itself, for example to decide what is known after a join.
 - **Facts** (`Fact`, in `DartSemantics/SemanticTyping.lean`) are simple statements that a running
-  program can rely on at a point, such as "`x` holds a value that satisfies `T`" (`Fact.var x T`),
-  or "`x` refers to an object whose instance variable `f` holds a value that satisfies `T`"
-  (`Fact.field x f T`). A *context* (`Ctx`) is a list of facts.
+  program can rely on at a point, such as "`x` is in scope" (`Fact.decl x`), "`x` holds a value that
+  satisfies `T`" (`Fact.var x T`), or "`x` refers to an object whose instance variable `f` holds a
+  value that satisfies `T`" (`Fact.field x f T`). A *context* (`Ctx`) is a list of facts.
 - **Iris propositions** (`IProp`) are statements in the program logic about the run-time heap.
-  Each fact means an Iris proposition (`interpFact`), and a context means that all of its facts
-  hold (`interpCtx`). For example, `Fact.var x T` means that `x` is bound to a cell, which holds a
+  Local variables' cells can change, so the judgment owns them exclusively (`interpEnv`), and
+  tracks what they hold with an *environment* (`Env`). Each fact means an Iris proposition about
+  the environment (`interpFact`), and a context means that all of its facts hold (`interpCtx`). For
+  example, `Fact.var x T` means that `x` is bound to a cell, which the environment says holds a
   value whose dynamic type is a subtype of `T` (`interpVal`).
 
-The semantic typing judgment `SemTyped Δb m T Δa` connects facts to how programs run: if the facts
-in `Δb` hold before `m` runs, then `m` doesn't get stuck, and if it completes normally with a value
-`v`, then `v` satisfies `T`, and the facts in `Δa v` hold afterwards. It is defined with an Iris
-weakest precondition, so it is proved with the program logic. `Compat.lean` proves a typing rule
-for each kind of expression, and the safety theorem (`safety`, in `Safety.lean`) turns the judgment
-into a statement about runs that doesn't mention Iris: an expression that is semantically well
-typed, started in a state where the facts in `Δb` hold, never gets stuck. When the semantics checks
-promotions (`PromotionChecks.verify`), a promotion check that fails gets stuck, so this includes
-every promotion check passing.
+The semantic typing judgment `SemTyped Δb m T Δa` connects facts to how programs run: given
+ownership of the cells of the variables in scope, if the facts in `Δb` hold before `m` runs, then
+`m` doesn't get stuck, and if it completes normally with a value `v`, then `v` satisfies `T`, and
+the facts in `Δa v` hold afterwards (with the ownership of the cells back). It is defined with an
+Iris weakest precondition, so it is proved with the program logic. `Compat.lean` proves a typing
+rule for each kind of expression, and the safety theorem (`safety`, in `Safety.lean`) turns the
+judgment into a statement about runs that doesn't mention Iris: an expression that is semantically
+well typed, started in a state where its variables are bound to suitable cells and the facts in
+`Δb` hold, never gets stuck. When the semantics checks promotions (`PromotionChecks.verify`), a
+promotion check that fails gets stuck, so this includes every promotion check passing.
 
 The soundness theorem for flow analysis, which comes next, will connect flow models to facts:
 
