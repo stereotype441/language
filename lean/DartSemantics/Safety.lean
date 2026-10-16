@@ -27,6 +27,7 @@ local notation "Cell" => Cell (τ := τ)
 local notation "State" => State (τ := τ)
 local notation "Fact" => Fact (τ := τ)
 local notation "Ctx" => Ctx (τ := τ)
+local notation "Env" => Env (τ := τ)
 
 /--
 What the safety theorem says about an outcome of an expression of static type `T`: a value it
@@ -44,15 +45,74 @@ public def OutcomeOk (T : τ) : DartLang.Outcome (τ := τ) → Prop
   | .normal (.cont _) => False
   | .throwing _ => True
 
-/-- Fact `f` holds in state `σ`, for the variables bound to cells by `bindings`. -/
+/--
+`bindings` are suitable for running a program from state `σ`: each variable is bound at most once
+(`nodup`), to a cell of its own (`nodup_locs`), which holds a value or is uninitialized (`cells`).
+-/
+public structure BindingsOk (σ : State) (bindings : List (Variable × Loc)) : Prop where
+  nodup : (bindings.map (·.1)).Nodup
+  nodup_locs : (bindings.map (·.2)).Nodup
+  cells : ∀ b ∈ bindings, ∃ c, σ.lookup b.2 = some c ∧ ∀ C fs, c ≠ .object C fs
+
+/--
+Fact `f` holds in state `σ`, for the variables bound to cells by `bindings`. For a fact about an
+instance variable, its cell must not be one of the variables' cells.
+-/
 @[expose]
 public def FactHolds (σ : State) (bindings : List (Variable × Loc)) : Fact → Prop
+  | .decl x => ∃ ℓ, bindings.lookup x = some ℓ
   | .var x T => ∃ ℓ v S, bindings.lookup x = some ℓ ∧ σ.lookup ℓ = some (.val v) ∧
       σ.dynamicType v = some S ∧ S ≤ T ∧ ValOk v S
   | .field x name T => ∃ ℓ ℓo C fs ℓf w S, bindings.lookup x = some ℓ ∧
       σ.lookup ℓ = some (.val (.obj ℓo)) ∧ σ.lookup ℓo = some (.object C fs) ∧
-      fs.lookup name = some ℓf ∧ σ.lookup ℓf = some (.val w) ∧ σ.dynamicType w = some S ∧
-      S ≤ T ∧ ValOk w S
+      fs.lookup name = some ℓf ∧ (∀ b ∈ bindings, b.2 ≠ ℓf) ∧ σ.lookup ℓf = some (.val w) ∧
+      σ.dynamicType w = some S ∧ S ≤ T ∧ ValOk w S
+
+/-- The environment of state `σ`: what the cells that `bindings` binds variables to hold. -/
+@[expose]
+public def envOf (σ : State) (bindings : List (Variable × Loc)) : Env :=
+  fun x => match bindings.lookup x with
+    | some ℓ => (σ.lookup ℓ).getD .uninit
+    | none => .uninit
+
+omit Γ in
+/-- The heap `m`, without the cells that `bindings` binds variables to. -/
+@[expose]
+public def unbound (m : LocMap Cell) (bindings : List (Variable × Loc)) : LocMap Cell :=
+  bindings.foldl (fun m b => delete m b.2) m
+
+omit Γ in
+/--
+Removing the variables' cells leaves the other cells alone: a cell at `ℓ` that isn't any variable's
+(`h`) is the same in `unbound m bindings` as in `m`.
+-/
+theorem get?_unbound {m : LocMap Cell} {bindings : List (Variable × Loc)} {ℓ : Loc}
+    (h : ∀ b ∈ bindings, b.2 ≠ ℓ) : get? (unbound m bindings) ℓ = get? m ℓ := by
+  induction bindings generalizing m with
+  | nil => rfl
+  | cons b bs ih =>
+    simp only [unbound, List.foldl_cons] at ih ⊢
+    rw [ih (fun b' hb' => h b' (List.mem_cons_of_mem _ hb')),
+      LawfulPartialMap.get?_delete_ne (h b (List.mem_cons_self ..))]
+
+/--
+A variable `x` bound only once (`hnd`) is bound to the cell `ℓ` it appears with (`h`):
+`bindings.lookup x = some ℓ`.
+-/
+theorem lookup_of_mem {bindings : List (Variable × Loc)} (hnd : (bindings.map (·.1)).Nodup)
+    {x : Variable} {ℓ : Loc} (h : (x, ℓ) ∈ bindings) : bindings.lookup x = some ℓ := by
+  induction bindings with
+  | nil => simp at h
+  | cons b bs ih =>
+    obtain ⟨y, ℓy⟩ := b
+    simp only [List.map_cons, List.nodup_cons] at hnd
+    rcases List.mem_cons.1 h with h | h
+    · simp only [Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      simp
+    · have hxy : x ≠ y := fun hxy => hnd.1 (List.mem_map.2 ⟨(x, ℓ), h, hxy⟩)
+      rw [lookup_cons_ne hxy]
+      exact ih hnd.2 h
 
 section
 
@@ -60,8 +120,9 @@ variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
 
 omit Γ in
 /--
-Ownership of the cells a program starts with can be made persistent: no cell ever changes (the
-model so far doesn't support assignment).
+The ownership of the cells a program starts with, other than the cells of its variables, can be
+made persistent (`cellOwn ℓ c ⊢ |==> ℓ ↦{.discard} c`): no instance variable ever changes (the model
+so far doesn't support assignment to instance variables).
 -/
 theorem cellOwn_persist (ℓ : Loc) (c : Cell) :
     cellOwn (GF := GF) ℓ c ⊢ |==> ℓ ↦{.discard} c := by
@@ -81,74 +142,154 @@ theorem cellOwn_persist (ℓ : Loc) (c : Cell) :
     iapply pointsTo_persist $$ H
 
 omit Γ in
-/-- Persistent ownership of every cell gives the object headers. -/
-theorem objectHeaders_of_persist (σ : State) :
-    ([∗map] ℓ ↦ c ∈ σ.toMap, ℓ ↦{.discard} c) ⊢ ObjectHeaders (GF := GF) σ := by
-  unfold ObjectHeaders
-  refine BigSepM.bigSepM_mono fun {ℓ c} _ => ?_
-  cases c with
-  | object C fs => exact .rfl
-  | val v =>
-    simp only [cellHeader]
-    exact affine
-  | uninit =>
-    simp only [cellHeader]
-    exact affine
+/--
+The ownership of the cells of a heap `m` (`[∗map] ℓ ↦ c ∈ m, cellOwn ℓ c`) splits into:
+- the ownership of the cells of the variables in `bindings`, holding what `env` says
+  (`interpEnv bindings env`); and
+- the ownership of the other cells (`[∗map] ℓ ↦ c ∈ unbound m bindings, cellOwn ℓ c`),
+
+provided:
+- the variables have cells of their own (`hnd`); and
+- each variable's cell holds what `env` says (`get? m b.2 = some (env b.1)`), which isn't an
+  object's own cell (`∀ C fs, env b.1 ≠ .object C fs`) (`hc`).
+-/
+theorem cellOwn_split (env : Env) {bindings : List (Variable × Loc)} {m : LocMap Cell}
+    (hnd : (bindings.map (·.2)).Nodup)
+    (hc : ∀ b ∈ bindings, get? m b.2 = some (env b.1) ∧ ∀ C fs, env b.1 ≠ .object C fs) :
+    ([∗map] ℓ ↦ c ∈ m, cellOwn (GF := GF) ℓ c) ⊢
+      interpEnv bindings env ∗ [∗map] ℓ ↦ c ∈ unbound m bindings, cellOwn ℓ c := by
+  induction bindings generalizing m with
+  | nil =>
+    simp only [interpEnv, unbound, List.foldl_nil]
+    exact emp_sep.2
+  | cons b bs ih =>
+    obtain ⟨x, ℓ⟩ := b
+    simp only [List.map_cons, List.nodup_cons] at hnd
+    obtain ⟨hm, hobj⟩ := hc (x, ℓ) (List.mem_cons_self ..)
+    have hc' : ∀ b ∈ bs, get? (delete m ℓ) b.2 = some (env b.1) ∧
+        ∀ C fs, env b.1 ≠ .object C fs := fun b hb => by
+      have hne : ℓ ≠ b.2 := fun h => hnd.1 (List.mem_map.2 ⟨b, hb, h.symm⟩)
+      rw [LawfulPartialMap.get?_delete_ne hne]
+      exact hc b (List.mem_cons_of_mem _ hb)
+    have hown : cellOwn (GF := GF) ℓ (env x) ⊢ interpCell ℓ (env x) := by
+      revert hobj
+      cases env x with
+      | object C fs => intro hobj; exact absurd rfl (hobj C fs)
+      | _ =>
+        intro hobj
+        simp only [cellOwn, interpCell]
+        iintro H
+        isplitr
+        · ipureintro
+          exact hobj
+        · iexact H
+    simp only [interpEnv, unbound, List.foldl_cons] at ih ⊢
+    refine (BigSepM.bigSepM_delete hm).1.trans ?_
+    iintro ⟨H, Hrest⟩
+    ihave ⟨He, Hrest⟩ := ih hnd.2 hc' $$ Hrest
+    isplitl [H He]
+    · isplitl [H]
+      · iapply hown $$ H
+      · iexact He
+    · iexact Hrest
 
 omit Γ in
-/-- Persistent ownership of every cell of state `σ` includes that of the cell at `ℓ`. -/
-theorem pointsTo_of_persist {σ : State} {ℓ : Loc} {c : Cell} (h : σ.lookup ℓ = some c) :
-    ([∗map] ℓ ↦ c ∈ σ.toMap, ℓ ↦{.discard} c) ⊢ (ℓ ↦{.discard} c : IProp GF) := by
-  exact BigSepM.bigSepM_lookup (by rw [State.get?_toMap]; exact h)
+/--
+Persistent ownership of the cells other than the variables'
+(`[∗map] ℓ ↦ c ∈ unbound σ.toMap bindings, ℓ ↦{.discard} c`) includes the cell at `ℓ`
+(`ℓ ↦{.discard} c`), if it holds `c` (`h`) and isn't any variable's cell (`hnb`).
+-/
+theorem pointsTo_of_unbound {σ : State} {bindings : List (Variable × Loc)} {ℓ : Loc} {c : Cell}
+    (h : σ.lookup ℓ = some c) (hnb : ∀ b ∈ bindings, b.2 ≠ ℓ) :
+    ([∗map] ℓ ↦ c ∈ unbound σ.toMap bindings, ℓ ↦{.discard} c) ⊢
+      (ℓ ↦{.discard} c : IProp GF) :=
+  BigSepM.bigSepM_lookup (by rw [get?_unbound hnb, State.get?_toMap]; exact h)
+
+omit Γ in
+/--
+An object's own cell, at `ℓ` (`h`), isn't one of the variables' cells (`∀ b ∈ bindings, b.2 ≠ ℓ`),
+if the bindings are suitable (`hb`).
+-/
+theorem not_bound_of_object {σ : State} {bindings : List (Variable × Loc)}
+    (hb : BindingsOk σ bindings)
+    {ℓ : Loc} {C : τ} {fs : List (String × Loc)} (h : σ.lookup ℓ = some (.object C fs)) :
+    ∀ b ∈ bindings, b.2 ≠ ℓ := by
+  intro b hmem heq
+  obtain ⟨c, hc, hobj⟩ := hb.cells b hmem
+  rw [heq, h] at hc
+  exact hobj C fs (Option.some.inj hc).symm
 
 /--
-A value `v` satisfies `T` (`interpVal T v`), given persistent ownership of every cell of `σ`, if:
+A value `v` satisfies `T` (`interpVal T v`), given persistent ownership of the cells other than the
+variables', if:
+- the bindings are suitable (`hb`);
 - the dynamic type of `v` in state `σ` is `S` (`hS`), a subtype of `T` (`hT`); and
 - `v` obeys `ValOk v S` (`hok`).
 -/
-theorem interpVal_of_persist {σ : State} {v : Value} {S T : τ} (hS : σ.dynamicType v = some S)
+theorem interpVal_of_unbound {σ : State} {bindings : List (Variable × Loc)}
+    (hb : BindingsOk σ bindings) {v : Value} {S T : τ} (hS : σ.dynamicType v = some S)
     (hT : S ≤ T) (hok : ValOk v S) :
-    ([∗map] ℓ ↦ c ∈ σ.toMap, ℓ ↦{.discard} c) ⊢ interpVal (GF := GF) T v := by
+    ([∗map] ℓ ↦ c ∈ unbound σ.toMap bindings, ℓ ↦{.discard} c) ⊢ interpVal (GF := GF) T v := by
   iintro #H
-  ihave #Hdr := objectHeaders_of_persist σ $$ H
   iexists S
   isplitr
-  · iapply HasDynamicType.of_headers hS $$ Hdr
+  · cases v with
+    | null =>
+      simp only [State.dynamicType, Option.some.injEq] at hS
+      subst hS
+      iapply HasDynamicType.null
+    | bool b =>
+      simp only [State.dynamicType, Option.some.injEq] at hS
+      subst hS
+      iapply HasDynamicType.bool
+    | obj ℓ =>
+      simp only [State.dynamicType] at hS
+      split at hS
+      · rename_i C fs hℓ
+        simp only [Option.some.injEq] at hS
+        subst hS
+        iapply HasDynamicType.obj
+        iapply pointsTo_of_unbound hℓ (not_bound_of_object hb hℓ) $$ H
+      · cases hS
+    | error e => cases hS
+    | cont k => cases hS
   · ipureintro
     exact ⟨hT, hok⟩
 
 /--
-A fact that holds in state `σ` (`FactHolds σ bindings f`) also holds as an Iris proposition
-(`interpFact bindings f`), given persistent ownership of every cell of `σ`.
+A fact that holds in state `σ` (`hf`: `FactHolds σ bindings f`) also holds as an Iris proposition,
+about the environment of `σ` (`interpFact bindings (envOf σ bindings) f`), given persistent
+ownership of the cells other than the variables', if the bindings are suitable (`hb`).
 -/
-theorem interpFact_of_holds {σ : State} {bindings : List (Variable × Loc)} {f : Fact}
-    (hf : FactHolds σ bindings f) :
-    ([∗map] ℓ ↦ c ∈ σ.toMap, ℓ ↦{.discard} c) ⊢ interpFact (GF := GF) bindings f := by
+theorem interpFact_of_holds {σ : State} {bindings : List (Variable × Loc)}
+    (hb : BindingsOk σ bindings) {f : Fact} (hf : FactHolds σ bindings f) :
+    ([∗map] ℓ ↦ c ∈ unbound σ.toMap bindings, ℓ ↦{.discard} c) ⊢
+      interpFact (GF := GF) bindings (envOf σ bindings) f := by
   cases f with
+  | decl x =>
+    iintro -
+    ipureintro
+    exact hf
   | var x T =>
     obtain ⟨ℓ, v, S, hl, hc, hS, hT, hok⟩ := hf
     iintro #H
     iexists ℓ, v
     isplitr
     · ipureintro
-      exact hl
-    isplitr
-    · iapply pointsTo_of_persist hc $$ H
-    · iapply interpVal_of_persist hS hT hok $$ H
+      exact ⟨hl, by simp [envOf, hl, hc]⟩
+    · iapply interpVal_of_unbound hb hS hT hok $$ H
   | field x name T =>
-    obtain ⟨ℓ, ℓo, C, fs, ℓf, w, S, hl, hc, ho, hfs, hcf, hS, hT, hok⟩ := hf
+    obtain ⟨ℓ, ℓo, C, fs, ℓf, w, S, hl, hc, ho, hfs, hnb, hcf, hS, hT, hok⟩ := hf
     iintro #H
     iexists ℓ, ℓo, C, fs, ℓf, w
     isplitr
     · ipureintro
-      exact ⟨hl, hfs⟩
+      exact ⟨hl, by simp [envOf, hl, hc], hfs⟩
     isplitr
-    · iapply pointsTo_of_persist hc $$ H
+    · iapply pointsTo_of_unbound ho (not_bound_of_object hb ho) $$ H
     isplitr
-    · iapply pointsTo_of_persist ho $$ H
-    isplitr
-    · iapply pointsTo_of_persist hcf $$ H
-    · iapply interpVal_of_persist hS hT hok $$ H
+    · iapply pointsTo_of_unbound hcf hnb $$ H
+    · iapply interpVal_of_unbound hb hS hT hok $$ H
 
 /--
 Completing normally with a value that satisfies `T` (`interpVal T v`) is consistent with `T`, in the
@@ -188,31 +329,46 @@ end
 **Safety.** An expression `m`, started in state `σ` with its free variables bound to cells by
 `bindings` (`m.bindVariables bindings`), never gets stuck (`.NotStuck`), and every outcome it
 completes with is consistent with `T` (`OutcomeOk T o`), if:
-- `m` is semantically well typed, with type `T`, in context `Δ` (`h`); and
+- `m` is semantically well typed, with type `T`, in context `Δ` (`h`);
+- the bindings are suitable (`hb`); and
 - every fact in `Δ` holds in `σ` (`hσ`).
 -/
 public theorem safety [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF] {Δ : Ctx}
     {m : LoweredExpr} {T : τ} {Δ' : Value → Ctx} (σ : State)
     (bindings : List (Variable × Loc)) (h : ∀ [DartGS τ .hasLC GF], SemTyped GF Δ m T Δ')
-    (hσ : ∀ f ∈ Δ, FactHolds σ bindings f) :
+    (hb : BindingsOk σ bindings) (hσ : ∀ f ∈ Δ, FactHolds σ bindings f) :
     adequate .NotStuck (m.bindVariables bindings) σ (fun o _ => OutcomeOk T o) := by
   refine adequacy (GF := GF) _ σ (OutcomeOk T) ?_
   intro inst
   have hpost : ∀ o, interpOutcome (GF := GF) bindings T Δ' o ⊢ ⌜OutcomeOk T o⌝ := by
     intro o
     cases o with
-    | normal v => exact sep_elim_left.trans outcomeOk_of_interpVal
+    | normal v =>
+      simp only [interpOutcome]
+      iintro ⟨%env', -, #Hv, -⟩
+      iapply outcomeOk_of_interpVal $$ Hv
     | throwing _ =>
       iintro -
       ipureintro
       trivial
+  have hcells : ∀ b ∈ bindings, get? σ.toMap b.2 = some (envOf σ bindings b.1) ∧
+      ∀ C fs, envOf σ bindings b.1 ≠ .object C fs := by
+    intro b hmem
+    obtain ⟨c, hc, hobj⟩ := hb.cells b hmem
+    have hl : bindings.lookup b.1 = some b.2 := lookup_of_mem hb.nodup hmem
+    have henv : envOf σ bindings b.1 = c := by simp [envOf, hl, hc]
+    rw [henv, State.get?_toMap]
+    exact ⟨hc, hobj⟩
   iintro Hown
-  imod bigSepM_bupd (fun ℓ c => cellOwn_persist ℓ c) σ.toMap $$ Hown with #H
+  ihave ⟨He, Hrest⟩ := cellOwn_split (envOf σ bindings) hb.nodup_locs hcells $$ Hown
+  imod bigSepM_bupd (fun ℓ c => cellOwn_persist ℓ c) (unbound σ.toMap bindings) $$ Hrest with #H
   iapply wp_mono hpost
-  iapply h bindings
+  iapply h bindings hb.nodup (envOf σ bindings)
+  isplitl [He]
+  · iexact He
   unfold interpCtx
   imodintro
   iintro %f %hf
-  iapply interpFact_of_holds (hσ f hf) $$ H
+  iapply interpFact_of_holds hb (hσ f hf) $$ H
 
 end DartSemantics
