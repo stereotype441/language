@@ -22,6 +22,8 @@ iris-lean's HeapLang tactics (whose own `wp_*` tactics only work for HeapLang):
   booleans, objects whose header is in the context, and values with a `HasDynamicType` hypothesis
   in the context. Pure side conditions (such as the subtype fact for the promotion check) are
   proved by `decide` or `rfl` when they can be, and otherwise left as goals after the main one.
+- `wp_store H`: take the step of an assignment to a local variable, using the points-to `H` for
+  the variable's cell, which afterwards holds the value assigned.
 
 Steps that involve a run-time subtype check (cast expressions and is-expressions) or a getter that
 is user code are taken by applying the laws in `PrimitiveLaws.lean` directly.
@@ -63,6 +65,8 @@ public theorem tidy_fill_cond (m₂ m₃ : LoweredExpr) (T : τ) (m : LoweredExp
 public theorem tidy_fill_propertyGet (p : Property) (T : τ) (m : LoweredExpr) :
     (EctxItem.propertyGet p T).fill m = .propertyGet m p T := rfl
 public theorem tidy_fill_seq (m₂ m : LoweredExpr) : (EctxItem.seq m₂).fill m = .seq m m₂ := rfl
+public theorem tidy_fill_variableSetAt (x : Variable) (ℓ : Loc) (m : LoweredExpr) :
+    (EctxItem.variableSetAt x ℓ).fill m = .variableSetAt x ℓ m := rfl
 
 variable [Γ : DartRuntimeTypeRepr τ]
 variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF] [P : SemanticParams τ]
@@ -166,6 +170,18 @@ public theorem tac_wp_load_field {ℓ ℓf : Loc} {p : Property} {T C S : τ}
   · iexact Hl
   · iexact HΦ
 
+/--
+The proof-mode form of `wp_variableSetAt`, with the points-to first (`H`), so that framing it
+determines the cell, and then the fact that the cell isn't an object's own cell (`hc`): to prove
+that assigning `w` to `x`, resolved to the cell at `ℓ`, satisfies `Φ` from the hypotheses `Δ`,
+prove `wp_variableSetAt`'s premises.
+-/
+public theorem tac_wp_store {x : Variable} {ℓ : Loc} {c : Cell} {w : Value}
+    (H : Entails' Δ iprop(▷ (ℓ ↦ c) ∗ ▷ ((ℓ ↦ (.val w : Cell)) -∗ Φ (.normal w))))
+    (hc : ∀ C fs, c ≠ .object C fs) :
+    Entails' Δ (WP (LoweredExpr.variableSetAt x ℓ (.val w)) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans (wp_variableSetAt hc)
+
 end DartSemantics
 
 /-- Take a head step that doesn't depend on, or change, the state (for `wp_pure`). -/
@@ -187,7 +203,8 @@ macro_rules
     | exact DartSemantics.HeadStep.bubble (Ki := .is _)
     | exact DartSemantics.HeadStep.bubble (Ki := .cond _ _ _)
     | exact DartSemantics.HeadStep.bubble (Ki := .propertyGet _ _)
-    | exact DartSemantics.HeadStep.bubble (Ki := .seq _))
+    | exact DartSemantics.HeadStep.bubble (Ki := .seq _)
+    | exact DartSemantics.HeadStep.bubble (Ki := .variableSetAt _ _))
 
 /-- Tidy the goal after a step: reduce `Outcome.toExpr` and beta-reduce postconditions. -/
 syntax "dart_wp_tidy" : tactic
@@ -197,7 +214,7 @@ macro_rules
     `(tactic| try simp only [DartSemantics.tidy_toExpr_normal, DartSemantics.tidy_toExpr_throwing,
       DartSemantics.tidy_fill_nullCheck, DartSemantics.tidy_fill_as, DartSemantics.tidy_fill_is,
       DartSemantics.tidy_fill_cond, DartSemantics.tidy_fill_propertyGet,
-      DartSemantics.tidy_fill_seq])
+      DartSemantics.tidy_fill_seq, DartSemantics.tidy_fill_variableSetAt])
 
 /--
 When the expression has completed, replace its weakest precondition with the postcondition applied
@@ -234,7 +251,8 @@ macro_rules
       | refine DartSemantics.tac_wp_bind (.is _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.cond _ _ _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.propertyGet _ _) (by rfl) ?_
-      | refine DartSemantics.tac_wp_bind (.seq _) (by rfl) ?_); dart_wp_tidy))
+      | refine DartSemantics.tac_wp_bind (.seq _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.variableSetAt _ _) (by rfl) ?_); dart_wp_tidy))
 
 /--
 Take every step that doesn't involve the state: repeat `wp_value`, `wp_pure` and `wp_bind` until
@@ -311,6 +329,24 @@ macro_rules
          · dart_dynamic_type
          isplitr
          dart_load_side_condition)
+     inext
+     iintro $h:ident
+     dart_wp_tidy))
+
+/--
+`wp_store H` takes the step of an assignment to a local variable, using the points-to `H` for the
+variable's cell. Afterwards, `H` is back in the context, saying that the cell holds the value
+assigned.
+-/
+syntax "wp_store " ident : tactic
+
+macro_rules
+  | `(tactic| wp_store $h) => `(tactic|
+    (apply DartSemantics.tac_wp_store
+     iframe $h:ident
+     rotate_left
+     · intro _ _ h
+       cases h
      inext
      iintro $h:ident
      dart_wp_tidy))
