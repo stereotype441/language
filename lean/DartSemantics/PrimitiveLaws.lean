@@ -227,6 +227,22 @@ public theorem ObjectHeaders.alloc {σ : State} {c : Cell} (hc : ∀ C fs, c ≠
   refine .trans ?_ (BigSepM.bigSepM_insert (by rw [State.get?_toMap, State.lookup_fresh])).2
   exact emp_sep.2.trans (sep_mono_left (cellHeader_of_ne_object hc).2)
 
+omit Γ in
+/--
+Updating the cell at `ℓ` leaves the object headers as they were
+(`ObjectHeaders σ ⊢ ObjectHeaders (σ.update ℓ c)`), if:
+- the cell holds `c₀` (`h`), which isn't an object's own cell (`hc₀`); and
+- the new contents `c` aren't an object's own cell either (`hc`).
+-/
+public theorem ObjectHeaders.update {σ : State} {ℓ : Loc} {c₀ c : Cell}
+    (h : σ.lookup ℓ = some c₀) (hc₀ : ∀ C fs, c₀ ≠ .object C fs)
+    (hc : ∀ C fs, c ≠ .object C fs) :
+    ObjectHeaders (GF := GF) σ ⊢ ObjectHeaders (σ.update ℓ c) := by
+  simp only [ObjectHeaders, State.toMap_update h]
+  refine (BigSepM.bigSepM_delete (by rw [State.get?_toMap]; exact h)).1.trans ?_
+  refine .trans ?_ BigSepM.bigSepM_insert_delete.2
+  exact sep_mono_left ((cellHeader_of_ne_object hc₀).1.trans (cellHeader_of_ne_object hc).2)
+
 end
 
 /-! ## Laws -/
@@ -600,6 +616,53 @@ public theorem wp_varAt {x : Variable} {T S : τ} {ℓ : Loc} {dq : DFrac} {v : 
   · iframe Hh
     iexact Hhdr
   iexists .normal v
+  isplit
+  · ipureintro
+    rfl
+  · iapply HΦ $$ Hl
+
+/--
+An assignment of `w` to a local variable `x`, resolved to the cell at `ℓ`, stores `w` in the cell,
+and evaluates to it. It satisfies a postcondition `Φ` if:
+- the cell's contents `c` aren't an object's own cell (`hc`): it's a variable's;
+- one step later, the cell at `ℓ` is owned (`▷ ℓ ↦ c`); and
+- one step later, `Φ` holds of completing normally with `w` (`Φ (.normal w)`), given the ownership
+  of the cell, now holding `w` (`▷ (ℓ ↦ (.val w) -∗ …)`).
+-/
+public theorem wp_variableSetAt {x : Variable} {ℓ : Loc} {c : Cell} {w : Value}
+    (hc : ∀ C fs, c ≠ .object C fs) :
+    ▷ (ℓ ↦ c) ∗ ▷ ((ℓ ↦ (.val w : Cell)) -∗ Φ (.normal w)) ⊢
+      WP (LoweredExpr.variableSetAt x ℓ (.val w)) @ s; E {{ Φ }} := by
+  iintro ⟨>Hl, HΦ⟩
+  iapply wp_lift_atomic_base_step_no_fork rfl
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  ihave %Hlook : ⌜σ₁.lookup ℓ = some c⌝ $$ [Hh Hl]
+  · ihave >%Hv := genHeap_valid $$ [$Hh $Hl]
+    ipureintro
+    rwa [State.get?_toMap] at Hv
+  have hstep : HeadStep (LoweredExpr.variableSetAt x ℓ (.val w)) σ₁ (.val w)
+      (σ₁.update ℓ (.val w)) := .variableSetAt Hlook hc
+  imodintro
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], hstep, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
+  imod genHeap_update (σ := σ₁.toMap) (l := ℓ) (v₁ := c) (v₂ := (.val w : Cell)) $$ [$Hh $Hl]
+    with ⟨Hh, Hl⟩
+  ihave #Hhdr' := ObjectHeaders.update (c := (.val w : Cell)) Hlook hc (fun _ _ h => by cases h)
+    $$ Hhdr
+  imodintro
+  isplit
+  · itrivial
+  isplitl [Hh]
+  · rw [State.toMap_update Hlook]
+    iframe Hh
+    iexact Hhdr'
+  iexists .normal w
   isplit
   · ipureintro
     rfl
