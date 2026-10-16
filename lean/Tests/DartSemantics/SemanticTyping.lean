@@ -78,6 +78,19 @@ example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bin
   nullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) typeLaws (by decide) σ bindings
     hb hx hf
 
+def y : Variable := ⟨"y", ObjectQ⟩
+
+/--
+With promotion checks, `{ x as int; x = y; x }` is safe whenever `x` and `y` hold values that
+satisfy `Object?`: the last read of `x` is demoted to `Object?` by the assignment, and passes its
+promotion check.
+-/
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x ObjectQ)) (hy : FactHolds σ bindings (.var y ObjectQ)) :
+    adequate .NotStuck ((castAssignRead x ObjectQ int y ObjectQ).bindVariables bindings) σ
+      (fun o _ => OutcomeOk Null o) :=
+  castAssignRead_safe (GF := DartS SimpleType) le_rfl le_rfl σ bindings hb hx hy
+
 end Verify
 
 section Trust
