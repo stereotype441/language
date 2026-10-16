@@ -559,7 +559,7 @@ public theorem SemTyped.cond (L : TypeLaws τ) {Δ Δ' : Ctx} {Δc : Value → C
     iframe He
     iexact H
 
-/-! ### Blocks and declarations -/
+/-! ### Assignments -/
 
 omit [DartGS τ hlc GF] [SemanticParams τ] in
 /--
@@ -569,6 +569,71 @@ A fact remains when those about `v` are forgotten (`f ∈ Δ.forget v`) exactly 
 public theorem Ctx.mem_forget {Δ : Ctx} {v : Variable} {f : Fact} :
     f ∈ Δ.forget v ↔ f ∈ Δ ∧ f.variable ≠ v := by
   simp [Ctx.forget]
+
+/--
+An assignment `v = m` has the static type `T` of its right-hand side, if:
+- `v` is in scope beforehand (`Fact.decl v ∈ Δb`); and
+- `m` has static type `T` (`hm`), with facts `Δa` afterwards.
+
+Afterwards, the facts about `v` that held after `m` (including any promotions of `v`, and facts
+about instance variables reached through `v`) are forgotten (`(Δa w).forget v`), and `v` is known
+to be in scope and to hold a value that satisfies `T`: `.var v T :: .decl v :: (Δa w).forget v`.
+Flow analysis requires `T` to be a subtype of `v`'s declared type; the semantics doesn't, since it
+doesn't check the value written against the variable's type.
+-/
+public theorem SemTyped.variableSet {Δb : Ctx} {v : Variable} {m : LoweredExpr} {T : τ}
+    {Δa : Value → Ctx} (hdecl : Fact.decl v ∈ Δb) (hm : SemTyped GF Δb m T Δa) :
+    SemTyped GF Δb (.variableSet v m) T (fun w => .var v T :: .decl v :: (Δa w).forget v) := by
+  intro bindings hnd env
+  rw [LoweredExpr.bindVariables_variableSet]
+  cases hl : bindings.lookup v with
+  | none =>
+    -- `v` is in scope, so it is bound.
+    iintro ⟨-, #H⟩
+    ihave %hdv := interpCtx_elim hdecl $$ H
+    obtain ⟨ℓ, hl'⟩ := hdv
+    rw [hl] at hl'
+    cases hl'
+  | some ℓ =>
+  dsimp only
+  refine wp_fill_typed (Ki := .variableSetAt v ℓ) (hm bindings hnd env) (fun w env' => ?_)
+    (fun _ => true_intro)
+  simp only [EctxItem.fill]
+  iintro ⟨He, #Hw, #H'⟩
+  icases interpEnv_acc (GF := GF) (env := env') hnd hl $$ He with ⟨⟨%hc, Hl⟩, Hback⟩
+  iapply wp_variableSetAt hc
+  isplitl [Hl]
+  · inext
+    iexact Hl
+  inext
+  iintro Hl
+  ihave He := Hback $$ %(.val w) [Hl]
+  · isplitr
+    · ipureintro
+      exact fun _ _ h => by cases h
+    · iexact Hl
+  simp only [interpOutcome]
+  iexists env'.set v (.val w)
+  iframe He
+  isplitr
+  · iexact Hw
+  · iapply interpCtx_cons
+    isplitr
+    · iexists ℓ, w
+      isplitr
+      · ipureintro
+        exact ⟨hl, Env.set_self _ _ _⟩
+      · iexact Hw
+    · iapply interpCtx_cons
+      isplitr
+      · ipureintro
+        exact ⟨ℓ, hl⟩
+      · iapply interpCtx_congr (bindings := bindings) (env := env') (fun _ _ => rfl)
+          (fun f hf => (Env.set_ne (Ctx.mem_forget.1 hf).2 _).symm)
+        iapply interpCtx_mono (fun f hf => (Ctx.mem_forget.1 hf).1)
+        iexact H'
+
+/-! ### Blocks and declarations -/
 
 /-- An empty block has static type `Null`. -/
 public theorem SemTyped.block_nil (Δ : Ctx) :

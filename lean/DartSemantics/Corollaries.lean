@@ -4,10 +4,10 @@ public import DartSemantics.Safety
 /-!
 # Corollaries of safety
 
-Two small programs whose safety depends on promotion, proved safe for every type representation
-that obeys `TypeLaws`, and every choice of `SemanticParams`. When
-`SemanticParams.promotionChecks` is `PromotionChecks.verify`, "safe" includes that the promoted
-read passes its promotion check: the promotion is sound.
+Small programs whose safety depends on promotion (and, for one, on demotion by an assignment),
+proved safe for every type representation that obeys `TypeLaws`, and every choice of
+`SemanticParams`. When `SemanticParams.promotionChecks` is `PromotionChecks.verify`, "safe"
+includes that every promoted read passes its promotion check: the promotions are sound.
 -/
 
 namespace DartSemantics
@@ -97,5 +97,51 @@ public theorem nullCheckThenRead_safe [SemanticParams τ] {GF : BundledGFunctors
     rcases hf' with rfl | rfl
     · exact hx
     · exact hf
+
+/--
+The program `{ x as T; x = y; x }`, where `x` has static type `Tx`, `y` has static type `Ty`, and
+the last read of `x` has static type `Ty`: the assignment demotes `x` from `T`, the type the cast
+promoted it to.
+-/
+@[expose]
+public def castAssignRead (x : Variable) (Tx T : τ) (y : Variable) (Ty : τ) : LoweredExpr :=
+  .block [.as (.var x Tx) T, .variableSet x (.var y Ty), .var x Ty]
+
+/--
+`{ x as T; x = y; x }` is semantically well typed, if `x` is in scope and holds a value that
+satisfies `Ux`, a subtype of `Tx`, and `y` holds a value that satisfies `U`, a subtype of `Ty`.
+Afterwards, `x` holds a value that satisfies `Ty`; the promotion to `T` is forgotten.
+-/
+public theorem castAssignRead_typed {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
+    [SemanticParams τ] {x y : Variable} {Ux Tx T U Ty : τ} (hUx : Ux ≤ Tx) (hU : U ≤ Ty) :
+    SemTyped GF [.var x Ux, .decl x, .var y U] (castAssignRead x Tx T y Ty) Γ.Null
+      (fun _ => .var x Ty :: .decl x ::
+        Ctx.forget [.var x T, .var x Ux, .decl x, .var y U] x) := by
+  refine SemTyped.block_cons (fun _ _ _ h => by cases h)
+    (SemTyped.as_var (List.mem_cons_self ..) hUx) ?_
+  refine SemTyped.block_cons (fun _ _ _ h => by cases h)
+    (SemTyped.variableSet (by simp) (SemTyped.var (by simp) hU)) ?_
+  exact SemTyped.block_cons (fun _ _ _ h => by cases h)
+    (SemTyped.var (List.mem_cons_self ..) le_rfl) (SemTyped.block_nil _)
+
+/--
+`{ x as T; x = y; x }` is safe, started in any state where `x` is in scope and holds a value that
+satisfies `Ux`, a subtype of `Tx`, and `y` holds a value that satisfies `U`, a subtype of `Ty`
+(with suitable bindings, `hb`): in particular, the last read of `x`, demoted to `Ty`, never fails
+its promotion check.
+-/
+public theorem castAssignRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
+    {x y : Variable} {Ux Tx T U Ty : τ} (hUx : Ux ≤ Tx) (hU : U ≤ Ty) (σ : State)
+    (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x Ux)) (hy : FactHolds σ bindings (.var y U)) :
+    adequate .NotStuck ((castAssignRead x Tx T y Ty).bindVariables bindings) σ
+      (fun o _ => OutcomeOk Γ.Null o) :=
+  safety (GF := GF) σ bindings (castAssignRead_typed (T := T) hUx hU) hb fun f hf => by
+    simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf
+    rcases hf with rfl | rfl | rfl
+    · exact hx
+    · obtain ⟨ℓ, -, -, hl, -⟩ := hx
+      exact ⟨ℓ, hl⟩
+    · exact hy
 
 end DartSemantics

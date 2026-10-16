@@ -174,6 +174,41 @@ public theorem LoweredExpr.bindVariables_varAt (bindings : List (Variable × Loc
   | nil => rfl
   | cons b bs ih => exact ih
 
+/--
+Binding variables in an assignment whose target is already resolved binds them in its right-hand
+side.
+-/
+@[simp]
+public theorem LoweredExpr.bindVariables_variableSetAt (bindings : List (Variable × Loc))
+    {x : Variable} {ℓ : Loc} (m : LoweredExpr) :
+    (LoweredExpr.variableSetAt x ℓ m).bindVariables bindings =
+      .variableSetAt x ℓ (m.bindVariables bindings) := by
+  induction bindings generalizing m with
+  | nil => rfl
+  | cons b bs ih => exact ih _
+
+/--
+Binding variables in an assignment to a variable resolves its target to the variable's cell, if
+any, and binds them in its right-hand side.
+-/
+public theorem LoweredExpr.bindVariables_variableSet (bindings : List (Variable × Loc))
+    (x : Variable) (m : LoweredExpr) :
+    (LoweredExpr.variableSet x m).bindVariables bindings =
+      match bindings.lookup x with
+      | some ℓ => .variableSetAt x ℓ (m.bindVariables bindings)
+      | none => .variableSet x (m.bindVariables bindings) := by
+  induction bindings generalizing m with
+  | nil => rfl
+  | cons b bs ih =>
+    obtain ⟨y, ℓ⟩ := b
+    by_cases h : x = y
+    · subst h
+      simp only [bindVariables, List.foldl_cons, resolve, ite_true, List.lookup_cons_self]
+      exact bindVariables_variableSetAt bs _
+    · have hb : (x == y) = false := by simpa using h
+      simp only [bindVariables, List.foldl_cons, resolve, h, ite_false, List.lookup, hb]
+      exact ih _
+
 /-- Binding variables in a null check binds them in its operand. -/
 @[simp]
 public theorem LoweredExpr.bindVariables_nullCheck (bindings : List (Variable × Loc))

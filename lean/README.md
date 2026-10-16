@@ -105,9 +105,10 @@ What exists so far:
   that mirrors the run-time heap, with adequacy (`GhostState`), one law per head-step rule
   (`PrimitiveLaws`), and proof-mode tactics (`ProofMode`). On top of the program logic, it has a
   semantic typing judgment (`SemanticTyping`, with binding lemmas in `Bind`), typing rules proved
-  sound (`Compat`), a safety theorem (`Safety`), and two small programs proved safe with them
-  (`Corollaries`): the basis for proving flow analysis sound. Connecting this to the model of flow
-  analysis comes next.
+  sound (`Compat`), a safety theorem (`Safety`), and small programs proved safe with them
+  (`Corollaries`): the basis for proving flow analysis sound. Assignments to local variables are
+  covered throughout; `final` locals aren't yet. Connecting this to the model of flow analysis
+  comes next.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, and a check that `SimpleType` obeys the laws that the typing
   rules assume.
