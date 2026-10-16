@@ -86,6 +86,19 @@ public theorem State.toMap_alloc (σ : State) (c : Cell) :
   intro ℓ
   rw [State.get?_toMap, State.lookup_alloc, LawfulPartialMap.get?_insert, State.get?_toMap]
 
+/-- Updating an allocated cell is an insertion into the finite-map view of the heap. -/
+public theorem State.toMap_update {σ : State} {ℓ : Loc} {c₀ : Cell} (h : σ.lookup ℓ = some c₀)
+    (c : Cell) : (σ.update ℓ c).toMap = insert σ.toMap ℓ c := by
+  apply LawfulPartialMap.equiv_iff_eq.1
+  intro ℓ'
+  rw [State.get?_toMap, LawfulPartialMap.get?_insert, State.get?_toMap]
+  split
+  · rename_i heq
+    subst heq
+    exact State.lookup_update_self h c
+  · rename_i hne
+    exact State.lookup_update_ne (Ne.symm hne) c
+
 /-- The state of a program that hasn't allocated anything. -/
 public instance State.instInhabited : Inhabited State := ⟨State.empty⟩
 
