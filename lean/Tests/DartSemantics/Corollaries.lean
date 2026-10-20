@@ -128,6 +128,7 @@ public def castAssignRead (x : Variable) (Tx T : τ) (y : Variable) (Ty : τ) : 
 `{ x as T; x = y; x }` is semantically well typed, with type `Null`, given that `x` is in
 scope and holds a value that satisfies `Ux`, and `y` holds a value that satisfies `U`
 (`[.var x Ux, .decl x, .var y U]`), if:
+- `x` isn't `final` (`hnf`);
 - `Ux` is a subtype of `x`'s static type `Tx` (`hUx`); and
 - `U` is a subtype of `y`'s static type `Ty` (`hU`).
 
@@ -135,20 +136,22 @@ It guarantees afterwards that `x` holds a value that satisfies `Ty` (`.var x Ty`
 holds a value that satisfies `T`: the promotion to `T` is forgotten (`Ctx.forget … x`).
 -/
 public theorem castAssignRead_typed {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
-    [SemanticParams τ] {x y : Variable} {Ux Tx T U Ty : τ} (hUx : Ux ≤ Tx) (hU : U ≤ Ty) :
+    [SemanticParams τ] {x y : Variable} {Ux Tx T U Ty : τ} (hnf : x.isFinal = false)
+    (hUx : Ux ≤ Tx) (hU : U ≤ Ty) :
     SemTyped GF [.var x Ux, .decl x, .var y U] (castAssignRead x Tx T y Ty) Γ.Null
       (fun _ => .var x Ty :: .decl x ::
         Ctx.forget [.var x T, .var x Ux, .decl x, .var y U] x) := by
   refine SemTyped.block_cons (fun _ _ _ h => by cases h)
     (SemTyped.as_var (List.mem_cons_self ..) hUx) ?_
   refine SemTyped.block_cons (fun _ _ _ h => by cases h)
-    (SemTyped.variableSet (by simp) (SemTyped.var (by simp) hU)) ?_
+    (SemTyped.variableSet hnf (by simp) (SemTyped.var (by simp) hU)) ?_
   exact SemTyped.block_cons (fun _ _ _ h => by cases h)
     (SemTyped.var (List.mem_cons_self ..) le_rfl) (SemTyped.block_nil _)
 
 /--
 `{ x as T; x = y; x }`, started in state `σ` with its variables bound by `bindings`, never gets
 stuck, and every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`), if:
+- `x` isn't `final` (`hnf`);
 - `Ux` is a subtype of `x`'s static type `Tx` (`hUx`);
 - `U` is a subtype of `y`'s static type `Ty` (`hU`);
 - the bindings are suitable (`hb`);
@@ -158,12 +161,12 @@ stuck, and every outcome it completes with is consistent with `Null` (`OutcomeOk
 In particular, the last read of `x`, demoted to `Ty`, never fails its promotion check.
 -/
 public theorem castAssignRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
-    {x y : Variable} {Ux Tx T U Ty : τ} (hUx : Ux ≤ Tx) (hU : U ≤ Ty) (σ : State)
-    (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    {x y : Variable} {Ux Tx T U Ty : τ} (hnf : x.isFinal = false) (hUx : Ux ≤ Tx) (hU : U ≤ Ty)
+    (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
     (hx : FactHolds σ bindings (.var x Ux)) (hy : FactHolds σ bindings (.var y U)) :
     adequate .NotStuck ((castAssignRead x Tx T y Ty).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (castAssignRead_typed (T := T) hUx hU) hb fun f hf => by
+  safety (GF := GF) σ bindings (castAssignRead_typed (T := T) hnf hUx hU) hb fun f hf => by
     simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf
     rcases hf with rfl | rfl | rfl
     · exact hx

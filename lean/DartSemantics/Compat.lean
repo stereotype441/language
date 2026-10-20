@@ -584,6 +584,7 @@ public theorem Ctx.mem_forget {Δ : Ctx} {v : Variable} {f : Fact} :
 
 /--
 An assignment `v = m` is semantically well typed with the type `T` of its right-hand side, if:
+- `v` isn't `final` (`hnf`);
 - `v` is in scope beforehand (`Fact.decl v ∈ Δb`); and
 - `m` is semantically well typed with type `T` (`hm`), guaranteeing facts `Δa` afterwards.
 
@@ -601,9 +602,13 @@ flow analysis's models, including, wherever flow analysis falls back on a variab
 (for example, after a join that loses its promotions), that the variable holds a value that
 satisfies its declared type. This means that the flow analysis soundness proof will have to prove
 that `T` is a subtype of `v`'s declared type.
+
+TODO: Dart allows an assignment to a `final` variable that hasn't been assigned yet. Typing it needs
+a fact saying that the variable hasn't been assigned, which contexts can't express yet.
 -/
 public theorem SemTyped.variableSet {Δb : Ctx} {v : Variable} {m : LoweredExpr} {T : τ}
-    {Δa : Value → Ctx} (hdecl : Fact.decl v ∈ Δb) (hm : SemTyped GF Δb m T Δa) :
+    {Δa : Value → Ctx} (hnf : v.isFinal = false) (hdecl : Fact.decl v ∈ Δb)
+    (hm : SemTyped GF Δb m T Δa) :
     SemTyped GF Δb (.variableSet v m) T (fun w => .var v T :: .decl v :: (Δa w).forget v) := by
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_variableSet]
@@ -622,7 +627,7 @@ public theorem SemTyped.variableSet {Δb : Ctx} {v : Variable} {m : LoweredExpr}
   simp only [EctxItem.fill]
   iintro ⟨He, #Hw, #H'⟩
   icases interpEnv_acc (GF := GF) (env := env') hnd hl $$ He with ⟨⟨%hc, Hl⟩, Hback⟩
-  iapply wp_variableSetAt hc
+  iapply wp_variableSetAt hc (fun h => by simp [hnf] at h)
   isplitl [Hl]
   · inext
     iexact Hl

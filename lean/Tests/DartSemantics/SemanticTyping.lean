@@ -46,7 +46,7 @@ def verify : SemanticParams SimpleType := ⟨.verify, getterImpl⟩
 @[instance_reducible]
 def trust : SemanticParams SimpleType := ⟨.trust, getterImpl⟩
 
-def x : Variable := ⟨"x", ObjectQ⟩
+def x : Variable := { name := "x", type := ObjectQ }
 
 /-- A promotable property whose static type is `Object?`. -/
 def f : Property := ⟨"_f", ObjectQ, true⟩
@@ -78,7 +78,7 @@ example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bin
   nullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) typeLaws (by decide) σ bindings
     hb hx hf
 
-def y : Variable := ⟨"y", ObjectQ⟩
+def y : Variable := { name := "y", type := ObjectQ }
 
 /--
 With promotion checks, `{ x as int; x = y; x }` is safe whenever `x` and `y` hold values that
@@ -89,7 +89,7 @@ example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bin
     (hx : FactHolds σ bindings (.var x ObjectQ)) (hy : FactHolds σ bindings (.var y ObjectQ)) :
     adequate .NotStuck ((castAssignRead x ObjectQ int y ObjectQ).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  castAssignRead_safe (GF := DartS SimpleType) le_rfl le_rfl σ bindings hb hx hy
+  castAssignRead_safe (GF := DartS SimpleType) rfl le_rfl le_rfl σ bindings hb hx hy
 
 end Verify
 

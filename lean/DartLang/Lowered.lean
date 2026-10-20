@@ -82,7 +82,7 @@ public inductive LoweredExpr where
 
   `startsNull` says whether the variable starts out holding the null object. Otherwise, it starts
   out unassigned, and it is an error to read it before it is assigned. Flow analysis sets
-  `startsNull` to whether `T` is nullable, as Dart requires.
+  `startsNull` based on whether `v` is final and whether `T` is nullable, as Dart requires.
   -/
   | declare (v : Variable) (T : τ) (startsNull : Bool)
   /--
@@ -102,7 +102,8 @@ public inductive LoweredExpr where
   | propertyGet (m : LoweredExpr) (p : Property) (T : τ)
   /--
   An assignment to local variable or formal parameter `v`, `v = m`: evaluates `m`, stores its
-  value in `v`, and evaluates to that value. (Kernel calls this a `VariableSet`.)
+  value in `v`, and evaluates to that value. (Kernel calls this a `VariableSet`.) If `v` is
+  `final`, it must still be unassigned.
   -/
   | variableSet (v : Variable) (m : LoweredExpr)
   /-

@@ -611,12 +611,13 @@ public theorem wp_varAt {x : Variable} {T S : τ} {ℓ : Loc} {dq : DFrac} {v : 
 An assignment of `w` to a local variable `x`, resolved to the cell at `ℓ`, stores `w` in the cell,
 and evaluates to it. It satisfies a postcondition `Φ` if:
 - the cell's contents `c` aren't an object's own cell (`hc`): it's a variable's;
+- if `x` is `final`, the cell is unassigned (`hfin`);
 - one step later, the cell at `ℓ` is owned (`▷ ℓ ↦ c`); and
 - one step later, `Φ` holds of completing normally with `w` (`Φ (.normal w)`), given the ownership
   of the cell, now holding `w` (`▷ (ℓ ↦ (.val w) -∗ …)`).
 -/
 public theorem wp_variableSetAt {x : Variable} {ℓ : Loc} {c : Cell} {w : Value}
-    (hc : ∀ C fs, c ≠ .object C fs) :
+    (hc : ∀ C fs, c ≠ .object C fs) (hfin : x.isFinal = true → c = .uninit) :
     ▷ (ℓ ↦ c) ∗ ▷ ((ℓ ↦ (.val w : Cell)) -∗ Φ (.normal w)) ⊢
       WP (LoweredExpr.variableSetAt x ℓ (.val w)) @ s; E {{ Φ }} := by
   iintro ⟨>Hl, HΦ⟩
@@ -628,7 +629,7 @@ public theorem wp_variableSetAt {x : Variable} {ℓ : Loc} {c : Cell} {w : Value
     ipureintro
     rwa [State.get?_toMap] at Hv
   have hstep : HeadStep (LoweredExpr.variableSetAt x ℓ (.val w)) σ₁ (.val w)
-      (σ₁.update ℓ (.val w)) := .variableSetAt Hlook hc
+      (σ₁.update ℓ (.val w)) := .variableSetAt Hlook hc hfin
   imodintro
   isplit
   · ipureintro
