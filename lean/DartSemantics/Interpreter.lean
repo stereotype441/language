@@ -125,11 +125,12 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
       match P.getterImpl p v σ with
       | some w => promotionCheck fuel σ w T (.next (.val w) σ)
       | none => .stuck
-  | .variableSetAt _ ℓ (.val w) =>
+  | .variableSetAt x ℓ (.val w) =>
     -- Inspect the cell before updating it, so that the update can be done in place.
     match σ.lookup ℓ with
     | some (.object _ _) => .stuck
-    | some _ => .next (.val w) (σ.update ℓ (.val w))
+    | some (.val _) => if x.isFinal then .stuck else .next (.val w) (σ.update ℓ (.val w))
+    | some .uninit => .next (.val w) (σ.update ℓ (.val w))
     | none => .stuck
   | .nullCheck (.throwing v) => .next (.throwing v) σ
   | .as (.throwing v) _ => .next (.throwing v) σ
@@ -353,10 +354,14 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
   | propertyGetGetter hf hg hc =>
     exact .inl (Converges.congr (fun fuel => by simp [headStep, hf, hg])
       (promotionCheck_converges hc _))
-  | @variableSetAt x ℓ w c σ hℓ hc =>
+  | @variableSetAt x ℓ w c σ hℓ hc hfin =>
     cases c
     case object C fs => exact absurd rfl (hc C fs)
-    all_goals exact .inl (Converges.of_eq fun _ => by simp [headStep, hℓ])
+    case val u =>
+      cases hx : x.isFinal
+      · exact .inl (Converges.of_eq fun _ => by simp [headStep, hℓ, hx])
+      · exact absurd (hfin hx) nofun
+    case uninit => exact .inl (Converges.of_eq fun _ => by simp [headStep, hℓ])
   | @bubble Ki v σ =>
     cases Ki <;> exact .inl (Converges.of_eq fun _ => rfl)
 
@@ -372,6 +377,8 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
     | (obtain ⟨rfl, rfl⟩ := StepResult.next.inj h
        first
          | (constructor <;> assumption)
+         | exact .variableSetAt ‹_› (by intro _ _ h; cases h) (by intro _; rfl)
+         | exact .variableSetAt ‹_› (by intro _ _ h; cases h) (by simp_all)
          | (rename_i hb
             first
               | (subst hb; exact .blockDeclare)

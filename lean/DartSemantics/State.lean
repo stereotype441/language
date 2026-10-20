@@ -33,8 +33,8 @@ public inductive Cell where
   -/
   | val (v : Value)
   /--
-  A local variable that has been declared but not yet assigned. Only variables whose type isn't
-  nullable start out this way; the others are initialized to the null object.
+  A local variable that has been declared but not yet assigned. Only variables that are `final`, or
+  whose type isn't nullable, start out this way; the others are initialized to the null object.
   -/
   | uninit
   /--

@@ -177,8 +177,8 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   /--
   A block that starts with a declaration of local variable `v` allocates a cell for `v`, and
   resolves the references to `v` in the rest of the block to it. The cell starts out holding the
-  null object if the declaration says so (which it does if `v`'s type is nullable), and
-  uninitialized otherwise.
+  null object if the declaration says so (which flow analysis sets it to do if `v` isn't `final`
+  and its type is nullable), and uninitialized otherwise.
   -/
   | blockDeclare {v : Variable (τ := τ)} {T : τ} {startsNull : Bool} {ms : List LoweredExpr}
       {σ : State} :
@@ -202,10 +202,14 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   /--
   An assignment to a local variable stores the value in the variable's cell, and evaluates to
   that value. The cell must belong to a local variable (holding a value or uninitialized), not be
-  an object's own cell.
+  an object's own cell. If the variable is `final`, the cell must be uninitialized: assigning to a
+  `final` variable that has already been assigned gets stuck. (Dart reports a compile-time error
+  for such an assignment, so implementations don't check this at run time; getting stuck makes the
+  safety theorem cover flow analysis's definite unassignment check.)
   -/
   | variableSetAt {x : Variable (τ := τ)} {ℓ : Loc} {w : Value} {c : Cell} {σ : State}
-      (hℓ : σ.lookup ℓ = some c) (hc : ∀ C fs, c ≠ .object C fs) :
+      (hℓ : σ.lookup ℓ = some c) (hc : ∀ C fs, c ≠ .object C fs)
+      (hfin : x.isFinal = true → c = .uninit) :
       HeadStep (.variableSetAt x ℓ (.val w)) σ (.val w) (σ.update ℓ (.val w))
   /-- A null check on the null object is a dynamic type error. -/
   | nullCheckNull {σ : State} :

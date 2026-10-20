@@ -36,7 +36,7 @@ example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType) [.nullCheck .n
   ipureintro
   trivial
 
-def x : Variable := ⟨"x", ObjectQ⟩
+def x : Variable := { name := "x", type := ObjectQ }
 
 /-- `{ Object? x; x! }` throws: a declared nullable variable starts out null. -/
 example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
