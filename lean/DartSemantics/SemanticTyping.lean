@@ -109,6 +109,11 @@ public inductive Fact where
   after `int x; if (b) { x = 1; }`, `x` may not be assigned, but it can still be assigned to.)
   -/
   | decl (x : Variable)
+  /--
+  Variable `x` is in scope, and hasn't been assigned (its cell is uninitialized). A `final`
+  variable can only be assigned when this holds.
+  -/
+  | uninit (x : Variable)
   /-- Variable `x` holds a value that satisfies `T`. -/
   | var (x : Variable) (T : τ)
   /--
@@ -128,6 +133,7 @@ local notation "Fact" => Fact (τ := τ)
 @[expose]
 public def Fact.variable : Fact → Variable
   | .decl x => x
+  | .uninit x => x
   | .var x _ => x
   | .field x _ _ => x
 
@@ -251,6 +257,7 @@ persistently: they never change.
 @[expose, reducible]
 public def interpFact (bindings : List (Variable × Loc)) (env : Env) : Fact → IProp GF
   | .decl x => iprop(⌜∃ ℓ, bindings.lookup x = some ℓ⌝)
+  | .uninit x => iprop(⌜∃ ℓ, bindings.lookup x = some ℓ ∧ env x = .uninit⌝)
   | .var x T => iprop(∃ ℓ v, ⌜bindings.lookup x = some ℓ ∧ env x = .val v⌝ ∗ interpVal T v)
   | .field x name T => iprop(∃ ℓ ℓo C fs ℓf w,
       ⌜bindings.lookup x = some ℓ ∧ env x = .val (.obj ℓo) ∧ fs.lookup name = some ℓf⌝ ∗

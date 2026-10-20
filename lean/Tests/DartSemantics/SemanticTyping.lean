@@ -91,6 +91,19 @@ example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bin
       (fun o _ => OutcomeOk Null o) :=
   castAssignRead_safe (GF := DartS SimpleType) rfl le_rfl le_rfl σ bindings hb hx hy
 
+/-- A `final` local variable, with type `Object?`. -/
+def z : Variable := { name := "z", type := ObjectQ, isFinal := true }
+
+/--
+With promotion checks, `{ final Object? z; z = y; z }` is safe whenever `y` holds a value that
+satisfies `Object?`: `z` starts out unassigned, so assigning it once doesn't get stuck.
+-/
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hy : FactHolds σ bindings (.var y ObjectQ)) :
+    adequate .NotStuck ((finalInitRead z ObjectQ y ObjectQ).bindVariables bindings) σ
+      (fun o _ => OutcomeOk Null o) :=
+  finalInitRead_safe (GF := DartS SimpleType) (by simp [y, z]) le_rfl σ bindings hb hy
+
 end Verify
 
 section Trust

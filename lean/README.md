@@ -81,9 +81,10 @@ flowchart LR
   assigned, the types it has been tested against, and so on. Much of this only matters to the
   analysis itself, for example to decide what is known after a join.
 - **Facts** (`Fact`, in `DartSemantics/SemanticTyping.lean`) are simple statements that a running
-  program can rely on at a point, such as "`x` is in scope" (`Fact.decl x`), "`x` holds a value that
-  satisfies `T`" (`Fact.var x T`), or "`x` refers to an object whose instance variable `f` holds a
-  value that satisfies `T`" (`Fact.field x f T`). A *context* (`Ctx`) is a list of facts.
+  program can rely on at a point, such as "`x` is in scope" (`Fact.decl x`), "`x` hasn't been
+  assigned" (`Fact.uninit x`), "`x` holds a value that satisfies `T`" (`Fact.var x T`), or "`x`
+  refers to an object whose instance variable `f` holds a value that satisfies `T`"
+  (`Fact.field x f T`). A *context* (`Ctx`) is a list of facts.
 - **Iris propositions** (`IProp`) are statements in the program logic about the run-time heap.
   Local variables' cells can change, so the judgment owns them exclusively (`interpEnv`), and
   tracks what they hold with an *environment* (`Env`). Each fact means an Iris proposition about
@@ -162,8 +163,9 @@ What exists so far:
   (`PrimitiveLaws`), and proof-mode tactics (`ProofMode`). On top of the program logic, it has a
   semantic typing judgment (`SemanticTyping`, with binding lemmas in `Bind`), typing rules proved
   sound (`Compat`), and a safety theorem (`Safety`): the basis for proving flow analysis sound.
-  Assignments to local variables are covered throughout; `final` locals aren't yet. Connecting
-  this to the model of flow analysis comes next.
+  Assignments to local variables, including `final` ones (which can only be assigned while they
+  are unassigned), are covered throughout. Connecting this to the model of flow analysis comes
+  next.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, small programs proved safe with the typing rules
   (`Corollaries`), and a check that `SimpleType` obeys the laws that the typing rules assume.
