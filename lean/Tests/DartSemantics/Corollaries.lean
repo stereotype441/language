@@ -4,10 +4,11 @@ public import DartSemantics.Safety
 /-!
 # Corollaries of safety
 
-Small programs whose safety depends on promotion (and, for one, on demotion by an assignment),
-proved safe for every type representation that obeys `TypeLaws`, and every choice of
-`SemanticParams`. When `SemanticParams.promotionChecks` is `PromotionChecks.verify`, "safe"
-includes that every promoted read passes its promotion check: the promotions are sound.
+Small programs whose safety depends on promotion (and, for one, on demotion by an assignment, and
+for another, on a `final` variable being assigned only while it is unassigned), proved safe for
+every type representation that obeys `TypeLaws`, and every choice of `SemanticParams`. When
+`SemanticParams.promotionChecks` is `PromotionChecks.verify`, "safe" includes that every promoted
+read passes its promotion check: the promotions are sound.
 
 These are worked examples, by hand, of using the typing rules (`Compat`) and the safety theorem
 (`safety`) end to end: the flow analysis soundness theorem will produce proofs like these for every
@@ -144,7 +145,7 @@ public theorem castAssignRead_typed {hlc : HasLC} {GF : BundledGFunctors} [DartG
   refine SemTyped.block_cons (fun _ _ _ h => by cases h)
     (SemTyped.as_var (List.mem_cons_self ..) hUx) ?_
   refine SemTyped.block_cons (fun _ _ _ h => by cases h)
-    (SemTyped.variableSet hnf (by simp) (SemTyped.var (by simp) hU)) ?_
+    (SemTyped.variableSet (by simp) (SemTyped.var (by simp) hU) (by simp [hnf])) ?_
   exact SemTyped.block_cons (fun _ _ _ h => by cases h)
     (SemTyped.var (List.mem_cons_self ..) le_rfl) (SemTyped.block_nil _)
 
@@ -173,5 +174,58 @@ public theorem castAssignRead_safe [SemanticParams τ] {GF : BundledGFunctors} [
     · obtain ⟨ℓ, -, -, hl, -⟩ := hx
       exact ⟨ℓ, hl⟩
     · exact hy
+
+/--
+The program `{ T z; z = y; z }`, where `z` is declared without an initializer (so it starts out
+unassigned), `y` has static type `Ty`, and the read of `z` has static type `Ty`. If `z` is `final`,
+this is `{ final T z; z = y; z }`, which assigns `z` exactly once.
+-/
+@[expose]
+public def finalInitRead (z : Variable) (T : τ) (y : Variable) (Ty : τ) : LoweredExpr :=
+  .block [.declare z T false, .variableSet z (.var y Ty), .var z Ty]
+
+/--
+`{ T z; z = y; z }` is semantically well typed, with type `Null`, given that `y` holds a value that
+satisfies `U` (`[.var y U]`), whether or not `z` is `final`, if:
+- `y` is a different variable from `z` (`hyz`); and
+- `U` is a subtype of `y`'s static type `Ty` (`hU`).
+
+It guarantees nothing afterwards (`[]`).
+-/
+public theorem finalInitRead_typed {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
+    [SemanticParams τ] {z y : Variable} {T U Ty : τ} (hyz : y ≠ z) (hU : U ≤ Ty) :
+    SemTyped GF [.var y U] (finalInitRead z T y Ty) Γ.Null (fun _ => []) := by
+  have hrest := SemTyped.block_cons (GF := GF)
+    (Δ := (if false = true then [Fact.var z T] else [Fact.uninit z]) ++
+      Fact.decl z :: Ctx.forget [.var y U] z)
+    (fun _ _ _ h => by cases h)
+    (SemTyped.variableSet (v := z)
+      (by simp) (SemTyped.var (x := y) (by simp [Ctx.forget, Fact.variable, hyz]) hU)
+      (fun _ _ => by simp))
+    (SemTyped.block_cons (fun _ _ _ h => by cases h)
+      (SemTyped.var (List.mem_cons_self ..) le_rfl) (SemTyped.block_nil _))
+  exact (SemTyped.block_declare (fun h => by cases h) hrest).weaken (fun _ h => h) le_rfl
+    (fun _ _ h => by cases h)
+
+/--
+`{ T z; z = y; z }`, started in state `σ` with its variables bound by `bindings`, never gets stuck,
+and every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`), if:
+- `y` is a different variable from `z` (`hyz`);
+- `U` is a subtype of `y`'s static type `Ty` (`hU`);
+- the bindings are suitable (`hb`); and
+- `y` holds a value that satisfies `U` in `σ` (`hy`).
+
+In particular, if `z` is `final`, the assignment to it doesn't get stuck: `z` hasn't been assigned
+before.
+-/
+public theorem finalInitRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
+    {z y : Variable} {T U Ty : τ} (hyz : y ≠ z) (hU : U ≤ Ty) (σ : State)
+    (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hy : FactHolds σ bindings (.var y U)) :
+    adequate .NotStuck ((finalInitRead z T y Ty).bindVariables bindings) σ
+      (fun o _ => OutcomeOk Γ.Null o) :=
+  safety (GF := GF) σ bindings (finalInitRead_typed (T := T) hyz hU) hb fun f hf => by
+    rw [List.mem_singleton.1 hf]
+    exact hy
 
 end DartSemantics
