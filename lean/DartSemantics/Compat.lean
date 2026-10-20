@@ -585,9 +585,11 @@ public theorem Ctx.mem_forget {Δ : Ctx} {v : Variable} {f : Fact} :
 
 /--
 An assignment `v = m` is semantically well typed with the type `T` of its right-hand side, if:
-- `v` isn't `final` (`hnf`);
-- `v` is in scope beforehand (`Fact.decl v ∈ Δb`); and
-- `m` is semantically well typed with type `T` (`hm`), guaranteeing facts `Δa` afterwards.
+- `v` is in scope beforehand (`hdecl`: `Fact.decl v ∈ Δb`);
+- `m` is semantically well typed with type `T` (`hm`), guaranteeing facts `Δa` afterwards; and
+- if `v` is `final`, it hasn't been assigned after `m`, whatever value `m` evaluates to
+  (`hfin`: `Fact.uninit v ∈ Δa w` for every `w`). The check comes after `m` because `m` runs before
+  the assignment, and may itself assign to `v` (as in `x = (x = e)`).
 
 It guarantees afterwards the facts that `m` guarantees, less those about `v` (including any
 promotions of `v`, and facts about instance variables reached through `v`: `(Δa w).forget v`),
@@ -603,13 +605,10 @@ flow analysis's models, including, wherever flow analysis falls back on a variab
 (for example, after a join that loses its promotions), that the variable holds a value that
 satisfies its declared type. This means that the flow analysis soundness proof will have to prove
 that `T` is a subtype of `v`'s declared type.
-
-TODO: Dart allows an assignment to a `final` variable that hasn't been assigned yet. Typing it needs
-a fact saying that the variable hasn't been assigned, which contexts can't express yet.
 -/
 public theorem SemTyped.variableSet {Δb : Ctx} {v : Variable} {m : LoweredExpr} {T : τ}
-    {Δa : Value → Ctx} (hnf : v.isFinal = false) (hdecl : Fact.decl v ∈ Δb)
-    (hm : SemTyped GF Δb m T Δa) :
+    {Δa : Value → Ctx} (hdecl : Fact.decl v ∈ Δb) (hm : SemTyped GF Δb m T Δa)
+    (hfin : v.isFinal = true → ∀ w, Fact.uninit v ∈ Δa w) :
     SemTyped GF Δb (.variableSet v m) T (fun w => .var v T :: .decl v :: (Δa w).forget v) := by
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_variableSet]
@@ -627,8 +626,19 @@ public theorem SemTyped.variableSet {Δb : Ctx} {v : Variable} {m : LoweredExpr}
     (fun _ => true_intro)
   simp only [EctxItem.fill]
   iintro ⟨He, #Hw, #H'⟩
+  ihave %hfin' : ⌜v.isFinal = true → env' v = .uninit⌝ $$ []
+  · cases hvf : v.isFinal with
+    | false =>
+      ipureintro
+      intro h
+      cases h
+    | true =>
+      ihave %hu := interpCtx_elim (hfin hvf w) $$ H'
+      obtain ⟨_, -, hu⟩ := hu
+      ipureintro
+      exact fun _ => hu
   icases interpEnv_acc (GF := GF) (env := env') hnd hl $$ He with ⟨⟨%hc, Hl⟩, Hback⟩
-  iapply wp_variableSetAt hc (fun h => by simp [hnf] at h)
+  iapply wp_variableSetAt hc hfin'
   isplitl [Hl]
   · inext
     iexact Hl
@@ -729,7 +739,7 @@ rest of the block is semantically well typed with type `Null` (`h`), given:
   (`Δ.forget v`);
 - that `v` is in scope (`Fact.decl v`); plus
 - if `v` starts out holding the null object (`sN`), that `v` holds a value that satisfies `T`
-  (`Fact.var v T`).
+  (`Fact.var v T`), and otherwise, that `v` hasn't been assigned (`Fact.uninit v`).
 
 That requires `Null` to be a subtype of `T` (`hsN`), which flow analysis ensures by setting
 `startsNull` only for nullable types. It guarantees afterwards the facts that the rest of the block
@@ -738,7 +748,7 @@ guarantees, less those about `v`, since `v` goes out of scope (`Δ₂.forget v`)
 -/
 public theorem SemTyped.block_declare {Δ Δ₂ : Ctx} {v : Variable} {T : τ} {sN : Bool}
     {ms : List LoweredExpr} (hsN : sN = true → Γ.Null ≤ T)
-    (h : SemTyped GF ((if sN then [Fact.var v T] else []) ++ Fact.decl v :: Δ.forget v)
+    (h : SemTyped GF ((if sN then [Fact.var v T] else [Fact.uninit v]) ++ Fact.decl v :: Δ.forget v)
       (.block ms) Γ.Null (fun _ => Δ₂)) :
     SemTyped GF Δ (.block (.declare v T sN :: ms)) Γ.Null (fun _ => Δ₂.forget v) := by
   intro bindings hnd env
@@ -804,11 +814,16 @@ public theorem SemTyped.block_declare {Δ Δ₂ : Ctx} {v : Variable} {T : τ} {
       exact ⟨ℓ, hlookv⟩
     · iexact Hfor
   ihave #Hin : interpCtx ((v, ℓ) :: bindings.filter fun b => b.1 ≠ v) (env.set v c₀)
-      ((if sN then [Fact.var v T] else []) ++ Fact.decl v :: Δ.forget v) $$ []
+      ((if sN then [Fact.var v T] else [Fact.uninit v]) ++ Fact.decl v :: Δ.forget v) $$ []
   · cases sN with
     | false =>
-      simp only [Bool.false_eq_true, ite_false, List.nil_append]
-      iexact Hdecl
+      simp only [Bool.false_eq_true, ite_false, List.singleton_append]
+      simp only [Bool.false_eq_true, ite_false] at hc₀
+      iapply interpCtx_cons
+      isplitr
+      · ipureintro
+        exact ⟨ℓ, hlookv, by rw [Env.set_self, ← hc₀]⟩
+      · iexact Hdecl
     | true =>
       simp only [ite_true, List.singleton_append]
       simp only [ite_true] at hc₀
