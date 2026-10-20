@@ -61,6 +61,7 @@ instance variable, its cell must not be one of the variables' cells.
 @[expose]
 public def FactHolds (σ : State) (bindings : List (Variable × Loc)) : Fact → Prop
   | .decl x => ∃ ℓ, bindings.lookup x = some ℓ
+  | .uninit x => ∃ ℓ, bindings.lookup x = some ℓ ∧ σ.lookup ℓ = some .uninit
   | .var x T => ∃ ℓ v S, bindings.lookup x = some ℓ ∧ σ.lookup ℓ = some (.val v) ∧
       σ.dynamicType v = some S ∧ S ≤ T ∧ ValOk v S
   | .field x name T => ∃ ℓ ℓo C fs ℓf w S, bindings.lookup x = some ℓ ∧
@@ -270,6 +271,11 @@ theorem interpFact_of_holds {σ : State} {bindings : List (Variable × Loc)}
     iintro -
     ipureintro
     exact hf
+  | uninit x =>
+    obtain ⟨ℓ, hl, hc⟩ := hf
+    iintro -
+    ipureintro
+    exact ⟨ℓ, hl, by simp [envOf, hl, hc]⟩
   | var x T =>
     obtain ⟨ℓ, v, S, hl, hc, hS, hT, hok⟩ := hf
     iintro #H
