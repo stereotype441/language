@@ -179,15 +179,15 @@ public theorem tac_wp_load_field {ℓ ℓf : Loc} {p : Property} {T C S : τ}
 
 /--
 The proof-mode form of `wp_variableSetAt`, with the points-to first (`H`), so that framing it
-determines the cell, and then the fact that the cell isn't an object's own cell (`hc`): to prove
-that assigning `w` to `x`, resolved to the cell at `ℓ`, satisfies `Φ` from the hypotheses `Δ`,
-prove `wp_variableSetAt`'s premises.
+determines the cell, and then the facts that the cell isn't an object's own cell (`hc`) and, if
+`x` is `final`, is unassigned (`hfin`): to prove that assigning `w` to `x`, resolved to the cell at
+`ℓ`, satisfies `Φ` from the hypotheses `Δ`, prove `wp_variableSetAt`'s premises.
 -/
 public theorem tac_wp_store {x : Variable} {ℓ : Loc} {c : Cell} {w : Value}
     (H : Entails' Δ iprop(▷ (ℓ ↦ c) ∗ ▷ ((ℓ ↦ (.val w : Cell)) -∗ Φ (.normal w))))
-    (hc : ∀ C fs, c ≠ .object C fs) :
+    (hc : ∀ C fs, c ≠ .object C fs) (hfin : x.isFinal = true → c = .uninit) :
     Entails' Δ (WP (LoweredExpr.variableSetAt x ℓ (.val w)) @ s; E {{ Φ }}) :=
-  (show Δ ⊢ _ from H).trans (wp_variableSetAt hc)
+  (show Δ ⊢ _ from H).trans (wp_variableSetAt hc hfin)
 
 end DartSemantics
 
@@ -353,6 +353,8 @@ macro_rules
      iframe $h:ident
      rotate_left
      · intro _ _ h
+       cases h
+     · intro h
        cases h
      inext
      iintro $h:ident
