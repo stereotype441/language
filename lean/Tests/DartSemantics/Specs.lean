@@ -68,6 +68,26 @@ example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
   ipureintro
   trivial
 
+/-- A `final` local variable, with type `Object?`. -/
+def z : Variable := { name := "z", type := ObjectQ, isFinal := true }
+
+/--
+`{ final Object? z; z = true; z! }` completes normally: a `final` variable starts out unassigned
+(flow analysis sets `startsNull` to `false`), so it can be assigned once.
+-/
+example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
+    [.declare z ObjectQ false, .variableSet z (.val (.bool true)), .nullCheck (.var z ObjectQ)])
+    {{ o, ⌜o = DartLang.Outcome.normal .null⌝ }} := by
+  iintro
+  wp_alloc ℓ Hl
+  wp_pures
+  wp_store Hl
+  wp_pures
+  wp_load Hl
+  wp_pures
+  ipureintro
+  trivial
+
 /-- A promotable property. -/
 def f : Property (τ := SimpleType) := ⟨"_f", ObjectQ, true⟩
 
