@@ -23,7 +23,9 @@ iris-lean's HeapLang tactics (whose own `wp_*` tactics only work for HeapLang):
   in the context. Pure side conditions (such as the subtype fact for the promotion check) are
   proved by `decide` or `rfl` when they can be, and otherwise left as goals after the main one.
 - `wp_store H`: take the step of an assignment to a local variable, using the points-to `H` for
-  the variable's cell, which afterwards holds the value assigned.
+  the variable's cell, which afterwards holds the value assigned. If the variable may be `final`,
+  the cell must be unassigned: that side condition is proved when the variable isn't `final`, or
+  the cell is `.uninit`, and otherwise left as a goal after the main one.
 
 Steps that involve a run-time subtype check (cast expressions and is-expressions) or a getter that
 is user code are taken by applying the laws in `PrimitiveLaws.lean` directly.
@@ -336,7 +338,9 @@ macro_rules
 /--
 `wp_store H` takes the step of an assignment to a local variable, using the points-to `H` for the
 variable's cell. Afterwards, `H` is back in the context, saying that the cell holds the value
-assigned.
+assigned. The side condition for `final` variables (`hfin` of `wp_variableSetAt`) is proved when
+the variable isn't `final` or the cell is `.uninit`, and otherwise left as a goal after the main
+one.
 -/
 syntax "wp_store " ident : tactic
 
@@ -347,8 +351,12 @@ macro_rules
      rotate_left
      · intro _ _ h
        cases h
-     · intro h
-       cases h
+     first
+       | (· intro h
+            cases h)
+       | (· intro _
+            rfl)
+       | rotate_left
      inext
      iintro $h:ident
      dart_wp_tidy))
