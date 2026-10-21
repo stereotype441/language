@@ -61,10 +61,11 @@ variable is still backed by persistent points-tos for its cell and its object's 
 
 ## Simplifications
 
-A property read is only typed when its receiver is a variable `x`, and the context promises that
-`x` refers to an object with an instance variable of that name (`Fact.field`). Reading a property
-whose getter is user code, or of an object that isn't held in a variable, waits for the semantics
-to have class declarations and calls (see `SemanticParams.getterImpl`).
+A property read is only typed when its receiver reads a property path from a variable (`x._f._g`
+reads path `["_f", "_g"]` from `x`; see `SemTypedPath` in `Compat.lean`), and the context promises
+that the path leads to an instance variable (`Fact.field`). Reading a property whose getter is user
+code, or of an object that isn't reached from a variable, waits for the semantics to have class
+declarations and calls (see `SemanticParams.getterImpl`).
 -/
 
 namespace DartSemantics

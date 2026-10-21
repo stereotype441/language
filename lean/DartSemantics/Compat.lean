@@ -7,7 +7,11 @@ public import DartSemantics.SemanticTyping
 The typing rules of the semantic typing judgment (`SemTyped`; see `SemanticTyping.lean`), each
 proved sound with respect to the semantics: one *compatibility lemma* for each kind of expression
 that flow analysis produces, plus special rules for the expressions that promote a variable or a
-property (`x!`, `x as T`, `x is T`, `x._f!`).
+property path (`x!`, `x as T`, `x is T`, `x._f._g!`, and so on).
+
+Reads of property paths (`x`, `x._f`, `x._f._g`, …) have a judgment of their own,
+`SemTypedPath`, which records which path an expression reads, so that the promotion rules
+(`SemTyped.nullCheck_path`, `SemTyped.as_path` and `SemTyped.is_path`) can record a fact about it.
 
 In each rule, the expression is semantically well typed with the static type that it is annotated
 with (or that `LoweredExpr.typeOf` gives it). Weakening (`SemTyped.weaken`) adjusts a type to a
@@ -84,50 +88,137 @@ public theorem wp_var_typed {bindings : List (Variable × Loc)} {env : Env} {Δ 
         exact ⟨hS, hok⟩
     · iexact He
 
+/-! ### Reading property paths -/
+
 /--
-A read of property `p` of variable `x`, with static type `T`, satisfies a postcondition `Ψ`, if:
-- the cells of the variables in `bindings` (each bound at most once, `hnd`) are owned, holding what
-  `env` says (`interpEnv bindings env`);
-- the context says that `x` holds a value that satisfies `U` (`hx`: `Fact.var x U ∈ Δ`);
-- `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`);
-- the context says that `x` refers to an object with an instance variable named `p.name` that
-  holds a value that satisfies `W` (`hf`: `Fact.field x [p.name] W ∈ Δ`);
-- `W` is a subtype of `T` (`hW`: `W ≤ T`); and
-- `Ψ` holds of completing normally with the value `w` in the instance variable (`Ψ (.normal w)`),
-  given the following (the continuation):
-  - the fact that `w` satisfies `W` (`interpVal W w` witnesses this fact);
-  - a helper function that can be used to record the knowledge that `w` satisfies a promoted type
-    `W'`. It takes a witness that `w` satisfies `W'` (`interpVal W' w`), and returns a witness of
-    the fact that the instance variable holds such a value
-    (`interpFact bindings env (.field x [p.name] W')`), which can be added to the context. It is
-    persistent (`□`), so it can be used any number of times. The null-check rule uses it to record
-    the promotion of `x._f`; and
-  - the ownership of the cells, unchanged (`interpEnv bindings env`).
+Variable `x` (bound to cell `ℓ`) holds a value `v`, and following property path `path` from `v`
+reaches `w`. It is persistent, like the facts.
 -/
-public theorem wp_field_typed {bindings : List (Variable × Loc)} {env : Env} {Δ : Ctx}
-    {x : Variable} {p : Property} {U Tx W T : τ} (hnd : (bindings.map (·.1)).Nodup)
-    (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x [p.name] W ∈ Δ) (hW : W ≤ T)
-    {Ψ : DartLang.Outcome (τ := τ) → IProp GF} :
-    interpEnv bindings env ∗ interpCtx bindings env Δ ∗ (∀ w, interpVal W w -∗
-        (□ ∀ W', interpVal W' w -∗ interpFact bindings env (.field x [p.name] W')) -∗
-        interpEnv bindings env -∗ Ψ (.normal w)) ⊢
-      WP ((LoweredExpr.propertyGet (.var x Tx) p T).bindVariables bindings) {{ Ψ }} := by
-  rw [LoweredExpr.bindVariables_propertyGet]
-  refine .trans ?_ (wp_bind_item (.propertyGet p T))
+@[expose, reducible]
+public def interpPathTo (bindings : List (Variable × Loc)) (env : Env) (x : Variable)
+    (path : List String) (w : Value) : IProp GF :=
+  iprop(∃ ℓ v, ⌜bindings.lookup x = some ℓ ∧ env x = .val v⌝ ∗ interpFieldPath path v w)
+
+omit [SemanticParams τ] in
+/--
+If following property path `path` from variable `x` reaches `w` (`interpPathTo bindings env x path
+w`), and `w` satisfies `T` (`interpVal T w`), then the fact that the value at that path satisfies
+`T` holds (`interpFact bindings env (Fact.atPath x path T)`).
+-/
+public theorem interpFact_atPath {bindings : List (Variable × Loc)} {env : Env} {x : Variable}
+    {path : List String} {T : τ} {w : Value} :
+    interpPathTo (GF := GF) bindings env x path w ∗ interpVal T w ⊢
+      interpFact bindings env (Fact.atPath x path T) := by
+  cases path with
+  | nil =>
+    simp only [Fact.atPath]
+    iintro ⟨⟨%ℓ, %v, ⟨%hl, %henv⟩, %hvw⟩, #Hw⟩
+    subst hvw
+    iexists ℓ, v
+    isplitr
+    · ipureintro
+      exact ⟨hl, henv⟩
+    · iexact Hw
+  | cons name path =>
+    simp only [Fact.atPath]
+    iintro ⟨⟨%ℓ, %v, %h, #Hp⟩, #Hw⟩
+    iexists ℓ, v, w
+    isplitr
+    · ipureintro
+      exact h
+    isplitr
+    · iexact Hp
+    · iexact Hw
+
+variable (GF) in
+/--
+The judgment for reads of property paths, `SemTypedPath Δ m x path T`: `m` reads the value at
+property path `path` from variable `x` (for example, `m` is `x._f._g` and `path` is `["_f", "_g"]`).
+Whatever cells the variables in scope are bound to (`bindings`, which binds each variable at most
+once; `x` must be one of them), and whatever those cells hold (`env`), if the cells are owned and
+the facts in `Δ` hold, then running `m` satisfies any postcondition `Ψ` that holds of completing
+normally with a value `w`, given:
+- that `w` satisfies `T` (`interpVal T w`);
+- that following `path` from `x` reaches `w` (`interpPathTo bindings env x path w`), which a
+  promotion rule can use to record a fact about the path (see `interpFact_atPath`); and
+- the ownership of the cells, unchanged: reading doesn't change any variable.
+
+So `m` doesn't get stuck, and doesn't throw.
+-/
+@[expose]
+public def SemTypedPath (Δ : Ctx) (m : LoweredExpr) (x : Variable) (path : List String) (T : τ) :
+    Prop :=
+  ∀ bindings, (bindings.map (·.1)).Nodup → ∀ env (Ψ : DartLang.Outcome (τ := τ) → IProp GF),
+    interpEnv bindings env ∗ interpCtx bindings env Δ ∗
+        (∀ w, interpVal T w -∗ interpPathTo bindings env x path w -∗ interpEnv bindings env -∗
+          Ψ (.normal w)) ⊢
+      WP (m.bindVariables bindings) {{ Ψ }}
+
+/--
+A reference to variable `x` reads the value at the empty path from `x`, with its static type `T`,
+if:
+- the context says that `x` holds a value that satisfies `U` (`hf`: `Fact.var x U ∈ Δ`); and
+- `U` is a subtype of `T` (`hU`: `U ≤ T`).
+-/
+public theorem SemTypedPath.var {Δ : Ctx} {x : Variable} {U T : τ} (hf : Fact.var x U ∈ Δ)
+    (hU : U ≤ T) : SemTypedPath GF Δ (.var x T) x [] T := by
+  intro bindings hnd env Ψ
   iintro ⟨He, #H, HΨ⟩
-  ihave #Hf := interpCtx_elim hf $$ H
-  icases Hf with ⟨%ℓ, %v₀, %w, ⟨%hl, %henv⟩, #Hp, #Hw⟩
-  icases Hp with ⟨%ℓo, %C, %fs, %ℓf, %w', ⟨%hv₀, %hfs⟩, #Ho, #Hlf, %hw'⟩
-  subst hv₀ hw'
-  iapply wp_var_typed hnd hx hU
+  iapply wp_var_typed hnd hf hU
   isplitl [He]
   · iexact He
   isplitr
   · iexact H
-  iintro %ℓ' %v %hl' %henv' - He
-  have hv : v = .obj ℓo := by rw [henv] at henv'; exact (Cell.val.inj henv').symm
+  iintro %ℓ %v %hl %henv #Hv He
+  iapply HΨ
+  · iapply interpVal_mono hU $$ Hv
+  · iexists ℓ, v
+    isplitr
+    · ipureintro
+      exact ⟨hl, henv⟩
+    · ipureintro
+      rfl
+  · iexact He
+
+/--
+Reading property `p` of the value at property path `path` from variable `x` reads the value at
+`path ++ [p.name]`, with its static type `T`, if:
+- `m` reads the value at `path` from `x`, with some static type `Tm` (`hm`);
+- the context says that the value at `path ++ [p.name]` (an instance variable named `p.name` of the
+  object at `path`) satisfies `W` (`hf`: `Fact.field x (path ++ [p.name]) W ∈ Δ`); and
+- `W` is a subtype of `T` (`hW`: `W ≤ T`).
+-/
+public theorem SemTypedPath.propertyGet {Δ : Ctx} {m : LoweredExpr} {x : Variable}
+    {path : List String} {p : Property} {Tm W T : τ} (hm : SemTypedPath GF Δ m x path Tm)
+    (hf : Fact.field x (path ++ [p.name]) W ∈ Δ) (hW : W ≤ T) :
+    SemTypedPath GF Δ (.propertyGet m p T) x (path ++ [p.name]) T := by
+  intro bindings hnd env Ψ
+  rw [LoweredExpr.bindVariables_propertyGet]
+  refine .trans ?_ (wp_bind_item (.propertyGet p T))
+  iintro ⟨He, #H, HΨ⟩
+  ihave #Hf := interpCtx_elim hf $$ H
+  icases Hf with ⟨%ℓ, %v, %w, ⟨%hl, %henv⟩, #Hpath, #Hw⟩
+  ihave #Hsplit := (interpFieldPath_append path [p.name] v w).1 $$ Hpath
+  icases Hsplit with ⟨%u, #Hpu, #Huw⟩
+  iapply hm bindings hnd env
+  isplitl [He]
+  · iexact He
+  isplitr
+  · iexact H
+  iintro %w₀ - #Hp₀ He
+  icases Hp₀ with ⟨%ℓ', %v', ⟨%hl', %henv'⟩, #Hp₀'⟩
+  have hv : v' = v := by rw [henv] at henv'; exact (Cell.val.inj henv').symm
   subst hv
+  -- The object that `m` read is the one at `path` that the fact describes.
+  ihave %hu : ⌜u = w₀⌝ $$ []
+  · iapply interpFieldPath_agree path
+    isplitr
+    · iexact Hpu
+    · iexact Hp₀'
+  subst hu
   simp only [DartLang.Outcome.toExpr, EctxItem.fill]
+  icases Huw with ⟨%ℓo, %C, %fs, %ℓf, %w', ⟨%hu, %hfs⟩, #Ho, #Hlf, %hw'⟩
+  subst hu hw'
   icases Hw with ⟨%S, #Hty, %hS, %hok⟩
   iapply wp_propertyGetField (fs := fs) (w := w') hfs (le_trans hS hW)
   isplitr
@@ -144,26 +235,49 @@ public theorem wp_field_typed {bindings : List (Variable × Loc)} {env : Env} {�
       isplitr
       · iexact Hty
       · ipureintro
-        exact ⟨hS, hok⟩
-    · imodintro
-      iintro %W' #Hw'
-      iexists ℓ, .obj ℓo, w'
+        exact ⟨le_trans hS hW, hok⟩
+    · iexists ℓ', v'
       isplitr
       · ipureintro
-        exact ⟨hl, henv⟩
-      isplitr
-      · iexists ℓo, C, fs, ℓf, w'
+        exact ⟨hl', henv'⟩
+      · iapply (interpFieldPath_append path [p.name] v' w').2
+        iexists .obj ℓo
         isplitr
-        · ipureintro
-          exact ⟨rfl, hfs⟩
-        isplitr
-        · iexact Ho
-        isplitr
-        · iexact Hlf
-        · ipureintro
-          rfl
-      · iexact Hw'
+        · iexact Hpu
+        · iexists ℓo, C, fs, ℓf, w'
+          isplitr
+          · ipureintro
+            exact ⟨rfl, hfs⟩
+          isplitr
+          · iexact Ho
+          isplitr
+          · iexact Hlf
+          · ipureintro
+            rfl
     · iexact He
+
+/--
+An expression that reads a property path is semantically well typed with the type it reads the
+value at (`T`), if it reads the value at the path with type `T` (`h`). It guarantees afterwards
+the facts that held beforehand (`Δ`).
+-/
+public theorem SemTypedPath.toSemTyped {Δ : Ctx} {m : LoweredExpr} {x : Variable}
+    {path : List String} {T : τ} (h : SemTypedPath GF Δ m x path T) :
+    SemTyped GF Δ m T (fun _ => Δ) := by
+  intro bindings hnd env
+  iintro ⟨He, #H⟩
+  iapply h bindings hnd env
+  isplitl [He]
+  · iexact He
+  isplitr
+  · iexact H
+  iintro %w #Hw - He
+  simp only [interpOutcome]
+  iexists env
+  iframe He
+  isplitr
+  · iexact Hw
+  · iexact H
 
 /-! ### Literals and variables -/
 
@@ -192,21 +306,8 @@ A reference to variable `x` is semantically well typed with its static type `T`,
 It guarantees afterwards the facts that held beforehand (`Δ`).
 -/
 public theorem SemTyped.var {Δ : Ctx} {x : Variable} {U T : τ} (hf : Fact.var x U ∈ Δ)
-    (hU : U ≤ T) : SemTyped GF Δ (.var x T) T (fun _ => Δ) := by
-  intro bindings hnd env
-  iintro ⟨He, #H⟩
-  iapply wp_var_typed hnd hf hU
-  isplitl [He]
-  · iexact He
-  isplitr
-  · iexact H
-  iintro %ℓ %v %hl %henv #Hv He
-  simp only [interpOutcome]
-  iexists env
-  iframe He
-  isplitr
-  · iapply interpVal_mono hU $$ Hv
-  · iexact H
+    (hU : U ≤ T) : SemTyped GF Δ (.var x T) T (fun _ => Δ) :=
+  (SemTypedPath.var hf hU).toSemTyped
 
 /--
 Reading property `p` of variable `x` is semantically well typed with its static type `T`, if:
@@ -216,25 +317,12 @@ Reading property `p` of variable `x` is semantically well typed with its static 
   holds a value that satisfies `W` (`hf`: `Fact.field x [p.name] W ∈ Δ`); and
 - `W` is a subtype of `T` (`hW`: `W ≤ T`).
 
-It guarantees afterwards the facts that held beforehand (`Δ`).
+It guarantees afterwards the facts that held beforehand (`Δ`). (`SemTypedPath` reads longer paths.)
 -/
 public theorem SemTyped.propertyGet {Δ : Ctx} {x : Variable} {p : Property} {U Tx W T : τ}
     (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x [p.name] W ∈ Δ) (hW : W ≤ T) :
-    SemTyped GF Δ (.propertyGet (.var x Tx) p T) T (fun _ => Δ) := by
-  intro bindings hnd env
-  iintro ⟨He, #H⟩
-  iapply wp_field_typed hnd hx hU hf hW
-  isplitl [He]
-  · iexact He
-  isplitr
-  · iexact H
-  iintro %w #Hw - He
-  simp only [interpOutcome]
-  iexists env
-  iframe He
-  isplitr
-  · iapply interpVal_mono hW $$ Hw
-  · iexact H
+    SemTyped GF Δ (.propertyGet (.var x Tx) p T) T (fun _ => Δ) :=
+  (SemTypedPath.propertyGet (path := []) (SemTypedPath.var hx hU) hf hW).toSemTyped
 
 /-! ### Null checks -/
 
@@ -267,6 +355,51 @@ public theorem SemTyped.nullCheck (L : TypeLaws τ) {Δ : Ctx} {m : LoweredExpr}
     · iexact H
 
 /--
+A null check `m!` of an expression `m` that reads the value at property path `path` from variable
+`x` (such as `x!` or `x._f._g!`) is semantically well typed with type `NonNull T`, if `m` reads it
+with static type `T` (`hm`).
+
+It guarantees afterwards the facts that held beforehand, plus that the value at the path satisfies
+`NonNull T` (`Fact.atPath x path (Γ.NonNull T) :: Δ`): the null check promotes the path.
+-/
+public theorem SemTyped.nullCheck_path (L : TypeLaws τ) {Δ : Ctx} {m : LoweredExpr}
+    {x : Variable} {path : List String} {T : τ} (hm : SemTypedPath GF Δ m x path T) :
+    SemTyped GF Δ (.nullCheck m) (Γ.NonNull T)
+      (fun _ => Fact.atPath x path (Γ.NonNull T) :: Δ) := by
+  intro bindings hnd env
+  rw [LoweredExpr.bindVariables_nullCheck]
+  refine .trans ?_ (wp_bind_item .nullCheck)
+  iintro ⟨He, #H⟩
+  iapply hm bindings hnd env
+  isplitl [He]
+  · iexact He
+  isplitr
+  · iexact H
+  iintro %w #Hw #Hp He
+  simp only [DartLang.Outcome.toExpr, EctxItem.fill]
+  by_cases hw : w = .null
+  · subst hw
+    iapply wp_nullCheck_null
+    inext
+    simp only [interpOutcome]
+    itrivial
+  · iapply wp_nullCheck hw
+    inext
+    simp only [interpOutcome]
+    ihave #Hw' := interpVal_nonNull L hw $$ Hw
+    iexists env
+    iframe He
+    isplitr
+    · iexact Hw'
+    · iapply interpCtx_cons
+      isplitr
+      · iapply interpFact_atPath
+        isplitr
+        · iexact Hp
+        · iexact Hw'
+      · iexact H
+
+/--
 A null check `x!` of a variable `x` is semantically well typed with type `NonNull T`, if:
 - the context says that `x` holds a value that satisfies `U` (`hf`: `Fact.var x U ∈ Δ`); and
 - `U` is a subtype of `T` (`hU`: `U ≤ T`).
@@ -278,40 +411,7 @@ public theorem SemTyped.nullCheck_var (L : TypeLaws τ) {Δ : Ctx} {x : Variable
     (hf : Fact.var x U ∈ Δ) (hU : U ≤ T) :
     SemTyped GF Δ (.nullCheck (.var x T)) (Γ.NonNull T)
       (fun _ => .var x (Γ.NonNull T) :: Δ) := by
-  intro bindings hnd env
-  rw [LoweredExpr.bindVariables_nullCheck]
-  refine .trans ?_ (wp_bind_item .nullCheck)
-  iintro ⟨He, #H⟩
-  iapply wp_var_typed hnd hf hU
-  isplitl [He]
-  · iexact He
-  isplitr
-  · iexact H
-  iintro %ℓ %v %hl %henv #Hv He
-  simp only [DartLang.Outcome.toExpr, EctxItem.fill]
-  by_cases hv : v = .null
-  · subst hv
-    iapply wp_nullCheck_null
-    inext
-    simp only [interpOutcome]
-    itrivial
-  · iapply wp_nullCheck hv
-    inext
-    simp only [interpOutcome]
-    ihave #Hv1 := interpVal_mono hU $$ Hv
-    ihave #Hv' := interpVal_nonNull L hv $$ Hv1
-    iexists env
-    iframe He
-    isplitr
-    · iexact Hv'
-    · iapply interpCtx_cons
-      isplitr
-      · iexists ℓ, v
-        isplitr
-        · ipureintro
-          exact ⟨hl, henv⟩
-        · iexact Hv'
-      · iexact H
+  simpa only [Fact.atPath] using SemTyped.nullCheck_path L (SemTypedPath.var (GF := GF) hf hU)
 
 /--
 A null check `x._f!` of property `p` of variable `x` is semantically well typed with type
@@ -331,36 +431,8 @@ public theorem SemTyped.nullCheck_field (L : TypeLaws τ) {Δ : Ctx} {x : Variab
     (hW : W ≤ T) :
     SemTyped GF Δ (.nullCheck (.propertyGet (.var x Tx) p T)) (Γ.NonNull T)
       (fun _ => .field x [p.name] (Γ.NonNull T) :: Δ) := by
-  intro bindings hnd env
-  rw [LoweredExpr.bindVariables_nullCheck]
-  refine .trans ?_ (wp_bind_item .nullCheck)
-  iintro ⟨He, #H⟩
-  iapply wp_field_typed hnd hx hU hf hW
-  isplitl [He]
-  · iexact He
-  isplitr
-  · iexact H
-  iintro %w #Hw #Hfact He
-  simp only [DartLang.Outcome.toExpr, EctxItem.fill]
-  by_cases hw : w = .null
-  · subst hw
-    iapply wp_nullCheck_null
-    inext
-    simp only [interpOutcome]
-    itrivial
-  · iapply wp_nullCheck hw
-    inext
-    simp only [interpOutcome]
-    ihave #Hw1 := interpVal_mono hW $$ Hw
-    ihave #Hw' := interpVal_nonNull L hw $$ Hw1
-    iexists env
-    iframe He
-    isplitr
-    · iexact Hw'
-    · iapply interpCtx_cons
-      isplitr
-      · iapply Hfact $$ Hw'
-      · iexact H
+  simpa only [Fact.atPath, List.nil_append] using SemTyped.nullCheck_path L
+    (SemTypedPath.propertyGet (path := []) (SemTypedPath.var (GF := GF) hx hU) hf hW)
 
 /-! ### Casts and is-expressions -/
 
@@ -404,25 +476,26 @@ public theorem SemTyped.as {Δ : Ctx} {m : LoweredExpr} {S T : τ} {Δ' : Value 
     iexact Hty
 
 /--
-A cast `x as T` of a variable `x` is semantically well typed with type `T`, if:
-- the context says that `x` holds a value that satisfies `U` (`hf`: `Fact.var x U ∈ Δ`); and
-- `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`).
+A cast `m as T` of an expression `m` that reads the value at property path `path` from variable
+`x` (such as `x as T` or `x._f._g as T`) is semantically well typed with type `T`, if `m` reads it
+with some static type `S` (`hm`).
 
-It guarantees afterwards the facts that held beforehand, plus that `x` holds a value that satisfies
-`T` (`.var x T :: Δ`): the cast promotes `x`.
+It guarantees afterwards the facts that held beforehand, plus that the value at the path satisfies
+`T` (`Fact.atPath x path T :: Δ`): the cast promotes the path.
 -/
-public theorem SemTyped.as_var {Δ : Ctx} {x : Variable} {U Tx T : τ} (hf : Fact.var x U ∈ Δ)
-    (hU : U ≤ Tx) : SemTyped GF Δ (.as (.var x Tx) T) T (fun _ => .var x T :: Δ) := by
+public theorem SemTyped.as_path {Δ : Ctx} {m : LoweredExpr} {x : Variable} {path : List String}
+    {S T : τ} (hm : SemTypedPath GF Δ m x path S) :
+    SemTyped GF Δ (.as m T) T (fun _ => Fact.atPath x path T :: Δ) := by
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_as]
   refine .trans ?_ (wp_bind_item (.as T))
   iintro ⟨He, #H⟩
-  iapply wp_var_typed hnd hf hU
+  iapply hm bindings hnd env
   isplitl [He]
   · iexact He
   isplitr
   · iexact H
-  iintro %ℓ %v %hl %henv #Hv He
+  iintro %v #Hv #Hp He
   simp only [DartLang.Outcome.toExpr, EctxItem.fill]
   icases Hv with ⟨%S₀, #Hty, %hS, %hok⟩
   by_cases hb : ∃ b, RtSub S₀ T b
@@ -451,14 +524,43 @@ public theorem SemTyped.as_var {Δ : Ctx} {x : Variable} {U Tx T : τ} (hf : Fac
         · iexact Hv'
         · iapply interpCtx_cons
           isplitr
-          · iexists ℓ, v
+          · iapply interpFact_atPath
             isplitr
-            · ipureintro
-              exact ⟨hl, henv⟩
+            · iexact Hp
             · iexact Hv'
           · iexact H
   · iapply wp_as_diverge (fun b h => hb ⟨b, h⟩)
     iexact Hty
+
+/--
+A cast `x as T` of a variable `x` is semantically well typed with type `T`, if:
+- the context says that `x` holds a value that satisfies `U` (`hf`: `Fact.var x U ∈ Δ`); and
+- `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`).
+
+It guarantees afterwards the facts that held beforehand, plus that `x` holds a value that satisfies
+`T` (`.var x T :: Δ`): the cast promotes `x`.
+-/
+public theorem SemTyped.as_var {Δ : Ctx} {x : Variable} {U Tx T : τ} (hf : Fact.var x U ∈ Δ)
+    (hU : U ≤ Tx) : SemTyped GF Δ (.as (.var x Tx) T) T (fun _ => .var x T :: Δ) := by
+  simpa only [Fact.atPath] using SemTyped.as_path (T := T) (SemTypedPath.var (GF := GF) hf hU)
+
+/--
+A cast `x._f as T` of property `p` of variable `x` is semantically well typed with type `T`, if:
+- the context says that `x` holds a value that satisfies `U` (`hx`: `Fact.var x U ∈ Δ`);
+- `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`);
+- the context says that `x` refers to an object with an instance variable named `p.name` that
+  holds a value that satisfies `W` (`hf`: `Fact.field x [p.name] W ∈ Δ`); and
+- `W` is a subtype of the read's static type `Tp` (`hW`: `W ≤ Tp`).
+
+It guarantees afterwards the facts that held beforehand, plus that the instance variable holds a
+value that satisfies `T` (`.field x [p.name] T :: Δ`): the cast promotes `x._f`.
+-/
+public theorem SemTyped.as_field {Δ : Ctx} {x : Variable} {p : Property} {U Tx W Tp T : τ}
+    (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x [p.name] W ∈ Δ) (hW : W ≤ Tp) :
+    SemTyped GF Δ (.as (.propertyGet (.var x Tx) p Tp) T) T
+      (fun _ => .field x [p.name] T :: Δ) := by
+  simpa only [Fact.atPath, List.nil_append] using SemTyped.as_path (T := T)
+    (SemTypedPath.propertyGet (path := []) (SemTypedPath.var (GF := GF) hx hU) hf hW)
 
 /--
 An is-expression `m is T` is semantically well typed with type `bool`, if `m` is semantically well
@@ -490,27 +592,27 @@ public theorem SemTyped.is {Δ Δ₁ : Ctx} {m : LoweredExpr} {S T : τ}
     iexact Hty
 
 /--
-An is-expression `x is T` of a variable `x` is semantically well typed with type `bool`, if:
-- the context says that `x` holds a value that satisfies `U` (`hf`: `Fact.var x U ∈ Δ`); and
-- `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`).
+An is-expression `m is T` of an expression `m` that reads the value at property path `path` from
+variable `x` (such as `x is T` or `x._f._g is T`) is semantically well typed with type `bool`, if
+`m` reads it with some static type `S` (`hm`).
 
-It guarantees afterwards the facts that held beforehand, plus, if it evaluates to `true`, that `x`
-holds a value that satisfies `T` (`Ctx.byCondition (.var x T :: Δ) Δ`): the is-expression promotes
-`x` when it's `true`.
+It guarantees afterwards the facts that held beforehand, plus, if it evaluates to `true`, that the
+value at the path satisfies `T` (`Ctx.byCondition (Fact.atPath x path T :: Δ) Δ`): the
+is-expression promotes the path when it's `true`.
 -/
-public theorem SemTyped.is_var {Δ : Ctx} {x : Variable} {U Tx T : τ} (hf : Fact.var x U ∈ Δ)
-    (hU : U ≤ Tx) :
-    SemTyped GF Δ (.is (.var x Tx) T) Γ.bool (Ctx.byCondition (.var x T :: Δ) Δ) := by
+public theorem SemTyped.is_path {Δ : Ctx} {m : LoweredExpr} {x : Variable} {path : List String}
+    {S T : τ} (hm : SemTypedPath GF Δ m x path S) :
+    SemTyped GF Δ (.is m T) Γ.bool (Ctx.byCondition (Fact.atPath x path T :: Δ) Δ) := by
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_is]
   refine .trans ?_ (wp_bind_item (.is T))
   iintro ⟨He, #H⟩
-  iapply wp_var_typed hnd hf hU
+  iapply hm bindings hnd env
   isplitl [He]
   · iexact He
   isplitr
   · iexact H
-  iintro %ℓ %v %hl %henv #Hv He
+  iintro %v #Hv #Hp He
   simp only [DartLang.Outcome.toExpr, EctxItem.fill]
   icases Hv with ⟨%S₀, #Hty, %hS, %hok⟩
   by_cases hb : ∃ b, RtSub S₀ T b
@@ -530,10 +632,9 @@ public theorem SemTyped.is_var {Δ : Ctx} {x : Variable} {U Tx T : τ} (hf : Fac
         · simp only [Ctx.byCondition_true]
           iapply interpCtx_cons
           isplitr
-          · iexists ℓ, v
+          · iapply interpFact_atPath
             isplitr
-            · ipureintro
-              exact ⟨hl, henv⟩
+            · iexact Hp
             · iexists S₀
               isplitr
               · iexact Hty
@@ -542,6 +643,40 @@ public theorem SemTyped.is_var {Δ : Ctx} {x : Variable} {U Tx T : τ} (hf : Fac
           · iexact H
   · iapply wp_is_diverge (fun b h => hb ⟨b, h⟩)
     iexact Hty
+
+/--
+An is-expression `x is T` of a variable `x` is semantically well typed with type `bool`, if:
+- the context says that `x` holds a value that satisfies `U` (`hf`: `Fact.var x U ∈ Δ`); and
+- `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`).
+
+It guarantees afterwards the facts that held beforehand, plus, if it evaluates to `true`, that `x`
+holds a value that satisfies `T` (`Ctx.byCondition (.var x T :: Δ) Δ`): the is-expression promotes
+`x` when it's `true`.
+-/
+public theorem SemTyped.is_var {Δ : Ctx} {x : Variable} {U Tx T : τ} (hf : Fact.var x U ∈ Δ)
+    (hU : U ≤ Tx) :
+    SemTyped GF Δ (.is (.var x Tx) T) Γ.bool (Ctx.byCondition (.var x T :: Δ) Δ) := by
+  simpa only [Fact.atPath] using SemTyped.is_path (T := T) (SemTypedPath.var (GF := GF) hf hU)
+
+/--
+An is-expression `x._f is T` of property `p` of variable `x` is semantically well typed with type
+`bool`, if:
+- the context says that `x` holds a value that satisfies `U` (`hx`: `Fact.var x U ∈ Δ`);
+- `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`);
+- the context says that `x` refers to an object with an instance variable named `p.name` that
+  holds a value that satisfies `W` (`hf`: `Fact.field x [p.name] W ∈ Δ`); and
+- `W` is a subtype of the read's static type `Tp` (`hW`: `W ≤ Tp`).
+
+It guarantees afterwards the facts that held beforehand, plus, if it evaluates to `true`, that the
+instance variable holds a value that satisfies `T` (`Ctx.byCondition (.field x [p.name] T :: Δ)
+Δ`): the is-expression promotes `x._f` when it's `true`.
+-/
+public theorem SemTyped.is_field {Δ : Ctx} {x : Variable} {p : Property} {U Tx W Tp T : τ}
+    (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x [p.name] W ∈ Δ) (hW : W ≤ Tp) :
+    SemTyped GF Δ (.is (.propertyGet (.var x Tx) p Tp) T) Γ.bool
+      (Ctx.byCondition (.field x [p.name] T :: Δ) Δ) := by
+  simpa only [Fact.atPath, List.nil_append] using SemTyped.is_path (T := T)
+    (SemTypedPath.propertyGet (path := []) (SemTypedPath.var (GF := GF) hx hU) hf hW)
 
 /-! ### Conditionals -/
 
