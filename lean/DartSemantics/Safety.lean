@@ -55,8 +55,23 @@ public structure BindingsOk (σ : State) (bindings : List (Variable × Loc)) : P
   cells : ∀ b ∈ bindings, ∃ c, σ.lookup b.2 = some c ∧ ∀ C fs, c ≠ .object C fs
 
 /--
-Fact `f` holds in state `σ`, for the variables bound to cells by `bindings`. For a fact about an
-instance variable, its cell must not be one of the variables' cells.
+Following property path `path` from value `v` reaches value `w` in state `σ`. For the empty path,
+`w` is `v`. For a path `name :: rest`, `v` refers to an object whose instance variable `name` holds
+a value `v'`, and following `rest` from `v'` reaches `w`. Each instance variable's cell along the
+way must not be one of the variables' cells (the cells that `bindings` binds variables to).
+-/
+@[expose]
+public def FieldPathHolds (σ : State) (bindings : List (Variable × Loc)) (path : List String)
+    (v w : Value) : Prop :=
+  match path with
+  | [] => v = w
+  | name :: rest => ∃ ℓo C fs ℓf v', v = .obj ℓo ∧ σ.lookup ℓo = some (.object C fs) ∧
+      fs.lookup name = some ℓf ∧ (∀ b ∈ bindings, b.2 ≠ ℓf) ∧ σ.lookup ℓf = some (.val v') ∧
+      FieldPathHolds σ bindings rest v' w
+
+/--
+Fact `f` holds in state `σ`, for the variables bound to cells by `bindings`. For a fact about a
+property path, the instance variables' cells along it must not be any of the variables' cells.
 -/
 @[expose]
 public def FactHolds (σ : State) (bindings : List (Variable × Loc)) : Fact → Prop
@@ -64,10 +79,8 @@ public def FactHolds (σ : State) (bindings : List (Variable × Loc)) : Fact →
   | .uninit x => ∃ ℓ, bindings.lookup x = some ℓ ∧ σ.lookup ℓ = some .uninit
   | .var x T => ∃ ℓ v S, bindings.lookup x = some ℓ ∧ σ.lookup ℓ = some (.val v) ∧
       σ.dynamicType v = some S ∧ S ≤ T ∧ ValOk v S
-  | .field x name T => ∃ ℓ ℓo C fs ℓf w S, bindings.lookup x = some ℓ ∧
-      σ.lookup ℓ = some (.val (.obj ℓo)) ∧ σ.lookup ℓo = some (.object C fs) ∧
-      fs.lookup name = some ℓf ∧ (∀ b ∈ bindings, b.2 ≠ ℓf) ∧ σ.lookup ℓf = some (.val w) ∧
-      σ.dynamicType w = some S ∧ S ≤ T ∧ ValOk w S
+  | .field x path T => ∃ ℓ v w S, bindings.lookup x = some ℓ ∧ σ.lookup ℓ = some (.val v) ∧
+      FieldPathHolds σ bindings path v w ∧ σ.dynamicType w = some S ∧ S ≤ T ∧ ValOk w S
 
 /-- The environment of state `σ`: what the cells that `bindings` binds variables to hold. -/
 @[expose]
@@ -257,6 +270,36 @@ theorem interpVal_of_unbound {σ : State} {bindings : List (Variable × Loc)}
   · ipureintro
     exact ⟨hT, hok⟩
 
+omit Γ in
+/--
+If following property path `path` from `v` reaches `w` in state `σ`
+(`FieldPathHolds σ bindings path v w`, `h`), and the bindings are suitable (`hb`), then the
+persistent ownership of the cells other than the variables' shows that the same holds in the
+program logic (`interpFieldPath path v w`).
+-/
+theorem interpFieldPath_of_holds {σ : State} {bindings : List (Variable × Loc)}
+    (hb : BindingsOk σ bindings) {path : List String} {v w : Value}
+    (h : FieldPathHolds σ bindings path v w) :
+    ([∗map] ℓ ↦ c ∈ unbound σ.toMap bindings, ℓ ↦{.discard} c) ⊢
+      interpFieldPath (GF := GF) path v w := by
+  induction path generalizing v with
+  | nil =>
+    iintro -
+    ipureintro
+    exact h
+  | cons name path ih =>
+    obtain ⟨ℓo, C, fs, ℓf, v', hv, ho, hfs, hnb, hcf, hp⟩ := h
+    iintro #H
+    iexists ℓo, C, fs, ℓf, v'
+    isplitr
+    · ipureintro
+      exact ⟨hv, hfs⟩
+    isplitr
+    · iapply pointsTo_of_unbound ho (not_bound_of_object hb ho) $$ H
+    isplitr
+    · iapply pointsTo_of_unbound hcf hnb $$ H
+    · iapply ih hp $$ H
+
 /--
 A fact that holds in state `σ` (`hf`: `FactHolds σ bindings f`) also holds as an Iris proposition,
 about the environment of `σ` (`interpFact bindings (envOf σ bindings) f`), given persistent
@@ -284,17 +327,15 @@ theorem interpFact_of_holds {σ : State} {bindings : List (Variable × Loc)}
     · ipureintro
       exact ⟨hl, by simp [envOf, hl, hc]⟩
     · iapply interpVal_of_unbound hb hS hT hok $$ H
-  | field x name T =>
-    obtain ⟨ℓ, ℓo, C, fs, ℓf, w, S, hl, hc, ho, hfs, hnb, hcf, hS, hT, hok⟩ := hf
+  | field x path T =>
+    obtain ⟨ℓ, v, w, S, hl, hc, hp, hS, hT, hok⟩ := hf
     iintro #H
-    iexists ℓ, ℓo, C, fs, ℓf, w
+    iexists ℓ, v, w
     isplitr
     · ipureintro
-      exact ⟨hl, by simp [envOf, hl, hc], hfs⟩
+      exact ⟨hl, by simp [envOf, hl, hc]⟩
     isplitr
-    · iapply pointsTo_of_unbound ho (not_bound_of_object hb ho) $$ H
-    isplitr
-    · iapply pointsTo_of_unbound hcf hnb $$ H
+    · iapply interpFieldPath_of_holds hb hp $$ H
     · iapply interpVal_of_unbound hb hS hT hok $$ H
 
 /--

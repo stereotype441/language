@@ -82,9 +82,9 @@ flowchart LR
   analysis itself, for example to decide what is known after a join.
 - **Facts** (`Fact`, in `DartSemantics/SemanticTyping.lean`) are simple statements that a running
   program can rely on at a point, such as "`x` is in scope" (`Fact.decl x`), "`x` hasn't been
-  assigned" (`Fact.uninit x`), "`x` holds a value that satisfies `T`" (`Fact.var x T`), or "`x`
-  refers to an object whose instance variable `f` holds a value that satisfies `T`"
-  (`Fact.field x f T`). A *context* (`Ctx`) is a list of facts.
+  assigned" (`Fact.uninit x`), "`x` holds a value that satisfies `T`" (`Fact.var x T`), or "the
+  instance variable `x._f._g` holds a value that satisfies `T`" (`Fact.field x ["_f", "_g"] T`).
+  A *context* (`Ctx`) is a list of facts.
 - **Iris propositions** (`IProp`) are statements in the program logic about the run-time heap.
   Local variables' cells can change, so the judgment owns them exclusively (`interpEnv`), and
   tracks what they hold with an *environment* (`Env`). Each fact means an Iris proposition about

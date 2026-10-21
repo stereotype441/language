@@ -91,7 +91,7 @@ A read of property `p` of variable `x`, with static type `T`, satisfies a postco
 - the context says that `x` holds a value that satisfies `U` (`hx`: `Fact.var x U ∈ Δ`);
 - `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`);
 - the context says that `x` refers to an object with an instance variable named `p.name` that
-  holds a value that satisfies `W` (`hf`: `Fact.field x p.name W ∈ Δ`);
+  holds a value that satisfies `W` (`hf`: `Fact.field x [p.name] W ∈ Δ`);
 - `W` is a subtype of `T` (`hW`: `W ≤ T`); and
 - `Ψ` holds of completing normally with the value `w` in the instance variable (`Ψ (.normal w)`),
   given the following (the continuation):
@@ -99,24 +99,26 @@ A read of property `p` of variable `x`, with static type `T`, satisfies a postco
   - a helper function that can be used to record the knowledge that `w` satisfies a promoted type
     `W'`. It takes a witness that `w` satisfies `W'` (`interpVal W' w`), and returns a witness of
     the fact that the instance variable holds such a value
-    (`interpFact bindings env (.field x p.name W')`), which can be added to the context. It is
+    (`interpFact bindings env (.field x [p.name] W')`), which can be added to the context. It is
     persistent (`□`), so it can be used any number of times. The null-check rule uses it to record
     the promotion of `x._f`; and
   - the ownership of the cells, unchanged (`interpEnv bindings env`).
 -/
 public theorem wp_field_typed {bindings : List (Variable × Loc)} {env : Env} {Δ : Ctx}
     {x : Variable} {p : Property} {U Tx W T : τ} (hnd : (bindings.map (·.1)).Nodup)
-    (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x p.name W ∈ Δ) (hW : W ≤ T)
+    (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x [p.name] W ∈ Δ) (hW : W ≤ T)
     {Ψ : DartLang.Outcome (τ := τ) → IProp GF} :
     interpEnv bindings env ∗ interpCtx bindings env Δ ∗ (∀ w, interpVal W w -∗
-        (□ ∀ W', interpVal W' w -∗ interpFact bindings env (.field x p.name W')) -∗
+        (□ ∀ W', interpVal W' w -∗ interpFact bindings env (.field x [p.name] W')) -∗
         interpEnv bindings env -∗ Ψ (.normal w)) ⊢
       WP ((LoweredExpr.propertyGet (.var x Tx) p T).bindVariables bindings) {{ Ψ }} := by
   rw [LoweredExpr.bindVariables_propertyGet]
   refine .trans ?_ (wp_bind_item (.propertyGet p T))
   iintro ⟨He, #H, HΨ⟩
   ihave #Hf := interpCtx_elim hf $$ H
-  icases Hf with ⟨%ℓ, %ℓo, %C, %fs, %ℓf, %w, ⟨%hl, %henv, %hfs⟩, #Ho, #Hlf, #Hw⟩
+  icases Hf with ⟨%ℓ, %v₀, %w, ⟨%hl, %henv⟩, #Hp, #Hw⟩
+  icases Hp with ⟨%ℓo, %C, %fs, %ℓf, %w', ⟨%hv₀, %hfs⟩, #Ho, #Hlf, %hw'⟩
+  subst hv₀ hw'
   iapply wp_var_typed hnd hx hU
   isplitl [He]
   · iexact He
@@ -127,7 +129,7 @@ public theorem wp_field_typed {bindings : List (Variable × Loc)} {env : Env} {�
   subst hv
   simp only [DartLang.Outcome.toExpr, EctxItem.fill]
   icases Hw with ⟨%S, #Hty, %hS, %hok⟩
-  iapply wp_propertyGetField (fs := fs) (w := w) hfs (le_trans hS hW)
+  iapply wp_propertyGetField (fs := fs) (w := w') hfs (le_trans hS hW)
   isplitr
   · iexact Ho
   isplitr
@@ -145,14 +147,21 @@ public theorem wp_field_typed {bindings : List (Variable × Loc)} {env : Env} {�
         exact ⟨hS, hok⟩
     · imodintro
       iintro %W' #Hw'
-      iexists ℓ, ℓo, C, fs, ℓf, w
+      iexists ℓ, .obj ℓo, w'
       isplitr
       · ipureintro
-        exact ⟨hl, henv, hfs⟩
+        exact ⟨hl, henv⟩
       isplitr
-      · iexact Ho
-      isplitr
-      · iexact Hlf
+      · iexists ℓo, C, fs, ℓf, w'
+        isplitr
+        · ipureintro
+          exact ⟨rfl, hfs⟩
+        isplitr
+        · iexact Ho
+        isplitr
+        · iexact Hlf
+        · ipureintro
+          rfl
       · iexact Hw'
     · iexact He
 
@@ -204,13 +213,13 @@ Reading property `p` of variable `x` is semantically well typed with its static 
 - the context says that `x` holds a value that satisfies `U` (`hx`: `Fact.var x U ∈ Δ`);
 - `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`);
 - the context says that `x` refers to an object with an instance variable named `p.name` that
-  holds a value that satisfies `W` (`hf`: `Fact.field x p.name W ∈ Δ`); and
+  holds a value that satisfies `W` (`hf`: `Fact.field x [p.name] W ∈ Δ`); and
 - `W` is a subtype of `T` (`hW`: `W ≤ T`).
 
 It guarantees afterwards the facts that held beforehand (`Δ`).
 -/
 public theorem SemTyped.propertyGet {Δ : Ctx} {x : Variable} {p : Property} {U Tx W T : τ}
-    (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x p.name W ∈ Δ) (hW : W ≤ T) :
+    (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x [p.name] W ∈ Δ) (hW : W ≤ T) :
     SemTyped GF Δ (.propertyGet (.var x Tx) p T) T (fun _ => Δ) := by
   intro bindings hnd env
   iintro ⟨He, #H⟩
@@ -310,18 +319,18 @@ A null check `x._f!` of property `p` of variable `x` is semantically well typed 
 - the context says that `x` holds a value that satisfies `U` (`hx`: `Fact.var x U ∈ Δ`);
 - `U` is a subtype of `x`'s static type `Tx` (`hU`: `U ≤ Tx`);
 - the context says that `x` refers to an object with an instance variable named `p.name` that
-  holds a value that satisfies `W` (`hf`: `Fact.field x p.name W ∈ Δ`); and
+  holds a value that satisfies `W` (`hf`: `Fact.field x [p.name] W ∈ Δ`); and
 - `W` is a subtype of `T` (`hW`: `W ≤ T`).
 
 It guarantees afterwards the facts that held beforehand, plus that the instance variable holds a
-value that satisfies `NonNull T` (`.field x p.name (Γ.NonNull T) :: Δ`): the null check promotes
+value that satisfies `NonNull T` (`.field x [p.name] (Γ.NonNull T) :: Δ`): the null check promotes
 `x._f`.
 -/
 public theorem SemTyped.nullCheck_field (L : TypeLaws τ) {Δ : Ctx} {x : Variable} {p : Property}
-    {U Tx W T : τ} (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x p.name W ∈ Δ)
+    {U Tx W T : τ} (hx : Fact.var x U ∈ Δ) (hU : U ≤ Tx) (hf : Fact.field x [p.name] W ∈ Δ)
     (hW : W ≤ T) :
     SemTyped GF Δ (.nullCheck (.propertyGet (.var x Tx) p T)) (Γ.NonNull T)
-      (fun _ => .field x p.name (Γ.NonNull T) :: Δ) := by
+      (fun _ => .field x [p.name] (Γ.NonNull T) :: Δ) := by
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_nullCheck]
   refine .trans ?_ (wp_bind_item .nullCheck)

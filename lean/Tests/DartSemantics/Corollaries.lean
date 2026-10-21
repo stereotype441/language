@@ -79,15 +79,15 @@ public def nullCheckThenRead (x : Variable) (Tx : τ) (p : Property) (W : τ) : 
 /--
 `{ x._f!; x._f }` is semantically well typed, with type `Null`, given that `x` holds a value
 that satisfies `U`, which refers to an object with an instance variable named `p.name`, holding a
-value that satisfies `W` (`[.var x U, .field x p.name W]`), if `U` is a subtype of `x`'s static
+value that satisfies `W` (`[.var x U, .field x [p.name] W]`), if `U` is a subtype of `x`'s static
 type `Tx` (`hU`). It also guarantees afterwards that the instance variable holds a value that
-satisfies `NonNull W` (`.field x p.name (Γ.NonNull W)`).
+satisfies `NonNull W` (`.field x [p.name] (Γ.NonNull W)`).
 -/
 public theorem nullCheckThenRead_typed {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
     [SemanticParams τ] (L : TypeLaws τ) {x : Variable} {p : Property} {U Tx W : τ}
     (hU : U ≤ Tx) :
-    SemTyped GF [.var x U, .field x p.name W] (nullCheckThenRead x Tx p W) Γ.Null
-      (fun _ => [.field x p.name (Γ.NonNull W), .var x U, .field x p.name W]) := by
+    SemTyped GF [.var x U, .field x [p.name] W] (nullCheckThenRead x Tx p W) Γ.Null
+      (fun _ => [.field x [p.name] (Γ.NonNull W), .var x U, .field x [p.name] W]) := by
   refine SemTyped.block_cons (fun _ _ _ h => by cases h)
     (SemTyped.nullCheck_field L (List.mem_cons_self ..) hU (by simp) le_rfl) ?_
   exact SemTyped.block_cons (fun _ _ _ h => by cases h)
@@ -107,7 +107,7 @@ In particular, the read of `x._f` promoted to `NonNull W` never fails its promot
 public theorem nullCheckThenRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     (L : TypeLaws τ) {x : Variable} {p : Property} {U Tx W : τ} (hU : U ≤ Tx) (σ : State)
     (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
-    (hx : FactHolds σ bindings (.var x U)) (hf : FactHolds σ bindings (.field x p.name W)) :
+    (hx : FactHolds σ bindings (.var x U)) (hf : FactHolds σ bindings (.field x [p.name] W)) :
     adequate .NotStuck ((nullCheckThenRead x Tx p W).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
   safety (GF := GF) σ bindings (nullCheckThenRead_typed L hU) hb fun f hf' => by
