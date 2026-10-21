@@ -118,17 +118,26 @@ public inductive Fact where
   /-- Variable `x` holds a value that satisfies `T`. -/
   | var (x : Variable) (T : τ)
   /--
-  Variable `x` refers to an object that has an instance variable named `name`, holding a value
-  that satisfies `T`.
-
-  This only describes one step from a variable, so properties of properties (`x._y._z`) can't be
-  read or promoted yet. Generalizing to property paths (`x` followed by a list of instance variable
-  names, like flow analysis's promotion keys) is straightforward, and planned.
+  Following the *property path* `path` (a list of instance variable names, in order from `x`
+  outward, like flow analysis's promotion keys) from the object that variable `x` refers to reaches
+  an instance variable holding a value that satisfies `T`. For example, `.field x ["_y", "_z"] T`
+  says that `x._y._z` is an instance variable whose value satisfies `T`. (An empty path would just
+  mean what `Fact.var x T` means; see `Fact.atPath`.)
   -/
-  | field (x : Variable) (name : String) (T : τ)
+  | field (x : Variable) (path : List String) (T : τ)
   deriving DecidableEq
 
 local notation "Fact" => Fact (τ := τ)
+
+/--
+The fact that the value reached by following property path `path` from variable `x` satisfies `T`:
+`Fact.var x T` for the empty path, and `Fact.field x path T` otherwise. This lets rules about
+variables and about their properties be stated once.
+-/
+@[expose]
+public def Fact.atPath (x : Variable) : List String → τ → Fact
+  | [], T => .var x T
+  | path@(_ :: _), T => .field x path T
 
 /-- The variable that a fact is about. -/
 @[expose]
@@ -252,6 +261,118 @@ public def interpEnv : List (Variable × Loc) → Env → IProp GF
   | (x, ℓ) :: bs, env => iprop(interpCell ℓ (env x) ∗ interpEnv bs env)
 
 /--
+Following property path `path` from value `v` reaches value `w`: for the empty path, `w` is `v`;
+for `name :: path`, `v` refers to an object whose instance variable `name` holds a value `v'`, and
+following `path` from `v'` reaches `w`. The object's own cell and the instance variable's cell are
+owned persistently, since they never change.
+-/
+@[expose, reducible]
+public def interpFieldPath : List String → Value → Value → IProp GF
+  | [], v, w => iprop(⌜v = w⌝)
+  | name :: path, v, w => iprop(∃ ℓo C fs ℓf v',
+      ⌜v = .obj ℓo ∧ fs.lookup name = some ℓf⌝ ∗
+      ℓo ↦{.discard} (.object C fs : Cell) ∗ ℓf ↦{.discard} (.val v' : Cell) ∗
+      interpFieldPath path v' w)
+
+/-- `interpFieldPath path v w` is persistent: it's built from persistent points-tos. -/
+public instance interpFieldPath_persistent (path : List String) (v w : Value) :
+    Persistent (interpFieldPath (GF := GF) path v w) := by
+  induction path generalizing v with
+  | nil => unfold interpFieldPath; infer_instance
+  | cons name path ih => unfold interpFieldPath; infer_instance
+
+omit Γ in
+/--
+Following the concatenation of two property paths from `v` reaches `w`
+(`interpFieldPath (p₁ ++ p₂) v w`) if and only if following `p₁` from `v` reaches some `u`, and
+following `p₂` from `u` reaches `w` (`∃ u, interpFieldPath p₁ v u ∗ interpFieldPath p₂ u w`).
+-/
+public theorem interpFieldPath_append (p₁ p₂ : List String) (v w : Value) :
+    interpFieldPath (GF := GF) (p₁ ++ p₂) v w ⊣⊢
+      ∃ u, interpFieldPath p₁ v u ∗ interpFieldPath p₂ u w := by
+  induction p₁ generalizing v with
+  | nil =>
+    simp only [List.nil_append, interpFieldPath]
+    constructor
+    · iintro H
+      iexists v
+      isplitr
+      · ipureintro
+        rfl
+      · iexact H
+    · iintro ⟨%u, %h, H⟩
+      subst h
+      iexact H
+  | cons name p ih =>
+    simp only [List.cons_append, interpFieldPath]
+    constructor
+    · iintro ⟨%ℓo, %C, %fs, %ℓf, %v', %h, Ho, Hf, H⟩
+      icases (ih v').1 $$ H with ⟨%u, H₁, H₂⟩
+      iexists u
+      isplitl [Ho Hf H₁]
+      · iexists ℓo, C, fs, ℓf, v'
+        isplitr
+        · ipureintro
+          exact h
+        isplitl [Ho]
+        · iexact Ho
+        isplitl [Hf]
+        · iexact Hf
+        · iexact H₁
+      · iexact H₂
+    · iintro ⟨%u, ⟨%ℓo, %C, %fs, %ℓf, %v', %h, Ho, Hf, H₁⟩, H₂⟩
+      iexists ℓo, C, fs, ℓf, v'
+      isplitr
+      · ipureintro
+        exact h
+      isplitl [Ho]
+      · iexact Ho
+      isplitl [Hf]
+      · iexact Hf
+      · iapply (ih v').2
+        iexists u
+        isplitl [H₁]
+        · iexact H₁
+        · iexact H₂
+
+omit Γ in
+/--
+Following a property path is deterministic: if following `path` from `v` reaches both `w₁` and
+`w₂`, then they're the same (`w₁ = w₂`). The objects' own cells and the instance variables' cells
+along the way never change, so two walks see the same cells.
+-/
+public theorem interpFieldPath_agree (path : List String) {v w₁ w₂ : Value} :
+    interpFieldPath (GF := GF) path v w₁ ∗ interpFieldPath path v w₂ ⊢ ⌜w₁ = w₂⌝ := by
+  induction path generalizing v with
+  | nil =>
+    simp only [interpFieldPath]
+    iintro ⟨%h₁, %h₂⟩
+    ipureintro
+    exact h₁.symm.trans h₂
+  | cons name path ih =>
+    simp only [interpFieldPath]
+    iintro ⟨⟨%ℓo, %C, %fs, %ℓf, %v₁, ⟨%hv, %hf⟩, Ho, Hf, H⟩,
+      ⟨%ℓo', %C', %fs', %ℓf', %v₂, ⟨%hv', %hf'⟩, Ho', Hf', H'⟩⟩
+    obtain rfl : ℓo = ℓo' := by rw [hv] at hv'; exact Value.obj.inj hv'
+    ihave %ho : ⌜(.object C fs : Cell) = .object C' fs'⌝ $$ [Ho Ho']
+    · iapply pointsTo_agree
+      isplitl [Ho]
+      · iexact Ho
+      · iexact Ho'
+    obtain ⟨rfl, rfl⟩ := Cell.object.inj ho
+    obtain rfl : ℓf = ℓf' := by rw [hf] at hf'; exact Option.some.inj hf'
+    ihave %hw : ⌜(.val v₁ : Cell) = .val v₂⌝ $$ [Hf Hf']
+    · iapply pointsTo_agree
+      isplitl [Hf]
+      · iexact Hf
+      · iexact Hf'
+    obtain rfl := Cell.val.inj hw
+    iapply ih
+    isplitl [H]
+    · iexact H
+    · iexact H'
+
+/--
 The interpretation of a fact, given the cells that variables are bound to (`bindings`), and what
 they hold (`env`). The cells of instance variables, and objects' own cells, are owned
 persistently: they never change.
@@ -261,9 +382,8 @@ public def interpFact (bindings : List (Variable × Loc)) (env : Env) : Fact →
   | .decl x => iprop(⌜∃ ℓ, bindings.lookup x = some ℓ⌝)
   | .uninit x => iprop(⌜∃ ℓ, bindings.lookup x = some ℓ ∧ env x = .uninit⌝)
   | .var x T => iprop(∃ ℓ v, ⌜bindings.lookup x = some ℓ ∧ env x = .val v⌝ ∗ interpVal T v)
-  | .field x name T => iprop(∃ ℓ ℓo C fs ℓf w,
-      ⌜bindings.lookup x = some ℓ ∧ env x = .val (.obj ℓo) ∧ fs.lookup name = some ℓf⌝ ∗
-      ℓo ↦{.discard} (.object C fs : Cell) ∗ ℓf ↦{.discard} (.val w : Cell) ∗ interpVal T w)
+  | .field x path T => iprop(∃ ℓ v w, ⌜bindings.lookup x = some ℓ ∧ env x = .val v⌝ ∗
+      interpFieldPath path v w ∗ interpVal T w)
 
 /--
 Each fact's meaning (`interpFact`) is persistent, so a context's facts can be relied on any number
