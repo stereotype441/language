@@ -78,6 +78,24 @@ example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bin
   nullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) typeLaws (by decide) σ bindings
     hb hx hf
 
+/-- Another promotable property whose static type is `Object?`. -/
+def g : Property := ⟨"_g", ObjectQ, true⟩
+
+/--
+With promotion checks, `{ x._f._g!; x._f._g }` is safe whenever `x` refers to an object whose
+instance variable `_f` refers to an object whose instance variable `_g` holds a value that
+satisfies `Object?`: the second read of `x._f._g`, promoted to `Object`, passes its promotion
+check.
+-/
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x Object))
+    (hfp : FactHolds σ bindings (.field x ["_f"] Object))
+    (hfq : FactHolds σ bindings (.field x ["_f", "_g"] ObjectQ)) :
+    adequate .NotStuck ((nestedNullCheckThenRead x ObjectQ f ObjectQ g ObjectQ).bindVariables
+      bindings) σ (fun o _ => OutcomeOk Null o) :=
+  nestedNullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) (Vp := Object) typeLaws
+    (by decide) (by decide) le_rfl σ bindings hb hx hfp hfq
+
 def y : Variable := { name := "y", type := ObjectQ }
 
 /--

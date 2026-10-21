@@ -237,8 +237,8 @@ What exists so far:
   semantic typing judgment (`SemanticTyping`, with binding lemmas in `Bind`), typing rules proved
   sound (`Compat`), and a safety theorem (`Safety`): the basis for proving flow analysis sound.
   Assignments to local variables, including `final` ones (which can only be assigned while they
-  are unassigned), are covered throughout. Connecting this to the model of flow analysis comes
-  next.
+  are unassigned), are covered throughout, and reads and promotions of property paths such as
+  `x._f._g` can be typed. Connecting this to the model of flow analysis comes next.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, small programs proved safe with the typing rules
   (`Corollaries`), and a check that `SimpleType` obeys the laws that the typing rules assume.

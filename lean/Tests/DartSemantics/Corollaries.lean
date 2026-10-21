@@ -117,6 +117,85 @@ public theorem nullCheckThenRead_safe [SemanticParams τ] {GF : BundledGFunctors
     · exact hf
 
 /--
+The program `{ x._f._g!; x._f._g }`, where `x` has static type `Tx`, the reads of `x._f` (property
+`p`) have static type `Wp`, the first read of `x._f._g` (property `q`) has static type `Wq`, and
+the second read of `x._f._g` is promoted to `NonNull Wq` by the null check.
+-/
+@[expose]
+public def nestedNullCheckThenRead (x : Variable) (Tx : τ) (p : Property) (Wp : τ) (q : Property)
+    (Wq : τ) : LoweredExpr :=
+  .block [.nullCheck (.propertyGet (.propertyGet (.var x Tx) p Wp) q Wq),
+    .propertyGet (.propertyGet (.var x Tx) p Wp) q (Γ.NonNull Wq)]
+
+/--
+`{ x._f._g!; x._f._g }` is semantically well typed, with type `Null`, given that `x` holds a value
+that satisfies `U`, the instance variable `x._f` holds a value that satisfies `Vp`, and the
+instance variable `x._f._g` holds a value that satisfies `Vq`
+(`[.var x U, .field x [p.name] Vp, .field x [p.name, q.name] Vq]`), if:
+- `U` is a subtype of `x`'s static type `Tx` (`hU`);
+- `Vp` is a subtype of the static type `Wp` of the reads of `x._f` (`hp`); and
+- `Vq` is a subtype of the static type `Wq` of the first read of `x._f._g` (`hq`).
+
+It guarantees nothing afterwards (`[]`).
+-/
+public theorem nestedNullCheckThenRead_typed {hlc : HasLC} {GF : BundledGFunctors}
+    [DartGS τ hlc GF] [SemanticParams τ] (L : TypeLaws τ) {x : Variable} {p q : Property}
+    {U Tx Vp Wp Vq Wq : τ} (hU : U ≤ Tx) (hp : Vp ≤ Wp) (hq : Vq ≤ Wq) :
+    SemTyped GF [.var x U, .field x [p.name] Vp, .field x [p.name, q.name] Vq]
+      (nestedNullCheckThenRead x Tx p Wp q Wq) Γ.Null (fun _ => []) := by
+  -- The reads of `x._f` and `x._f._g`, before the null check.
+  have h₁ : SemTypedPath GF [.var x U, .field x [p.name] Vp, .field x [p.name, q.name] Vq]
+      (.propertyGet (.var x Tx) p Wp) x ([] ++ [p.name]) Wp :=
+    SemTypedPath.propertyGet (SemTypedPath.var (by simp) hU) (by simp) hp
+  have h₂ : SemTypedPath GF [.var x U, .field x [p.name] Vp, .field x [p.name, q.name] Vq]
+      (.propertyGet (.propertyGet (.var x Tx) p Wp) q Wq) x ([] ++ [p.name] ++ [q.name]) Wq :=
+    SemTypedPath.propertyGet h₁ (by simp) hq
+  -- The null check `x._f._g!`, which promotes `x._f._g` to `NonNull Wq`.
+  have hc := SemTyped.nullCheck_path L h₂
+  simp only [List.nil_append, List.singleton_append, Fact.atPath] at hc
+  -- The promoted read of `x._f._g`.
+  have h₁' : SemTypedPath GF [.field x [p.name, q.name] (Γ.NonNull Wq), .var x U,
+        .field x [p.name] Vp, .field x [p.name, q.name] Vq]
+      (.propertyGet (.var x Tx) p Wp) x ([] ++ [p.name]) Wp :=
+    SemTypedPath.propertyGet (SemTypedPath.var (by simp) hU) (by simp) hp
+  have hr : SemTypedPath GF [.field x [p.name, q.name] (Γ.NonNull Wq), .var x U,
+        .field x [p.name] Vp, .field x [p.name, q.name] Vq]
+      (.propertyGet (.propertyGet (.var x Tx) p Wp) q (Γ.NonNull Wq)) x
+      ([] ++ [p.name] ++ [q.name]) (Γ.NonNull Wq) :=
+    SemTypedPath.propertyGet h₁' (by simp) le_rfl
+  exact (SemTyped.block_cons (fun _ _ _ h => by cases h) hc
+    (SemTyped.block_cons (fun _ _ _ h => by cases h) hr.toSemTyped
+      (SemTyped.block_nil _))).weaken (fun _ h => h) le_rfl (fun _ _ h => by cases h)
+
+/--
+`{ x._f._g!; x._f._g }`, started in state `σ` with its variables bound by `bindings`, never gets
+stuck, and every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`), if:
+- `U` is a subtype of `x`'s static type `Tx` (`hU`);
+- `Vp` is a subtype of the static type `Wp` of the reads of `x._f` (`hp`);
+- `Vq` is a subtype of the static type `Wq` of the first read of `x._f._g` (`hq`);
+- the bindings are suitable (`hb`);
+- `x` holds a value that satisfies `U` in `σ` (`hx`);
+- the instance variable `x._f` holds a value that satisfies `Vp` in `σ` (`hfp`); and
+- the instance variable `x._f._g` holds a value that satisfies `Vq` in `σ` (`hfq`).
+
+In particular, the read of `x._f._g` promoted to `NonNull Wq` never fails its promotion check.
+-/
+public theorem nestedNullCheckThenRead_safe [SemanticParams τ] {GF : BundledGFunctors}
+    [DartGpreS τ GF] (L : TypeLaws τ) {x : Variable} {p q : Property} {U Tx Vp Wp Vq Wq : τ}
+    (hU : U ≤ Tx) (hp : Vp ≤ Wp) (hq : Vq ≤ Wq) (σ : State) (bindings : List (Variable × Loc))
+    (hb : BindingsOk σ bindings) (hx : FactHolds σ bindings (.var x U))
+    (hfp : FactHolds σ bindings (.field x [p.name] Vp))
+    (hfq : FactHolds σ bindings (.field x [p.name, q.name] Vq)) :
+    adequate .NotStuck ((nestedNullCheckThenRead x Tx p Wp q Wq).bindVariables bindings) σ
+      (fun o _ => OutcomeOk Γ.Null o) :=
+  safety (GF := GF) σ bindings (nestedNullCheckThenRead_typed L hU hp hq) hb fun f hf' => by
+    simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf'
+    rcases hf' with rfl | rfl | rfl
+    · exact hx
+    · exact hfp
+    · exact hfq
+
+/--
 The program `{ x as T; x = y; x }`, where `x` has static type `Tx`, `y` has static type `Ty`, and
 the last read of `x` has static type `Ty`: the assignment demotes `x` from `T`, the type the cast
 promoted it to.
