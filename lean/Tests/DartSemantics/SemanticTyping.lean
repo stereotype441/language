@@ -72,7 +72,7 @@ variable `_f` holds a value that satisfies `Object?`: the second read of `x._f`,
 -/
 example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
     (hx : FactHolds σ bindings (.var x Object))
-    (hf : FactHolds σ bindings (.field x "_f" ObjectQ)) :
+    (hf : FactHolds σ bindings (.field x ["_f"] ObjectQ)) :
     adequate .NotStuck ((nullCheckThenRead x ObjectQ f ObjectQ).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
   nullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) typeLaws (by decide) σ bindings
