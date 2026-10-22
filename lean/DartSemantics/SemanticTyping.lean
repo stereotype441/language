@@ -148,6 +148,28 @@ public def Fact.variable : Fact → Variable
   | .var x _ => x
   | .field x _ _ => x
 
+/--
+Fact `f₁` implies fact `f₂` (`f₁.Implies f₂`): they're the same fact, except that where `f₂` says
+that a value satisfies a type `T₂`, `f₁` may say that it satisfies a subtype `T₁` of `T₂`
+(`T₁ ≤ T₂`). A value that satisfies `T₁` also satisfies `T₂` (see `interpFact_mono`).
+-/
+@[expose]
+public def Fact.Implies : Fact → Fact → Prop
+  | .decl x₁, .decl x₂ => x₁ = x₂
+  | .uninit x₁, .uninit x₂ => x₁ = x₂
+  | .var x₁ T₁, .var x₂ T₂ => x₁ = x₂ ∧ T₁ ≤ T₂
+  | .field x₁ path₁ T₁, .field x₂ path₂ T₂ => x₁ = x₂ ∧ path₁ = path₂ ∧ T₁ ≤ T₂
+  | _, _ => False
+
+/-- Every fact implies itself (`f.Implies f`). -/
+public theorem Fact.Implies.refl (f : Fact) : f.Implies f := by
+  cases f <;> simp [Fact.Implies]
+
+/-- A fact `f₁` that implies `f₂` (`h`) is about the same variable (`f₁.variable = f₂.variable`). -/
+public theorem Fact.Implies.variable {f₁ f₂ : Fact} (h : f₁.Implies f₂) :
+    f₁.variable = f₂.variable := by
+  cases f₁ <;> cases f₂ <;> simp_all [Fact.Implies, Fact.variable]
+
 /-- A context: facts that hold at a point in the program (not necessarily all of them). -/
 public abbrev Ctx := List Fact
 
@@ -557,6 +579,58 @@ public theorem interpCtx_mono {bindings : List (Variable × Loc)} {env : Env} {�
   exact h f hf
 
 omit [SemanticParams τ] in
+/--
+If fact `f₁` implies fact `f₂` (`h`), then whenever `f₁` holds, so does `f₂`
+(`interpFact bindings env f₁ ⊢ interpFact bindings env f₂`).
+
+`Fact.Implies` only compares the two facts' syntax (the same fact, up to a supertype); this theorem
+is what shows that it matches what the facts mean.
+-/
+public theorem interpFact_mono {bindings : List (Variable × Loc)} {env : Env} {f₁ f₂ : Fact}
+    (h : f₁.Implies f₂) : interpFact (GF := GF) bindings env f₁ ⊢ interpFact bindings env f₂ := by
+  cases f₁ <;> cases f₂ <;> simp only [Fact.Implies] at h
+  case decl.decl => subst h; exact .rfl
+  case uninit.uninit => subst h; exact .rfl
+  case var.var x₁ T₁ x₂ T₂ =>
+    obtain ⟨rfl, hT⟩ := h
+    simp only [interpFact]
+    iintro ⟨%ℓ, %v, %hv, #Hv⟩
+    iexists ℓ, v
+    isplitr
+    · ipureintro
+      exact hv
+    · iapply interpVal_mono hT $$ Hv
+  case field.field x₁ path₁ T₁ x₂ path₂ T₂ =>
+    obtain ⟨rfl, rfl, hT⟩ := h
+    simp only [interpFact]
+    iintro ⟨%ℓ, %v, %w, %hv, #Hp, #Hw⟩
+    iexists ℓ, v, w
+    isplitr
+    · ipureintro
+      exact hv
+    isplitr
+    · iexact Hp
+    · iapply interpVal_mono hT $$ Hw
+
+omit [SemanticParams τ] in
+/--
+If a context `Δ₀` holds, every context `Δ` whose facts are each implied by a fact in `Δ₀` (`h`)
+holds too. This generalizes `interpCtx_mono`: a fact may be implied by one with a more precise type.
+-/
+public theorem interpCtx_mono' {bindings : List (Variable × Loc)} {env : Env} {Δ Δ₀ : Ctx}
+    (h : ∀ f ∈ Δ, ∃ f₀ ∈ Δ₀, f₀.Implies f) :
+    interpCtx (GF := GF) bindings env Δ₀ ⊢ interpCtx bindings env Δ := by
+  unfold interpCtx
+  iintro #H
+  imodintro
+  iintro %f %hf
+  obtain ⟨f₀, hf₀, himp⟩ := h f hf
+  iapply interpFact_mono himp
+  iapply H
+  ipureintro
+  exact hf₀
+
+omit [SemanticParams τ] in
 /-- A fact `f` in a context `Δ` (`h`) holds if the whole context holds. -/
 public theorem interpCtx_elim {bindings : List (Variable × Loc)} {env : Env} {Δ : Ctx} {f : Fact}
     (h : f ∈ Δ) : interpCtx (GF := GF) bindings env Δ ⊢ interpFact bindings env f := by
@@ -590,6 +664,26 @@ public theorem interpCtx_cons {bindings : List (Variable × Loc)} {env : Env} {f
   rcases List.mem_cons.1 hf' with rfl | h
   · iexact Hf
   · iapply H
+    ipureintro
+    exact h
+
+omit [SemanticParams τ] in
+/--
+A context made of two parts holds (`interpCtx bindings env (Δ₁ ++ Δ₂)`) if both parts hold
+(`interpCtx bindings env Δ₁` and `interpCtx bindings env Δ₂`).
+-/
+public theorem interpCtx_append {bindings : List (Variable × Loc)} {env : Env} {Δ₁ Δ₂ : Ctx} :
+    interpCtx (GF := GF) bindings env Δ₁ ∗ interpCtx bindings env Δ₂ ⊢
+      interpCtx bindings env (Δ₁ ++ Δ₂) := by
+  unfold interpCtx
+  iintro ⟨#H₁, #H₂⟩
+  imodintro
+  iintro %f %hf
+  rcases List.mem_append.1 hf with h | h
+  · iapply H₁
+    ipureintro
+    exact h
+  · iapply H₂
     ipureintro
     exact h
 
@@ -739,6 +833,34 @@ public theorem SemTyped.weaken {Δb Δb' : Ctx} {m : LoweredExpr} {T T' : τ}
     isplitr
     · iapply interpVal_mono hT $$ Hv
     · iapply interpCtx_mono (hout v) $$ H
+  | throwing _ => exact .rfl
+
+/--
+Weakening up to implication between facts: like `SemTyped.weaken`, but each fact that the new
+contexts need only has to be implied by a fact in the old ones (`Fact.Implies`), so a fact that a
+value satisfies a type can be replaced by one that it satisfies a supertype. If `m` is semantically
+well typed with type `T` from `Δb`, guaranteeing `Δa` afterwards (`h`), it's also semantically well
+typed with type `T'`, from `Δb'`, guaranteeing `Δa'`, if:
+- each fact in `Δb` is implied by one in `Δb'` (`hin`);
+- `T` is a subtype of `T'` (`hT`); and
+- for each value `v`, each fact in `Δa' v` is implied by one in `Δa v` (`hout`).
+-/
+public theorem SemTyped.weaken' {Δb Δb' : Ctx} {m : LoweredExpr} {T T' : τ}
+    {Δa Δa' : Value → Ctx} (h : SemTyped GF Δb m T Δa)
+    (hin : ∀ f ∈ Δb, ∃ f₀ ∈ Δb', f₀.Implies f) (hT : T ≤ T')
+    (hout : ∀ v, ∀ f ∈ Δa' v, ∃ f₀ ∈ Δa v, f₀.Implies f) : SemTyped GF Δb' m T' Δa' := by
+  intro bindings hnd env
+  refine (sep_mono_right (interpCtx_mono' hin)).trans
+    ((h bindings hnd env).trans (wp_mono fun o => ?_))
+  cases o with
+  | normal v =>
+    simp only [interpOutcome]
+    iintro ⟨%env', He, #Hv, #H⟩
+    iexists env'
+    iframe He
+    isplitr
+    · iapply interpVal_mono hT $$ Hv
+    · iapply interpCtx_mono' (hout v) $$ H
   | throwing _ => exact .rfl
 
 /--
