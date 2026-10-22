@@ -153,6 +153,15 @@ public inductive ElabExpr : AstPath → Scope → FlowModel → Expr →
       ElabExpr (0 :: π) σ fm₀ e₁ m₁ em₁ →
       fm = em₁.fm_after.tryPromote em₁.ref? em₁.type T →
       ElabExpr π σ fm₀ (e₁.as T) (m₁.as T) ⟨T, none, fm, fm⟩
+  /--
+  Type test (`e₁ is T`). Mirrors Dart's `isExpression_end`: when the test is `true`, the referent of
+  `e₁`, if any, is promoted to `T` (as for a cast); when it's `false`, nothing is learned. (Dart can
+  also promote on the `false` branch, to a factor type; that isn't modeled yet.)
+  -/
+  | isExpr {π σ fm₀ e₁ m₁ em₁ fm_true T} :
+      ElabExpr (0 :: π) σ fm₀ e₁ m₁ em₁ →
+      fm_true = em₁.fm_after.tryPromote em₁.ref? em₁.type T →
+      ElabExpr π σ fm₀ (e₁.is T) (m₁.is T) ⟨Γ.bool, none, fm_true, em₁.fm_after⟩
   /-- Null literal (`null`). -/
   | nullLiteral {π σ fm} :
       ElabExpr π σ fm .null .null ⟨Γ.Null, none, fm, fm⟩
@@ -290,6 +299,10 @@ public theorem ElabExpr.wellFormed {π σ} {fm₀ : FlowModel} {e m} {em : ExprM
     obtain ⟨hwf_true, hwf_false⟩ := ih hwf
     subst_vars
     exact ⟨(hwf_true.join hwf_false).tryPromote _ _ _, (hwf_true.join hwf_false).tryPromote _ _ _⟩
+  case isExpr ih =>
+    obtain ⟨hwf_true, hwf_false⟩ := ih hwf
+    subst_vars
+    exact ⟨(hwf_true.join hwf_false).tryPromote _ _ _, hwf_true.join hwf_false⟩
   case nullLiteral => exact ⟨hwf, hwf⟩
   case propertyGet ih =>
     obtain ⟨hwf_true, hwf_false⟩ := ih hwf

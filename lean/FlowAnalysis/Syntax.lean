@@ -28,7 +28,7 @@ variable is identified by the path of the statement that declares it (see `Scope
 
 Children are numbered as follows:
 
-- `Expr.nullCheck e₁`, `Expr.as e₁ T`, `Expr.property e₁ p`, `Expr.assign n e₁` and
+- `Expr.nullCheck e₁`, `Expr.as e₁ T`, `Expr.is e₁ T`, `Expr.property e₁ p`, `Expr.assign n e₁` and
   `Stmt.exprStmt e₁`: `e₁` is child `0`.
 - `Stmt.ifStmt e₁ s₂ s₃`: `e₁`, `s₂` and `s₃` are children `0`, `1` and `2`.
 - `Stmt.block ss`: the list `ss` is child `0`.
@@ -50,6 +50,8 @@ public inductive Expr where
   | nullCheck (e₁ : Expr)
   /-- A cast (`e₁ as T`). -/
   | as (e₁ : Expr) (T : τ)
+  /-- A type test (`e₁ is T`). -/
+  | is (e₁ : Expr) (T : τ)
   /-- The null literal (`null`). -/
   | null
   /-- A read of property `p` of the value of `e₁` (`e₁.p`). -/
