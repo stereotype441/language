@@ -233,14 +233,20 @@ public inductive ElabStmt : AstPath → Scope → FlowModel → Stmt →
   | exprStmt {π σ fm₀ e m em} :
       ElabExpr (0 :: π) σ fm₀ e m em →
       ElabStmt π σ fm₀ (.exprStmt e) m em.fm_after
-  /-- If statement. -/
+  /--
+  If statement. It's lowered to a conditional whose branches are blocks, so that, like the
+  statements they come from, they evaluate to the null object. (A branch that is an expression
+  statement would otherwise evaluate to the expression's value, which might not satisfy the
+  conditional's static type, `Null`.)
+  -/
   | ifStmt {π σ fm₀ e₁ m₁ em₁ s₂ m₂ fm₂ s₃ m₃ fm₃} :
       ElabExpr (0 :: π) σ fm₀ e₁ m₁ em₁ →
       -- TODO: support dynamic downcast
       em₁.type = Γ.bool →
       ElabStmt (1 :: π) σ em₁.fm_true s₂ m₂ fm₂ →
       ElabStmt (2 :: π) σ em₁.fm_false s₃ m₃ fm₃ →
-      ElabStmt π σ fm₀ (.ifStmt e₁ s₂ s₃) (.cond m₁ m₂ m₃ Γ.Null) (fm₂.join fm₃)
+      ElabStmt π σ fm₀ (.ifStmt e₁ s₂ s₃) (.cond m₁ (.block [m₂]) (.block [m₃]) Γ.Null)
+        (fm₂.join fm₃)
   /--
   Block statement. The block's declarations go out of scope at its end, but nothing in the flow
   model is restored: the promotion models of the block's variables remain, under keys that nothing
