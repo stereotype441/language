@@ -886,15 +886,18 @@ rest of the block is semantically well typed with type `Null` (`h`), given:
   (`Fact.var v T`), and otherwise, that `v` hasn't been assigned (`Fact.uninit v`).
 
 That requires `Null` to be a subtype of `T` (`hsN`), which flow analysis ensures by setting
-`startsNull` only for nullable types. It guarantees afterwards the facts that the rest of the block
-guarantees, less those about `v`, since `v` goes out of scope (`Δ₂.forget v`). The cell of any outer
-`v` is untouched.
+`startsNull` only for nullable types. It guarantees afterwards:
+- the facts that the rest of the block guarantees, less those about `v`, since `v` goes out of scope
+  (`Δ₂.forget v`); plus
+- the facts that held beforehand about any outer `v`, which the declaration shadowed
+  (`Δ.filter (·.variable = v)`): the outer `v`'s cell is untouched by the block, so they hold again.
 -/
 public theorem SemTyped.block_declare {Δ Δ₂ : Ctx} {v : Variable} {T : τ} {sN : Bool}
     {ms : List LoweredExpr} (hsN : sN = true → Γ.Null ≤ T)
     (h : SemTyped GF ((if sN then [Fact.var v T] else [Fact.uninit v]) ++ Fact.decl v :: Δ.forget v)
       (.block ms) Γ.Null (fun _ => Δ₂)) :
-    SemTyped GF Δ (.block (.declare v T sN :: ms)) Γ.Null (fun _ => Δ₂.forget v) := by
+    SemTyped GF Δ (.block (.declare v T sN :: ms)) Γ.Null
+      (fun _ => Δ₂.forget v ++ Δ.filter (·.variable = v)) := by
   intro bindings hnd env
   obtain ⟨c₀, hc₀⟩ : ∃ c₀ : Cell, (if sN then .val .null else .uninit) = c₀ := ⟨_, rfl⟩
   have hc₀obj : ∀ C fs, c₀ ≠ .object C fs := by
@@ -1005,12 +1008,21 @@ public theorem SemTyped.block_declare {Δ Δ₂ : Ctx} {v : Variable} {T : τ} {
       · iapply hleave $$ He₂
     isplitr
     · iexact Hw
-    · iapply interpCtx_congr (bindings := (v, ℓ) :: bindings.filter fun b => b.1 ≠ v)
-        (env := env₂)
-        (fun f hf => hlook _ (Ctx.mem_forget.1 hf).2)
-        (fun f hf => (Env.set_ne (Ctx.mem_forget.1 hf).2 _).symm)
-      iapply interpCtx_mono (fun f hf => (Ctx.mem_forget.1 hf).1)
-      iexact H₂
+    · iapply interpCtx_append
+      isplitr
+      · iapply interpCtx_congr (bindings := (v, ℓ) :: bindings.filter fun b => b.1 ≠ v)
+          (env := env₂)
+          (fun f hf => hlook _ (Ctx.mem_forget.1 hf).2)
+          (fun f hf => (Env.set_ne (Ctx.mem_forget.1 hf).2 _).symm)
+        iapply interpCtx_mono (fun f hf => (Ctx.mem_forget.1 hf).1)
+        iexact H₂
+      · -- The facts about the outer `v`: its cell holds what it did before the block.
+        iapply interpCtx_congr (bindings := bindings) (env := env) (fun _ _ => rfl)
+          (fun f hf => by
+            have hfv : f.variable = v := by simpa using (List.mem_filter.1 hf).2
+            rw [hfv, Env.set_self])
+        iapply interpCtx_mono (fun f hf => (List.mem_filter.1 hf).1)
+        iexact H
   | throwing _ =>
     simp only [interpOutcome]
     itrivial
@@ -1018,13 +1030,14 @@ public theorem SemTyped.block_declare {Δ Δ₂ : Ctx} {v : Variable} {T : τ} {
 /--
 A declaration of `v` outside a block is semantically well typed with type `Null`, as the block
 containing just that declaration is (so it has the same requirement `hsN`). It guarantees
-afterwards the facts that held beforehand, less those about `v` (`Δ.forget v`).
+afterwards all the facts that held beforehand (`Δ`): `v` goes out of scope at once, and any outer
+`v` that it shadowed has its facts back, as in `SemTyped.block_declare`.
 -/
 public theorem SemTyped.declare {Δ : Ctx} {v : Variable} {T : τ} {sN : Bool}
     (hsN : sN = true → Γ.Null ≤ T) :
-    SemTyped GF Δ (.declare v T sN) Γ.Null (fun _ => Δ.forget v) := by
+    SemTyped GF Δ (.declare v T sN) Γ.Null (fun _ => Δ) := by
   have hb := (SemTyped.block_declare (GF := GF) (Δ := Δ) (v := v) (T := T) (ms := []) hsN
-    (SemTyped.block_nil _)).weaken (Δa' := fun _ => Δ.forget v) (fun f hf => hf) le_rfl
+    (SemTyped.block_nil _)).weaken (Δa' := fun _ => Δ) (fun f hf => hf) le_rfl
     (fun _ f hf => ?_)
   · intro bindings hnd env
     rw [LoweredExpr.bindVariables_declare]
@@ -1034,8 +1047,9 @@ public theorem SemTyped.declare {Δ : Ctx} {v : Variable} {T : τ} {sN : Bool}
     rw [LoweredExpr.bindVariables_block, LoweredExpr.bindBlock_declare,
       LoweredExpr.bindBlock_nil] at hb'
     exact hb'
-  · obtain ⟨hf, hfv⟩ := Ctx.mem_forget.1 hf
-    refine Ctx.mem_forget.2 ⟨List.mem_append_right _ (List.mem_cons_of_mem _ ?_), hfv⟩
-    exact Ctx.mem_forget.2 ⟨hf, hfv⟩
+  · by_cases hfv : f.variable = v
+    · exact List.mem_append_right _ (List.mem_filter.2 ⟨hf, by simpa using hfv⟩)
+    · refine List.mem_append_left _ (Ctx.mem_forget.2 ⟨?_, hfv⟩)
+      exact List.mem_append_right _ (List.mem_cons_of_mem _ (Ctx.mem_forget.2 ⟨hf, hfv⟩))
 
 end DartSemantics
