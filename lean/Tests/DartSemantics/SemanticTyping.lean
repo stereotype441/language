@@ -1,5 +1,6 @@
 module
 import DartSemantics
+import FlowSoundness
 import Tests.DartSemantics.Corollaries
 import DartLang.SimpleTypes
 -- `SimpleType.NonNull` isn't exposed, so its definition is only visible with `import all`.
@@ -121,6 +122,27 @@ example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bin
     adequate .NotStuck ((finalInitRead z ObjectQ y ObjectQ).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
   finalInitRead_safe (GF := DartS SimpleType) (by simp [y, z]) le_rfl σ bindings hb hy
+
+/--
+The program `{ Object? x; if (x is int) { x; } else {} }`, in the flow analysis syntax: the read of
+`x` in the `then` branch is promoted to `int`.
+-/
+def isThenRead : List (FlowAnalysis.Stmt (τ := SimpleType)) :=
+  [.declare "x" ObjectQ false, .ifStmt (.is (.var "x") int) (.exprStmt (.var "x")) (.block [])]
+
+/--
+With promotion checks, `{ Object? x; if (x is int) { x; } else {} }`, lowered by the flow analysis
+algorithm (`hok`), is safe from any state: the promoted read of `x` passes its promotion check.
+This instantiates the soundness of flow analysis (`FlowSoundness.elabStmtImpl_safe`).
+-/
+example {m : LoweredExpr (τ := SimpleType)} {sI}
+    (hok : FlowAnalysis.elabStmtImpl (.block isThenRead) ⟨[], []⟩ FlowAnalysis.AlgState.initial =
+      Except.ok (m, sI))
+    (σ : State) :
+    adequate .NotStuck m σ (fun o _ => OutcomeOk Null o) :=
+  FlowSoundness.elabStmtImpl_safe (GF := DartS SimpleType) typeLaws
+    (by simp [isThenRead, FlowAnalysis.Stmt.NoPropertiesList, FlowAnalysis.Stmt.NoProperties,
+      FlowAnalysis.Expr.NoProperties]) hok σ
 
 end Verify
 

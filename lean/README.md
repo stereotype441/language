@@ -72,7 +72,7 @@ levels:
 
 ```mermaid
 flowchart LR
-  M["Flow models (FlowAnalysis)"] -- "translation (planned)" --> F["Facts (Fact, Ctx)"]
+  M["Flow models (FlowAnalysis)"] -- "translation (ctxOf)" --> F["Facts (Fact, Ctx)"]
   F -- "interpCtx" --> I["Iris propositions (IProp)"]
 ```
 
@@ -103,17 +103,21 @@ well typed, started in a state where its variables are bound to suitable cells a
 `Δb` hold, never gets stuck. When the semantics checks promotions (`PromotionChecks.verify`), a
 promotion check that fails gets stuck, so this includes every promotion check passing.
 
-The soundness theorem for flow analysis, which comes next, will connect flow models to facts:
+The soundness theorem for flow analysis (`FlowSoundness/`) connects flow models to facts:
 
-1. Translate each flow model to the facts it implies, with an ordinary Lean function.
-2. Prove that, for each construct, the `LoweredExpr` that flow analysis produces is semantically
-   well typed, from the facts of the flow model before it to the facts of the flow model after it,
-   using the typing rules.
+1. It translates each flow model to the facts it implies, with an ordinary Lean function (`ctxOf`,
+   in `Translation.lean`).
+2. It proves that, for each construct, the `LoweredExpr` that flow analysis produces is
+   semantically well typed, from the facts of the flow model before it to the facts of the flow
+   model after it, using the typing rules (`ElabExpr.semTyped`, in `Expressions.lean`, and
+   `ElabStmt.semTyped`, in `Statements.lean`).
 
 Then `safety` says that every program that flow analysis accepts runs without getting stuck, and
-agrees with the types and promotions that flow analysis computed. Keeping the levels separate
-means that the proofs about flow models (joins, demotions and so on) are ordinary Lean proofs,
-without Iris, and that the program logic doesn't depend on how flow analysis represents its models.
+agrees with the types and promotions that flow analysis computed (`elabStmtImpl_safe`, in
+`FlowSoundness/Safety.lean`). So far, this covers programs that don't read properties. Keeping the
+levels separate means that the proofs about flow models (joins, demotions and so on) are ordinary
+Lean proofs, without Iris, and that the program logic doesn't depend on how flow analysis
+represents its models.
 
 For example, `Tests/DartSemantics/Corollaries.lean` proves `{ x as T; x }` (`castThenRead`) safe
 this way. Beforehand, `x` holds a value that satisfies some subtype `U` of its static type: the
@@ -203,6 +207,8 @@ reference](https://github.com/leanprover-community/iris-lean/blob/master/docs/ta
 - `FlowAnalysis/` (`FlowAnalysis.lean`): the Lean model of flow analysis.
 - `DartSemantics/` (`DartSemantics.lean`): the run-time semantics of `LoweredExpr`, the interpreter,
   and the program logic.
+- `FlowSoundness/` (`FlowSoundness.lean`): the proof that flow analysis is sound. It's a library of
+  its own, so that `FlowAnalysis` doesn't depend on `DartSemantics` (and iris-lean).
 - `Tests/` (`Tests.lean`): tests, run by `lake test`.
 
 ## Building and testing
@@ -243,10 +249,14 @@ What exists so far:
   sound (`Compat`), and a safety theorem (`Safety`): the basis for proving flow analysis sound.
   Assignments to local variables, including `final` ones (which can only be assigned while they
   are unassigned), are covered throughout, and reads and promotions of property paths such as
-  `x._f._g` can be typed. Connecting this to the model of flow analysis comes next.
+  `x._f._g` can be typed.
+- `FlowSoundness` proves flow analysis sound for programs that don't read properties: every such
+  program that the flow analysis algorithm accepts runs without getting stuck
+  (`elabStmtImpl_safe`). Property paths come next.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, small programs proved safe with the typing rules
-  (`Corollaries`), and a check that `SimpleType` obeys the laws that the typing rules assume.
+  (`Corollaries`), a check that `SimpleType` obeys the laws that the typing rules assume, and an
+  instance of the soundness of flow analysis at `SimpleType`.
 - The Kernel translator hasn't been started.
 
 ## Documentation conventions
