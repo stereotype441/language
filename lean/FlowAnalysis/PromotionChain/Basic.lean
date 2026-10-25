@@ -6,6 +6,25 @@ public import DartLang.Types
 public import Mathlib.Data.Finset.Basic
 import Mathlib.Data.Set.Finite.Basic
 
+/-!
+# Promotion chains
+
+This file defines `PromotionChain`, the model of the list of types that flow analysis has promoted a
+variable to, in the order the promotions happened. Each type in the chain is a strict subtype of
+the ones before it (`isPromotionChain`), so the last type is the variable's current promoted type.
+
+A promotion chain is a list paired with a proof that it satisfies that condition, rather than a
+bare list, so that every operation on promotion chains carries the guarantee that its result is
+valid. Most of the file lifts the list operations that flow analysis needs (`take`, `drop`,
+`filter`) to promotion chains, with simplification theorems relating them to their `List`
+counterparts.
+
+It also defines the join of two promotion chains (`join`), which keeps the types that are in both
+chains, and proves that join is idempotent, commutative and associative. The Dart implementation's
+algorithm for computing the join is modeled and proved correct separately, in
+`FlowAnalysis.PromotionChain.JoinImpl`.
+-/
+
 namespace FlowAnalysis
 open DartLang
 
@@ -24,13 +43,24 @@ namespace isPromotionChain
 Equivalent formulation of `isPromotionChain` in terms of Lean's built-in notation of a chain (which
 is defined recursively, so it's a bit more convenient to use in proofs).
 -/
-theorem iff_isChain (c : List τ) :
+public theorem iff_isChain (c : List τ) :
     isPromotionChain c ↔ c.IsChain (fun T U => U < T) := by
   rw [isPromotionChain, List.isChain_iff_getElem]
   constructor
   · intro h i hi; apply h; omega
   · intro h i hi; apply h
 
+/--
+Whether a list of types is a promotion chain is decidable, so the algorithm can test it (for
+example, before promoting).
+-/
+public instance instDecidable (c : List τ) : Decidable (isPromotionChain c) :=
+  iff_eq_eq.mp (iff_isChain c) ▸ inferInstance
+
+/--
+Equivalently, `c` is a promotion chain iff each type in it is a strict supertype of every type
+after it (`c.Pairwise (fun T U => U < T)`).
+-/
 lemma iff_pairwise (c : List τ) :
     isPromotionChain c ↔ c.Pairwise (fun T U => U < T) := by
   rw [iff_isChain, List.isChain_iff_pairwise]
@@ -50,7 +80,7 @@ theorem nil : isPromotionChain ([] : List τ) := by
 
 /-- A list with just one element is a promotion chain. -/
 @[simp]
-theorem singleton : ∀ T : τ, isPromotionChain [T] := by
+public theorem singleton : ∀ T : τ, isPromotionChain [T] := by
   simp [isPromotionChain]
 
 /-- The tail of a promotion chain (`hvalid`) is also a promotion chain. -/
@@ -113,13 +143,18 @@ satisfied, since a `PromotionChain` can only be created if a witness to its vali
 @[simp]
 public theorem prop (c : PromotionChain) : isPromotionChain c.val := c.property
 
-/-- Extensionality: promotion chains may be proven equal by proving their lists equal. -/
-public theorem ext {c₁ c₂ : PromotionChain} : c₁.val = c₂.val → c₁ = c₂ := by
-  intro h; apply Subtype.ext; assumption
+/--
+Extensionality: promotion chains may be proven equal by proving their lists equal: if `c₁` and `c₂`
+have the same types (`h`), they're equal (`c₁ = c₂`).
+-/
+public theorem ext {c₁ c₂ : PromotionChain} (h : c₁.val = c₂.val) : c₁ = c₂ :=
+  Subtype.ext h
 
-/-- Injection: if promotion chains are equal then their values are equal. -/
-public theorem val_inj {c₁ c₂ : PromotionChain} : c₁ = c₂ → c₁.val = c₂.val := by
-  intro rfl; rfl
+/--
+Injection: if promotion chains are equal (`h`) then their values are equal (`c₁.val = c₂.val`).
+-/
+public theorem val_inj {c₁ c₂ : PromotionChain} (h : c₁ = c₂) : c₁.val = c₂.val := by
+  rw [h]
 
 /-- Equality of promotion chains may be rewritten to equality of values and vice versa. -/
 public theorem ext_iff {c₁ c₂ : PromotionChain} : c₁ = c₂ ↔ c₁.val = c₂.val := by
@@ -164,6 +199,7 @@ public theorem drop_of_val {n : Nat} {c : PromotionChain}
     {hvalid : isPromotionChain (c.val.drop n)} :
     ⟨c.val.drop n, hvalid⟩ = c.drop n := by rfl
 
+/-- `∅` denotes the empty promotion chain (`PromotionChain.empty`). -/
 public instance instEmptyCollection : EmptyCollection (PromotionChain) where
   emptyCollection := empty
 
@@ -176,10 +212,9 @@ public theorem eq_empty {h : isPromotionChain []} : (⟨[], h⟩ : PromotionChai
 @[simp]
 public theorem val_empty : (∅ : PromotionChain).val = [] := by rfl
 
-/-- A promotion chain with no types (`c.val = []`) is the empty promotion chain. -/
-public theorem empty_of_val_nil {c : PromotionChain} :
-    c.val = [] → c = ∅ := by
-  intro h; apply ext; simp_all
+/-- A promotion chain with no types (`h`) is the empty promotion chain (`c = ∅`). -/
+public theorem empty_of_val_nil {c : PromotionChain} (h : c.val = []) : c = ∅ := by
+  apply ext; simp_all
 
 /-- A promotion chain containing a single type. -/
 public def single (T : τ) : PromotionChain := ⟨[T], by simp⟩
@@ -189,7 +224,60 @@ public def single (T : τ) : PromotionChain := ⟨[T], by simp⟩
 public theorem val_single {T : τ} : (single T).val = [T] := by rfl
 
 /-- A promotion chain `c` is strictly bounded by `T` iff `T::c` is a promotion chain. -/
+@[expose]
 public def strictly_bounded_by (c : PromotionChain) (T : τ) : Prop := isPromotionChain (T::c)
+
+/-- Whether a promotion chain is strictly bounded by a type is decidable. -/
+public instance strictly_bounded_by.instDecidable (c : PromotionChain) (T : τ) :
+    Decidable (c.strictly_bounded_by T) :=
+  strictly_bounded_by.eq_1 c T ▸ inferInstance
+
+/-- A promotion chain `c` strictly bounds `T` iff `c++[T]` is a promotion chain. -/
+@[expose]
+public def strictly_bounds (c : PromotionChain) (T : τ) : Prop := isPromotionChain (c.val++[T])
+
+/--
+Whether a promotion chain strictly bounds a type is decidable, so `tryPromote` can test it before
+promoting.
+-/
+public instance strictly_bounds.instDecidable (c : PromotionChain) (T : τ) :
+    Decidable (c.strictly_bounds T) :=
+  strictly_bounds.eq_1 c T ▸ inferInstance
+
+/-- Constructs a new promotion chain by appending a type to the back. -/
+public def promote (c : PromotionChain) {T : τ} (h : c.strictly_bounds T) : PromotionChain :=
+  ⟨c.val++[T], h⟩
+
+/-- Simplification theorem: the types in `c.promote h` are those of `c`, followed by `T`. -/
+@[simp]
+public theorem val_promote {c : PromotionChain} {T : τ} {h : c.strictly_bounds T} :
+    (c.promote h).val = c.val ++ [T] := by rfl
+
+/--
+Constructs a new promotion chain by appending a type to the back, if the resulting chain would be
+valid. Otherwise returns the original chain unchanged.
+-/
+@[expose]
+public def tryPromote (c : PromotionChain) (T : τ) : PromotionChain :=
+  if h : c.strictly_bounds T then c.promote h else c
+
+/--
+If appending `T` to `c` would produce a valid promotion chain (`h`), then `c.tryPromote T` does so
+(`(c.tryPromote T).val = c.val ++ [T]`).
+-/
+@[simp]
+public theorem val_tryPromote_of_strictly_bounds {c : PromotionChain} {T : τ}
+    (h : c.strictly_bounds T) : (c.tryPromote T).val = c.val ++ [T] := by
+  simp [tryPromote, h]
+
+/--
+If appending `T` to `c` would not produce a valid promotion chain (`h`), then `c.tryPromote T`
+leaves `c` unchanged (`c.tryPromote T = c`).
+-/
+@[simp]
+public theorem tryPromote_of_not_strictly_bounds {c : PromotionChain} {T : τ}
+    (h : ¬c.strictly_bounds T) : c.tryPromote T = c := by
+  simp [tryPromote, h]
 
 /-- Analogous to `List.filter` but for promotion chains. -/
 public def filter (p : τ → Bool) (c : PromotionChain) : PromotionChain := .mk (c.val.filter p) <| by
@@ -265,7 +353,10 @@ For computability, we define `c₁.join c₂` as a filter of `c₁`, removing an
 -/
 public def join (c₁ c₂ : PromotionChain) := c₁.filter (· ∈ c₂.val)
 
-/-- A type is in the join of two promotion chains iff it is in both chains. -/
+/--
+A type is in the join of two promotion chains iff it is in both chains (`T ∈ c₁.val` and
+`T ∈ c₂.val`).
+-/
 @[simp]
 public theorem mem_join (c₁ c₂ : PromotionChain) (T : τ) :
     T ∈ (c₁.join c₂).val ↔ T ∈ c₁.val ∧ T ∈ c₂.val := by
@@ -294,8 +385,8 @@ public theorem is_greatest_common_sublist.unique {c c₁ c₂ : PromotionChain}
   rw [ext_iff_mem]; grind
 
 /--
-The join of two promotion chains is equal to `c` iff all types `T` satisfy the `mem_join` relation
-above.
+The join of two promotion chains is equal to `c` iff every type `T` is in `c` exactly when it's in
+both `c₁` and `c₂` (`∀ T, T ∈ c₁.val ∧ T ∈ c₂.val ↔ T ∈ c.val`), as `mem_join` says of the join.
 -/
 public theorem join_eq_iff_mem (c c₁ c₂ : PromotionChain) :
     c₁.join c₂ = c ↔ ∀ T, T ∈ c₁.val ∧ T ∈ c₂.val ↔ T ∈ c.val := by
@@ -320,22 +411,25 @@ public theorem join_eq_right_of_sublist {c₁ c₂ : PromotionChain} (h : c₂.v
 public theorem join_self (c : PromotionChain) : c.join c = c := by
   rw [join_eq_iff_mem]; grind
 
+/-- `join` is idempotent, as an instance of the standard library's `Std.IdempotentOp` class. -/
 public instance join.instIdempotentOp :
     Std.IdempotentOp (join (τ := τ)) where
   idempotent := join_self
 
-/-- The join operation is commutative (`c₁.join c₂ = c₂.join c₁`). -/
+/-- The join operation is commutative (`join c₁ c₂ = join c₂ c₁`). -/
 public theorem join_comm (c₁ c₂ : PromotionChain) : c₁.join c₂ = c₂.join c₁ := by
   rw [ext_iff_mem]; simp; aesop
 
+/-- `join` is commutative, as an instance of the standard library's `Std.Commutative` class. -/
 public instance join.instCommutative : Std.Commutative (join (τ := τ)) where
   comm := join_comm
 
-/-- The join operation is associative (`(c₁.join c₂).join c₃ = c₁.join (c₂.join c₃)`) -/
+/-- The join operation is associative (`join (join c₁ c₂) c₃ = join c₁ (join c₂ c₃)`). -/
 public theorem join_assoc (c₁ c₂ c₃ : PromotionChain) :
     (c₁.join c₂).join c₃ = c₁.join (c₂.join c₃) := by
   rw [ext_iff_mem]; simp; aesop
 
+/-- `join` is associative, as an instance of the standard library's `Std.Associative` class. -/
 public instance join.instAssociative : Std.Associative (join (τ := τ)) where
   assoc := join_assoc
 
@@ -350,33 +444,34 @@ public theorem join_empty (c : PromotionChain) : c.join ∅ = ∅ := by
   rw [join_eq_iff_mem]; simp
 
 /--
-If a promotion chain is not empty, then its list of types is not empty.
+If a promotion chain is not empty (`h`), then its list of types is not empty (`¬c.val = []`).
 
 This helps with grind-based proofs because it allows case splitting on whether `c = ∅`.
 -/
 @[grind =>]
-public theorem val_ne_nil_of_ne_empty {c : PromotionChain} : ¬c = ∅ → ¬c.val = [] := by
+public theorem val_ne_nil_of_ne_empty {c : PromotionChain} (h : ¬c = ∅) : ¬c.val = [] := by
+  revert h
   contrapose; rcases c; simp; intro rfl; simp
 
 /--
-If `c₁` contains no types, then `c₁.join c₂` is the empty chain.
+If `c₁` contains no types (`h`), then `c₁.join c₂` is the empty chain (`c₁.join c₂ = ∅`).
 
 Variant of `empty_join` for use when emptiness is expressed as `c₁.val = []` rather than `c₁ = ∅`.
 -/
 @[simp]
-public theorem join_eq_empty_of_val_nil_left {c₁ c₂ : PromotionChain} :
-    c₁.val = [] → c₁.join c₂ = ∅ := by
-  intro h; simp [show c₁ = ∅ by grind]
+public theorem join_eq_empty_of_val_nil_left {c₁ c₂ : PromotionChain} (h : c₁.val = []) :
+    c₁.join c₂ = ∅ := by
+  simp [show c₁ = ∅ by grind]
 
 /--
-If `c₂` contains no types, then `c₁.join c₂` is the empty chain.
+If `c₂` contains no types (`h`), then `c₁.join c₂` is the empty chain (`c₁.join c₂ = ∅`).
 
 Variant of `join_empty` for use when emptiness is expressed as `c₂.val = []` rather than `c₂ = ∅`.
 -/
 @[simp]
-public theorem join_eq_empty_of_val_nil_right {c₁ c₂ : PromotionChain} :
-    c₂.val = [] → c₁.join c₂ = ∅ := by
-  intro h; simp [show c₂ = ∅ by grind]
+public theorem join_eq_empty_of_val_nil_right {c₁ c₂ : PromotionChain} (h : c₂.val = []) :
+    c₁.join c₂ = ∅ := by
+  simp [show c₂ = ∅ by grind]
 
 /--
 A key property underlying the recurrence relation for `join` when `T₁ = T₂`: transferring the common
@@ -434,5 +529,29 @@ public theorem join.heads_ne_not_le {T₁ T₂ : τ} {ts₁' ts₂' : List τ}
   intro h rfl; simp [show T = T₂ ↔ False by grind] at h
   have := hvalid₂.lt_of_mem_tail T h
   grind
+
+/--
+`c.demote writtenType` is the promotion chain `c` after a value of type `writtenType` is assigned:
+the promoted types that `writtenType` is a subtype of. Mirrors the specification's
+`demote(promotionChain, written)` (in the flow analysis specification's "Promotion" section): the
+subsequence of `c` of the types `T` with `writtenType <: T`.
+-/
+@[expose]
+public def demote (writtenType : τ) (c : PromotionChain) : PromotionChain :=
+  c.filter (fun T => decide (writtenType ≤ T))
+
+/--
+The types in `c.demote writtenType` are those of `c` that `writtenType` is a subtype of
+(`c.val.filter (fun T => decide (writtenType ≤ T))`).
+-/
+@[simp]
+public theorem val_demote {writtenType : τ} {c : PromotionChain} :
+    (c.demote writtenType).val = c.val.filter (fun T => decide (writtenType ≤ T)) := by
+  simp [demote]
+
+/-- Demoting the empty promotion chain leaves it empty. -/
+@[simp]
+public theorem empty_demote (writtenType : τ) : (∅ : PromotionChain).demote writtenType = ∅ :=
+  ext (by simp [val_empty])
 
 end «PromotionChain»
