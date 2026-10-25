@@ -226,8 +226,18 @@ What exists so far:
   initial `LoweredExpr`, with run-time values (`Value`), evaluation contexts (`EctxItem`) and
   outcomes (`Outcome`). Besides `SimpleType`, it has a concrete type representation for programs
   translated from Kernel (`KernelTypes`), indexed by the program's class hierarchy.
-- `FlowAnalysis` has the model of promotion chains. The rest of the model of flow analysis, which
-  produces `LoweredExpr`s from surface Dart, is being developed separately and isn't here yet.
+- `FlowAnalysis` has the model of flow analysis, for a small subset of surface Dart (`Syntax`). It
+  has a declarative specification (`Elaboration`): rules (`ElabExpr`, `ElabStmt`) that relate a
+  surface expression or statement, and the flow model before it, to the `LoweredExpr` that it
+  produces and the flow model after it. The specification builds on the representation of flow
+  models (`State`), and on models of promotion chains, promotion models and promotion keys. It
+  keys a property path such as `x._f._g` by its root variable and its path of property names,
+  and forgets the promotions of the properties rooted at a variable when the variable is assigned
+  or declared. It also has an algorithm that mirrors Dart's implementation (`Algorithm`), which
+  instead keys properties by the value version of their target, and re-keys them where control
+  flow paths join; it is proved sound and complete with respect to the specification
+  (`AlgorithmTheorems`), through a refinement relation between their flow models
+  (`AlgorithmRefinement`).
 - `DartSemantics` has the run-time semantics of `LoweredExpr`: the run-time state (`State`), how
   declarations resolve variable references to heap cells (`Resolve`), and the head-step relation
   (`HeadStep`), which is the definition of the semantics, made into an iris-lean language

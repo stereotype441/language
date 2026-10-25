@@ -9,6 +9,19 @@ https://docs.google.com/document/d/11Xs0b4bzH6DwDlcJMUcbx4BpvEKGz8MVuJWEfo_mirE/
 
 ## CHANGELOG
 
+2026.10.28
+  - Specify local variable declarations without initializers, and blocks.
+  - Clarify that `promotionInfo` may retain entries for variables that have gone
+    out of scope.
+  - Specify promotion of promotable properties (field promotion): define which
+    properties are promotable, documenting the existing behavior; generalize
+    the keys of `promotionInfo` from variables to promotion targets, which
+    include property paths such as `x._f._g` and `this._f`; add a **Property
+    get** rule; and discard the promotions of a variable's properties when the
+    variable is assigned. When a property is promoted, promotions that the new
+    type isn't a strict subtype of are discarded, so that its promotion chain
+    stays valid.
+
 2026.10.04
   - Specify the existing behavior of flow analysis for closures (function
     expressions, local function declarations, and `late` variable
@@ -212,6 +225,135 @@ The `join` relation is idempotent, commutative, and associative.
 _See https://github.com/dart-lang/language/issues/4757 for the discussion that
 motivated this definition._
 
+### Promotion targets
+
+A *promotion target* is something whose type flow analysis may promote. It is
+either:
+
+- A local variable `x`.
+
+- A *property target* `R.p₁.p₂...pₙ`, where `n ≥ 1`, each `pᵢ` is a property
+  name that is promotable (see below), and the *root* `R` is a local variable,
+  `this`, or `super`.
+
+  _For example, `x._f`, `x._f._g`, and `this._f` are property targets. A
+  property target names whatever value is reached by starting at its root and
+  following its path of property names, so `x._f` and `(x)._f` name the same
+  property target. `this` itself is not a promotion target here; promotion of
+  `this` (Dart 3.15) is not yet specified._
+
+We say that a property target is *rooted at* `R` if its root is `R`.
+
+A property get `N` of the form `E.p` (or an implicit `this.p`) is a *promotable
+property get*, and we say that `p` is *promotable* in `N`, iff, where `L` is the
+library containing `N`, either:
+
+- `p` is a private name, and `N` statically resolves to the representation
+  variable of an extension type declaration; or
+
+- `p` is a private name that is promotable in `L` (see below), and `N`
+  statically resolves to an instance variable, or an abstract instance getter,
+  declared in a class, mixin, or enum declaration.
+
+_Since `p` is private, it can only be accessed in `L`, so the member that `N`
+resolves to is declared in `L`. `p` is not promotable in `N` if `N` has no
+statically resolved member named `p` (for example, because the static type of
+`E` is `dynamic`), or if it resolves to a method, a concrete getter, a static
+member, or a member of an extension or extension type other than its
+representation variable._
+
+The *classes of* `L` are the class (including mixin class), mixin, and enum
+declarations in `L` (including those in its parts). _Extension and extension
+type declarations are not classes of `L`._
+
+A private name `n` declared in `L` is *promotable in* `L` unless any of the
+following is true:
+
+- A class of `L` declares an instance variable named `n` that is not `final`,
+  or that is `external`. _This includes an `abstract` instance variable that is
+  not `final`._
+
+- A class of `L` declares a concrete (that is, non-`abstract`) instance getter
+  named `n`. _This includes an `external` getter._
+
+- `L` declares a concrete class `C` (including an enum, or a class declared as
+  a mixin application, `class C = S with M;`) such that a getter named `n` is
+  in the interface of `C`, but `C` has no concrete implementation of it. That
+  is, an instance variable or instance getter named `n` is declared in `C` or
+  in one of its direct or indirect superclasses, applied mixins,
+  superinterfaces, or (for mixins) `on` types, but no non-`abstract` instance
+  variable or instance getter named `n` is declared in `C`, in one of its
+  superclasses, or in a mixin applied to `C` or one of its superclasses.
+  _Such a class has an implicit `noSuchMethod` forwarding getter named `n`,
+  which may return a different value each time it's invoked._
+
+_Promotability depends only on the name: either all the instance variables and
+abstract getters named `n` in the classes of `L` are promotable, or none of
+them are. This is because a class may implement another class's interface (via
+`implements`), and class modifiers don't prevent this within `L`, so a property
+get that statically resolves to one member named `n` may, at run time, invoke
+any instance member named `n`. Since `n` is private to `L`, every such member
+is declared in `L`, or is a `noSuchMethod` forwarder in a class declared in
+another library. A `noSuchMethod` forwarder for a name that is private to a
+different library always throws, so it can't produce a value that would make
+promotion unsound; hence only `noSuchMethod` forwarders in `L` need to be
+considered._
+
+_So if `n` is promotable in `L`, any read of a property named `n` that
+statically resolves to an instance variable or abstract getter, and completes
+normally, invokes a `final`, non-`external` instance variable (or possibly a
+method; see below). Therefore all reads of a property target `R.p₁.p₂...pₙ`
+that complete normally produce the same value, so long as `R` isn't assigned in
+between: by induction on `i`, every read of `R.p₁...pᵢ₋₁` produces the same
+object, and every read of the promotable property `pᵢ` of that object produces
+the same value._
+
+_An abstract getter has no implementation of its own, so a read that
+statically resolves to it invokes some concrete implementation, which must be
+a `final` instance variable (see
+https://github.com/dart-lang/language/issues/3328). An `abstract` instance
+variable that is not `final` blocks promotion even though it has no
+implementation of its own, because it would ordinarily be implemented by a
+non-`final` instance variable or a concrete getter, which would block promotion
+anyway._
+
+_Methods, setters, static members, top-level declarations, and members of
+extensions and extension types don't affect promotability. If a read of `R.n`
+were to invoke a method named `n` at run time, the resulting tear-offs might
+not be identical, but they would have the same run-time type, so promotion
+would still be sound._
+
+_A representation variable is `final`, and members of extension types are
+resolved statically, so a read of a representation variable can't invoke
+anything else. Hence a private representation variable is promotable
+regardless of the other declarations in `L`, and doesn't affect the
+promotability of any name in `L`._
+
+_A property get whose receiver has static type `dynamic` is never promotable,
+because at run time it may invoke `noSuchMethod` on an object of any class
+that lacks a member named `p`, including classes in other libraries._
+
+_Promotion of properties is known as "field promotion". It was introduced in
+Dart 3.2. For historical background, see the [field promotion proposals
+overview][field promotion]; the shipped feature doesn't exactly match any of
+the proposals described there. For example, the proposal it most resembles
+(https://github.com/dart-lang/language/issues/1167) only allows promotion of
+`this._x`, whereas the shipped feature also allows promotion of properties of
+local variables, such as `x._f`._
+
+[field promotion]: ../../working/field-promotion/proposals-overview.md
+
+Type inference and flow analysis are performed together: type inference uses
+the promotions computed by the rules below to determine static types, and the
+rules below use the static types determined by type inference. In particular,
+the rules below refer to the static type of each expression `E`, and to the
+*unpromoted type* of each property get `E.p` (including an implicit `this.p`):
+the static type the property get would have if the property were not promoted.
+_The unpromoted type of `E.p` depends on the static type of `E`, which may
+itself be promoted. For example, if `x` is promoted from `C<num>` to `C<int>`,
+and the field `_f` of `C<T>` has type `T?`, then the unpromoted type of `x._f`
+is `int?`._
+
 ### Models
 
 A *promotion model*, denoted `PromotionModel(declaredType, promotionChain,
@@ -249,6 +391,41 @@ source code.
   variable initializer is not per se considered to write to the late variable
   itself.
 
+A promotion model can also represent what is statically known about a property
+target. In that case, `assigned` is true, and `unassigned` and `writeCaptured`
+are false. _A property target can't be assigned, so these three components
+never change. A property target stops being tracked when its root is assigned
+(see `assign`, below), rather than being demoted._
+
+A property target doesn't have a single declared type, because the unpromoted
+type of a property get depends on the static type of its target, which can
+change between two reads of the same property target (when the target is
+promoted). Instead, each property get `E.p` that refers to a property target
+`t` has its own unpromoted type `U`, and the promotion chain of `t` only
+affects the type of `E.p` if its last type is a subtype of `U` (see the
+definition of the current type of a property get, in
+[Promotion](#promotion)). Accordingly, the `declaredType` of a property
+target's promotion model is not used, so its value doesn't matter. _Two
+promotion models for the same property target may have different
+`declaredType`s._ The `promotionChain` of a property target's promotion model
+is always a promotion chain, but it isn't necessarily strictly bounded by the
+unpromoted type of a property get that refers to the property target.
+
+_For example, given `class C<T> { final T? _f; ... }`, and a local variable `x`
+of type `C<Object?>`:_
+
+```dart
+if (x._f is num) {      // Promotes `x._f`; chain `[num]`.
+  if (x is C<int>) {    // Reads of `x._f` now have unpromoted type `int?`.
+    x._f;               // `num` isn't a subtype of `int?`, so type `int?`.
+    if (x._f != null) { // Promotes `x._f`; chain `[num, int]`.
+      x._f;             // Type `int`.
+    }
+  }
+  x._f;                 // Type `num`.
+}
+```
+
 A *flow model*, denoted `FlowModel(reachable, promotionInfo)`, represents what
 is statically known to flow analysis about the state of the program at a given
 point in the source code.
@@ -269,8 +446,14 @@ point in the source code.
   elements of the `reachable` stack, since each element of the stack models the
   reachability of one control flow split from its enclosing control flow split.
 
-  - `promotionInfo` is a mapping from variables in scope at the given point to
-  their associated *promotion model*s.
+  - `promotionInfo` is a mapping from promotion targets to their associated
+  *promotion model*s. It has an entry for every variable in scope at the given
+  point. _It may also have entries for variables that have gone out of scope
+  (see **Block**, below), but nothing can refer to those variables, so they
+  don't affect the analysis._ It may also have entries for property targets.
+  _An entry for a property target is created the first time the property
+  target is promoted (see `promote`, below). A property target without an entry
+  has no promotions._
 
 The following functions associate flow models to nodes:
 
@@ -363,8 +546,11 @@ We also make use of the following auxiliary functions:
   - If `PM1 = PromotionModel(d1, p1, s1, a1, u1, c1)` and
   - If `PM2 = PromotionModel(d2, p2, s2, a2, u2, c2)` then
   - `PM3 = PromotionModel(d3, p3, s3, a3, u3, c3)` where
-   - `d3 = d1 = d2`
-     - Note that all models must agree on the declared type of a variable
+   - `d3 = d1`
+     - Note that all models of a variable must agree on its declared type, so
+       `d1 = d2`. Two models of a property target might not agree on
+       `declaredType` (see [Models](#models)), but it isn't used, so it doesn't
+       matter which one is chosen.
    - `p3 = join(p1, p2)`
    - `s3 = s1 U s2`
      - The set of test sites is the union of the test sites on either path
@@ -404,9 +590,12 @@ We also make use of the following auxiliary functions:
     - `M2 = FlowModel(r2, PI2)`
     - `pop(r1) = pop(r2) = r0` for some `r0`
     - `r3` is `push(r0, top(r1) || top(r2))`
-    - `PI3` is the map which maps each variable `v` in the domain of `PI1` and
-      `PI2` to `joinPM(PI1(v), PI2(v))`.  Note that any variable which is in
-      domain of only one of the two is dropped, since it is no longer in scope.
+    - `PI3` is the map which maps each promotion target `v` in the domain of
+      `PI1` and `PI2` to `joinPM(PI1(v), PI2(v))`.  Note that any variable
+      which is in domain of only one of the two is dropped, since it is no
+      longer in scope. Likewise, any property target which is in the domain of
+      only one of the two is dropped, since along the other control flow path,
+      either it has no promotions, or its root was assigned.
 
   _We expect the `join` and `joinPM` combinators to be commutative and
   associative, but we don't rely on this for the soundness of the algorithm._
@@ -467,6 +656,21 @@ We also make use of the following auxiliary functions:
       domain of both `PI1` and `PI3`, it must have been declared before the
       `try/finally` statement, therefore it must also be in the domain of
       `PI2`._
+  - And let `PI4` map each property target `t` in the domain of either `PI1` or
+    `PI3` as follows:
+    - If the root of `t` is a variable whose value might have been changed by
+      the `finally` block (see `attachFinallyPM`, below), then `PI4(t) =
+      PI3(t)` if `t` is in the domain of `PI3`, and `t` is not in the domain of
+      `PI4` otherwise. _Promotions of `t` from the `try` block aren't
+      necessarily valid._
+    - Otherwise, if `t` is in the domain of only one of `PI1` and `PI3`, then
+      `PI4(t)` is the promotion model of `t` in that map.
+    - Otherwise, let `PI1(t) = PromotionModel(d1, p1, s1, true, false,
+      false)` and `PI3(t) = PromotionModel(d3, p3, s3, true, false, false)`.
+      Then `PI4(t) = PromotionModel(d3, rebasePromotedTypes(p1, p3), s1 ∪ s3,
+      true, false, false)`. _The promotions from the `try` block are still
+      valid, so the promotions from the `finally` block are applied on top of
+      them._
 
 - `attachFinallyPM(afterTry, beforeFinally, afterFinally)`, where `afterTry`,
   `beforeFinally`, and `afterFinally` are promotion models, represents the state
@@ -505,13 +709,19 @@ We also make use of the following auxiliary functions:
   model in which variables in `written` might have been written to and variables
   in `captured` might have been write-captured.  It is defined as
   `FlowModel(r, PI1)` where `M` is `FlowModel(r, PI0)` and `PI1` is the map
-  such that:
+  such that, for each variable `v` in the domain of `PI0`:
     - `PI0` maps `v` to `PM0 = PromotionModel(d0, p0, s0, a0, u0, c0)`
     - If `captured` contains `v` then `PI1` maps `v` to
       `PromotionModel(d0, [], s0, a0, false, true)`
     - Otherwise if `written` contains `v` then `PI1` maps `v` to
       `PromotionModel(d0, [], s0, a0, false, c0)`
     - Otherwise `PI1` maps `v` to `PM0`
+
+  and, for each property target `t` in the domain of `PI0`:
+    - If the root of `t` is a variable in `written` or `captured`, then `t` is
+      not in the domain of `PI1`. _The variable might have been assigned, so
+      `t` might now name a different value._
+    - Otherwise `PI1` maps `t` to `PI0(t)`.
 
 - `inheritTestedPM(PM1, PM2)`, where `PM1` and `PM2` are promotion models,
   represents a modification of `PM1` to include any additional types of interest
@@ -531,9 +741,9 @@ We also make use of the following auxiliary functions:
   - We define `inheritTested(M1, M2)` to be `M3 = FlowModel(r1, PI3)` where:
     - `M1 = FlowModel(r1, PI1)`
     - `M2 = FlowModel(r2, PI2)`
-    - `PI3` is the map which maps each variable `v` in the domain of both `PI1`
-      and `PI2` to `inheritTestedPM(PI1(v), PI2(v))`, and maps each variable in
-      the domain of `PI1` but not `PI2` to `PI1(v)`.
+    - `PI3` is the map which maps each promotion target `v` in the domain of
+      both `PI1` and `PI2` to `inheritTestedPM(PI1(v), PI2(v))`, and maps each
+      promotion target in the domain of `PI1` but not `PI2` to `PI1(v)`.
 
 
 ### Promotion
@@ -544,16 +754,26 @@ We say that the **current type** of a variable `x` in promotion model `PM` is `S
   - `PM = PromotionModel(declared, promotionChain, tested, assigned, unassigned, captured)`
   - `promotionChain = l ++ [S]` or (`promotionChain = []` and `declared = S`)
 
+We say that the **current type** of a property get `E.p` that refers to a
+property target `t` (see **Property get**, below), in flow model `M =
+FlowModel(r, PI)`, is `S`, where `U` is the unpromoted type of `E.p`, and:
+  - If `t` is in the domain of `PI`, `PI(t) = PromotionModel(declared,
+    promotionChain, tested, assigned, unassigned, captured)`, `promotionChain =
+    l ++ [S']`, and `S' <: U`, then `S = S'`.
+  - Otherwise, `S = U`.
+
+_The check `S' <: U` matters only when `U` differs from the unpromoted types of
+the property gets through which `t` was promoted (see [Models](#models))._
+
 Policy:
   - We say that at type `T` is a type of interest for a variable `x` in a set of
     tested types `tested` if `tested` contains a type `S` such that `T` is `S`,
     or `T` is **NonNull(`S`)**.
 
-  - We say that a variable `x` is promotable via type test with type `T` given
-    promotion model `PM` if
+  - We say that a promotion target `x` is promotable via type test with type `T`
+    given promotion model `PM` and current type `S` if
     - `PM = PromotionModel(declared, promotionChain, tested, assigned, unassigned, captured)`
     - and `captured` is false
-    - and `S` is the current type of `x` in `PM`
     - and not `S <: T`
     - and `T <: S` or (`S` is `X extends R` and `T <: R`) or (`S` is `X & R` and
       `T <: R`)
@@ -617,7 +837,10 @@ Definitions:
 - `assign(x, E, M)` where `x` is a local variable, `E` is an expression of
   inferred type `T` (which must be a subtype of `x`'s declared type), and `M =
   FlowModel(r, PI)` is the flow model for `E` is defined to be `FlowModel(r,
-  PI[x -> PM])` where:
+  PI'[x -> PM])` where:
+  - `PI'` is `PI` with every property target rooted at `x` removed from its
+    domain. _After the assignment, such a property target names a property of
+    a different value, so its promotions no longer apply._
   - `PI(x) = PromotionModel(declared, promoted, tested, assigned, unassigned,
     captured)`
   - If `captured` is true then:
@@ -650,18 +873,49 @@ Definitions:
 - `promote(E, T, M)` where `E` is an expression, `T` is a type which it may be
   promoted to, and `M = FlowModel(r, PI)` is the flow model in which to promote,
   is defined to be `M3`, where:
-  - If `stripParens(E)` is not a promotion target, then `M3` = `M`
-  - If `stripParens(E)` is a promotion target `x`, then
-    - Let `PM = PromotionModel(declared, promoted, tested, assigned, unassigned,
-      captured)` be the promotion model for `x` in `PI`
-    - If `x` is not promotable via type test to `T` given `PM`, then `M3` = `M`
+  - If `stripParens(E)` does not refer to a promotion target (see **Variable or
+    getter** and **Property get**, below), then `M3` = `M`
+  - If `stripParens(E)` refers to a promotion target `x`, then
+    - If `x` is a local variable, let `PM` be the promotion model for `x` in
+      `PI`, and let `S` be the current type of `x` in `PM`.
+    - If `x` is a property target, let `S` be the current type of
+      `stripParens(E)` in `M`, and let `PM` be defined as follows:
+      - If `x` is in the domain of `PI`, let `PM` be the promotion model for
+        `x` in `PI`.
+      - Otherwise, let `PM = PromotionModel(U, [], [], true, false, false)`,
+        where `U` is the unpromoted type of `stripParens(E)`. _The
+        `declaredType` of a property target's promotion model isn't used (see
+        [Models](#models)), so the choice of `U` is arbitrary._
+    - Write `PM` as `PromotionModel(declared, promoted, tested, assigned,
+      unassigned, captured)`.
+    - If `x` is not promotable via type test to `T` given `PM` and `S`, then
+      `M3` = `M`
     - Else
-      - Let `S` be the current type of `x` in `PM`
       - If `T <: S` then let `T1` = `T`
       - Else if `S` is `X extends R` then let `T1` = `X & T`
       - Else If `S` is `X & R` then let `T1` = `X & T`
       - Else `x` is not promotable (shouldn't happen since we checked above)
-      - Let `PM2 = PromotionModel(declared, promoted ++ [T1], tested ++ [T],
+      - _In each case, `T1 <<: S`, because `T1 <: S`, and `S <: T1` would
+        imply `S <: T`._
+      - If `x` is a local variable, let `promoted' = promoted`. Otherwise, let
+        `promoted'` be the subsequence of `promoted` containing each type `T'`
+        such that `T1 <<: T'`.
+        - _If `x` is a local variable, or `x` is a property target and `S` is
+          the last type in `promoted`, then `S` is a subtype of every type in
+          `promoted`, so `T1 <<: T'` for every type `T'` in `promoted`, and
+          `promoted' = promoted`. Otherwise, the last type in `promoted` (if
+          any) wasn't used, because it isn't a subtype of the unpromoted type
+          of `stripParens(E)` (see the definition of the current type of a
+          property get, above), and `T1` might not be related to it. Removing
+          the types that `T1` isn't a strict subtype of ensures that the
+          resulting list, `promoted' ++ [T1]`, is a promotion chain._
+        - _For example, given `class C<T> { final T? _f; ... }`, and a local
+          variable `x` of type `C<Object?>`, if `x._f` is promoted to `num`,
+          and then `x` is promoted to `C<String>`, then a subsequent promotion
+          of `x._f` to `String` results in the promotion chain `[String]`.
+          Promotions of `x._f` to supertypes of `String` (for example,
+          `Object`) would be kept._
+      - Let `PM2 = PromotionModel(declared, promoted' ++ [T1], tested ++ [T],
         assigned, unassigned, captured)`
       - Let `M2 = FlowModel(r, PI[x -> PM2])`
       - If `T1 <: Never` then `M3` = `unreachable(M2)`, otherwise `M3` = `M2`
@@ -714,10 +968,46 @@ then they are all assigned the same value as `after(N)`.
 
 - **Variable or getter**: If `N` is an expression of the form `x`
   where the type of `x` is `T` then:
+  - If `x` resolves to an instance getter or field `p` of `this` _(an implicit
+    `this.p`)_, then `N` is analyzed as if it were the property get `this.p`
+    (see **Property get**, below).
+  - Otherwise, if `x` is a local variable, then `N` refers to the promotion
+    target `x`. Otherwise, `N` does not refer to a promotion target.
   - If `T <: Never` then:
     - Let `after(N) = unreachable(before(N))`.
   - Otherwise:
     - Let `after(N) = before(N)`.
+
+- **Property get**: If `N` is a property get of the form `E1.p`, or an
+  implicit `this.p` (see above), then:
+  - If `stripParens(E1)` is `this` or `super`, let `M = before(N)`.
+    Otherwise, let `before(E1) = before(N)`, and let `M = after(E1)`.
+  - Let `M = FlowModel(r, PI)`. `N` refers to a promotion target as follows:
+    - If `p` is not promotable, then `N` does not refer to a promotion target.
+    - Otherwise, if `stripParens(E1)` is `this` or `super`, then `N` refers to
+      the property target `this.p` or `super.p`, respectively.
+    - Otherwise, if `stripParens(E1)` refers to a local variable `x`, then:
+      - If `PI(x) = PromotionModel(d, c, s, a, u, true)` _(that is, `x` is
+        write captured)_, then `N` does not refer to a promotion target. _A
+        closure might assign to `x` at any time, so two reads of `x.p` might
+        read properties of different values._
+      - Otherwise, `N` refers to the property target `x.p`.
+    - Otherwise, if `stripParens(E1)` refers to a property target `t`, then
+      `N` refers to the property target `t.p`. _For example, if `t` is `x._f`,
+      then `N` refers to `x._f._g`._
+    - Otherwise, `N` does not refer to a promotion target.
+  - The static type `T` of `N` is determined as follows:
+    - If `N` refers to a promotion target, then `T` is the current type of `N`
+      in `M`.
+    - Otherwise, `T` is the unpromoted type of `N`.
+  - If `T <: Never` then:
+    - Let `after(N) = unreachable(M)`.
+  - Otherwise:
+    - Let `after(N) = M`.
+
+  _A property get never changes the promotions in effect. In particular, it
+  doesn't create an entry in `promotionInfo` for the property target it refers
+  to; an entry is only created when the property target is promoted._
 
 - **True literal**: If `N` is the literal `true`, then:
   - Let `true(N) = before(N)`.
@@ -871,6 +1161,38 @@ TODO: Add missing expressions, handle cascades and left-hand sides accurately
 - **Expression statement**: If `N` is an expression statement of the form `E` then:
   - Let `before(E) = before(N)`.
   - Let `after(N) = after(E)`.
+
+- **Local variable declaration**: If `N` is a declaration of a single local
+  variable `x` with declared type `T` and no initializer (for example, `T x;`,
+  `final T x;`, or `var x;`, in which case `T` is `dynamic`), and `before(N) =
+  FlowModel(r, PI)`, then:
+  - Let `after(N) = FlowModel(r, PI[x -> PromotionModel(T, [], [], false, true,
+    false)])`.
+
+  _The new variable starts out unpromoted, with no types of interest,
+  definitely unassigned, and not write captured. None of its properties are
+  promoted either: `PI` has no entries for property targets rooted at `x`,
+  because `x` hasn't been declared yet. If an enclosing scope declares a
+  variable with the same name, `x` is nevertheless a different variable, so the
+  promotion model of the outer variable (and of its properties) is unaffected,
+  and applies again once `x` goes out of scope._
+
+  _A declaration that declares more than one variable is treated as a sequence
+  of declarations, each declaring one of the variables (see **Closures and
+  suspensions**, below)._
+
+  TODO(paulberry): handle declarations with initializers.
+
+- **Block**: If `N` is a block of the form `{ S₁ S₂ ... Sₙ }`, then:
+  - If `n = 0`, let `after(N) = before(N)`.
+  - Otherwise:
+    - Let `before(S₁) = before(N)`.
+    - For each `i` such that `1 ≤ i < n`, let `before(Sᵢ₊₁) = after(Sᵢ)`.
+    - Let `after(N) = after(Sₙ)`.
+
+  _The variables declared in the block go out of scope at its end. Their
+  promotion models remain in `after(N)`, but nothing after the block can refer
+  to them._
 
 - **Break statement**: If `N` is a statement of the form `break [L];`, then:
 
