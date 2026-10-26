@@ -170,6 +170,23 @@ public inductive ElabExpr : AstPath → Scope → FlowModel → Expr →
       T = em₁.fm_after.currentTypeOf ref? p.type →
       ElabExpr π σ fm₀ (e₁.property p) (m₁.propertyGet p T)
         ⟨T, ref?, em₁.fm_after, em₁.fm_after⟩
+  /--
+  Assignment to the variable named `n` (`n = e₁`), resolved as for a read (to `v`, declared at
+  `decl`). Mirrors the flow analysis specification's "Local-variable assignment" rule:
+  `before(e₁) = before(N)`, and `after(N) = assign(x, e₁, after(e₁))`, so the variable's promotion
+  model is updated (`PromotionModel.write`) in the flow model *after* `e₁`. The static type of
+  `e₁` must be a subtype of `v`'s declared type (type coercion isn't modeled yet). The written value
+  gets a new value version, labeled by the assignment's AST path.
+
+  The assignment's value is not a reference to `v`, so it can't promote `v`.
+  -/
+  | assign {π σ fm₀ n e₁ m₁ em₁ v decl pm fm} :
+      ElabExpr (0 :: π) σ fm₀ e₁ m₁ em₁ →
+      σ.lookup n = some (v, decl) →
+      em₁.fm_after.promotionInfo (.var decl) = some pm →
+      em₁.type ≤ v.type →
+      fm = em₁.fm_after.set (.var decl) (pm.write em₁.type (ValueVersion.root π)) →
+      ElabExpr π σ fm₀ (.assign n e₁) (.variableSet v m₁) ⟨em₁.type, none, fm, fm⟩
 
 mutual
 
@@ -271,6 +288,11 @@ public theorem ElabExpr.wellFormed {π σ} {fm₀ : FlowModel} {e m} {em : ExprM
     obtain ⟨hwf_true, hwf_false⟩ := ih hwf
     subst_vars
     exact ⟨hwf_true.join hwf_false, hwf_true.join hwf_false⟩
+  case assign ih =>
+    obtain ⟨hwf_true, hwf_false⟩ := ih hwf
+    subst_vars
+    exact ⟨(hwf_true.join hwf_false).set (by rintro r p ⟨⟩),
+      (hwf_true.join hwf_false).set (by rintro r p ⟨⟩)⟩
 
 mutual
 

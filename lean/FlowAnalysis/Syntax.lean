@@ -28,8 +28,8 @@ variable is identified by the path of the statement that declares it (see `Scope
 
 Children are numbered as follows:
 
-- `Expr.nullCheck e₁`, `Expr.as e₁ T`, `Expr.property e₁ p` and `Stmt.exprStmt e₁`: `e₁` is child
-  `0`.
+- `Expr.nullCheck e₁`, `Expr.as e₁ T`, `Expr.property e₁ p`, `Expr.assign n e₁` and
+  `Stmt.exprStmt e₁`: `e₁` is child `0`.
 - `Stmt.ifStmt e₁ s₂ s₃`: `e₁`, `s₂` and `s₃` are children `0`, `1` and `2`.
 - `Stmt.block ss`: the list `ss` is child `0`.
 - A nonempty statement list `s :: ss`: `s` is child `0`, and the list `ss` is child `1`.
@@ -54,6 +54,10 @@ public inductive Expr where
   | null
   /-- A read of property `p` of the value of `e₁` (`e₁.p`). -/
   | property (e₁ : Expr) (p : Property)
+  /--
+  An assignment to the variable named `n` (`n = e₁`), resolved like a read of `n` (see `var`).
+  -/
+  | assign (n : String) (e₁ : Expr)
   deriving Repr
 
 local notation "Expr" => Expr (τ := τ)

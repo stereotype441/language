@@ -530,4 +530,28 @@ public theorem join.heads_ne_not_le {T₁ T₂ : τ} {ts₁' ts₂' : List τ}
   have := hvalid₂.lt_of_mem_tail T h
   grind
 
+/--
+`c.demote writtenType` is the promotion chain `c` after a value of type `writtenType` is assigned:
+the promoted types that `writtenType` is a subtype of. Mirrors the specification's
+`demote(promotionChain, written)` (in the flow analysis specification's "Promotion" section): the
+subsequence of `c` of the types `T` with `writtenType <: T`.
+-/
+@[expose]
+public def demote (writtenType : τ) (c : PromotionChain) : PromotionChain :=
+  c.filter (fun T => decide (writtenType ≤ T))
+
+/--
+The types in `c.demote writtenType` are those of `c` that `writtenType` is a subtype of
+(`c.val.filter (fun T => decide (writtenType ≤ T))`).
+-/
+@[simp]
+public theorem val_demote {writtenType : τ} {c : PromotionChain} :
+    (c.demote writtenType).val = c.val.filter (fun T => decide (writtenType ≤ T)) := by
+  simp [demote]
+
+/-- Demoting the empty promotion chain leaves it empty. -/
+@[simp]
+public theorem empty_demote (writtenType : τ) : (∅ : PromotionChain).demote writtenType = ∅ :=
+  ext (by simp [val_empty])
+
 end «PromotionChain»

@@ -100,6 +100,11 @@ public inductive LoweredExpr where
   (after any promotion) is `T`.
   -/
   | propertyGet (m : LoweredExpr) (p : Property) (T : τ)
+  /--
+  An assignment to local variable or formal parameter `v`, `v = m`: evaluates `m`, stores its
+  value in `v`, and evaluates to that value. (Kernel calls this a `VariableSet`.)
+  -/
+  | variableSet (v : Variable) (m : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -174,6 +179,7 @@ public def LoweredExpr.typeOf :
   | cond _ _ _ T => T
   | block _ => Γ.Null
   | propertyGet _ _ T => T
+  | variableSet _ m => m.typeOf
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | varAt _ T _ => T

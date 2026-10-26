@@ -20,8 +20,8 @@ operation on promotion models must preserve them.
 
 It also defines the operations on promotion models that flow analysis needs: creating one for a
 newly declared variable or a newly read property (`declared`, `fresh`), promoting
-(`tryPromote`), and joining two control flow paths (`join`), which is idempotent, commutative and
-associative.
+(`tryPromote`), recording an assignment (`write`), and joining two control flow paths (`join`),
+which is idempotent, commutative and associative.
 -/
 
 namespace FlowAnalysis
@@ -151,6 +151,32 @@ omit [DecidableEq ℓ] in
 @[simp]
 public theorem writeCaptured_tryPromote {pm : PromotionModel} {T : τ} {h : ¬pm.writeCaptured} :
     (pm.tryPromote T h).writeCaptured = pm.writeCaptured := rfl
+
+/--
+The promotion model after a value of static type `writtenType` is assigned, giving the location
+the new value version `newVersion`. Mirrors the specification's `assign(x, E, M)` (in the flow
+analysis specification's "Promotion" section), apart from promotion to a type of interest, which
+isn't modeled yet: the promoted types are demoted (`PromotionChain.demote`), and the location
+becomes definitely assigned, and not definitely unassigned. A write-captured location keeps no
+value version (and has no promotions to demote).
+
+TODO: promote to a type of interest (the specification's `toi_promote`), once `tested` is tracked.
+-/
+@[expose]
+public def write (pm : PromotionModel) (writtenType : τ) (newVersion : ValueVersion) :
+    PromotionModel where
+  promotedTypes := pm.promotedTypes.demote writtenType
+  tested := pm.tested
+  assigned := true
+  unassigned := false
+  version? := if pm.writeCaptured then none else some newVersion
+  writeCaptured := pm.writeCaptured
+  writeCaptured_promotedTypes := by
+    intro hwc
+    simp [pm.writeCaptured_promotedTypes hwc]
+  version?_eq_none_iff := by split <;> simp_all
+  not_assigned_and_unassigned := by simp
+  not_writeCaptured_and_unassigned := by simp
 
 /--
 `pm₁.join pm₂` is the promotion model at a point where two control flow paths, on which the
