@@ -43,12 +43,19 @@ namespace isPromotionChain
 Equivalent formulation of `isPromotionChain` in terms of Lean's built-in notation of a chain (which
 is defined recursively, so it's a bit more convenient to use in proofs).
 -/
-theorem iff_isChain (c : List τ) :
+public theorem iff_isChain (c : List τ) :
     isPromotionChain c ↔ c.IsChain (fun T U => U < T) := by
   rw [isPromotionChain, List.isChain_iff_getElem]
   constructor
   · intro h i hi; apply h; omega
   · intro h i hi; apply h
+
+/--
+Whether a list of types is a promotion chain is decidable, so the algorithm can test it (for
+example, before promoting).
+-/
+public instance instDecidable (c : List τ) : Decidable (isPromotionChain c) :=
+  iff_eq_eq.mp (iff_isChain c) ▸ inferInstance
 
 /--
 Equivalently, `c` is a promotion chain iff each type in it is a strict supertype of every type
@@ -73,7 +80,7 @@ theorem nil : isPromotionChain ([] : List τ) := by
 
 /-- A list with just one element is a promotion chain. -/
 @[simp]
-theorem singleton : ∀ T : τ, isPromotionChain [T] := by
+public theorem singleton : ∀ T : τ, isPromotionChain [T] := by
   simp [isPromotionChain]
 
 /-- The tail of a promotion chain (`hvalid`) is also a promotion chain. -/
@@ -217,7 +224,60 @@ public def single (T : τ) : PromotionChain := ⟨[T], by simp⟩
 public theorem val_single {T : τ} : (single T).val = [T] := by rfl
 
 /-- A promotion chain `c` is strictly bounded by `T` iff `T::c` is a promotion chain. -/
+@[expose]
 public def strictly_bounded_by (c : PromotionChain) (T : τ) : Prop := isPromotionChain (T::c)
+
+/-- Whether a promotion chain is strictly bounded by a type is decidable. -/
+public instance strictly_bounded_by.instDecidable (c : PromotionChain) (T : τ) :
+    Decidable (c.strictly_bounded_by T) :=
+  strictly_bounded_by.eq_1 c T ▸ inferInstance
+
+/-- A promotion chain `c` strictly bounds `T` iff `c++[T]` is a promotion chain. -/
+@[expose]
+public def strictly_bounds (c : PromotionChain) (T : τ) : Prop := isPromotionChain (c.val++[T])
+
+/--
+Whether a promotion chain strictly bounds a type is decidable, so `tryPromote` can test it before
+promoting.
+-/
+public instance strictly_bounds.instDecidable (c : PromotionChain) (T : τ) :
+    Decidable (c.strictly_bounds T) :=
+  strictly_bounds.eq_1 c T ▸ inferInstance
+
+/-- Constructs a new promotion chain by appending a type to the back. -/
+public def promote (c : PromotionChain) {T : τ} (h : c.strictly_bounds T) : PromotionChain :=
+  ⟨c.val++[T], h⟩
+
+/-- Simplification theorem: the types in `c.promote h` are those of `c`, followed by `T`. -/
+@[simp]
+public theorem val_promote {c : PromotionChain} {T : τ} {h : c.strictly_bounds T} :
+    (c.promote h).val = c.val ++ [T] := by rfl
+
+/--
+Constructs a new promotion chain by appending a type to the back, if the resulting chain would be
+valid. Otherwise returns the original chain unchanged.
+-/
+@[expose]
+public def tryPromote (c : PromotionChain) (T : τ) : PromotionChain :=
+  if h : c.strictly_bounds T then c.promote h else c
+
+/--
+If appending `T` to `c` would produce a valid promotion chain (`h`), then `c.tryPromote T` does so
+(`(c.tryPromote T).val = c.val ++ [T]`).
+-/
+@[simp]
+public theorem val_tryPromote_of_strictly_bounds {c : PromotionChain} {T : τ}
+    (h : c.strictly_bounds T) : (c.tryPromote T).val = c.val ++ [T] := by
+  simp [tryPromote, h]
+
+/--
+If appending `T` to `c` would not produce a valid promotion chain (`h`), then `c.tryPromote T`
+leaves `c` unchanged (`c.tryPromote T = c`).
+-/
+@[simp]
+public theorem tryPromote_of_not_strictly_bounds {c : PromotionChain} {T : τ}
+    (h : ¬c.strictly_bounds T) : c.tryPromote T = c := by
+  simp [tryPromote, h]
 
 /-- Analogous to `List.filter` but for promotion chains. -/
 public def filter (p : τ → Bool) (c : PromotionChain) : PromotionChain := .mk (c.val.filter p) <| by
