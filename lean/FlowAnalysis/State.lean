@@ -262,4 +262,36 @@ public theorem ExprModel.simple_after {ref? : Option Reference} {T : τ}
     (ExprModel.mk T ref? fm fm).fm_after = fm := by
   simp [ExprModel.fm_after]
 
+/-! ### Reading variables -/
+
+/--
+Whether the variable `v` starts out holding the null object when it's declared with no initializer:
+its type is nullable. (This follows the null-safety feature's rules for non-`late` local
+variables.)
+-/
+@[expose]
+public def _root_.DartLang.Variable.startsNull (v : Variable (τ := τ)) : Bool :=
+  decide (DartTypeRepr.Null ≤ v.type)
+
+/--
+The variable `v` starts out holding the null object (`v.startsNull = true`) exactly when its type
+is nullable (`DartTypeRepr.Null ≤ v.type`).
+-/
+@[simp]
+public theorem _root_.DartLang.Variable.startsNull_eq_true {v : Variable (τ := τ)} :
+    v.startsNull = true ↔ DartTypeRepr.Null ≤ v.type := by
+  simp [Variable.startsNull]
+
+/--
+Whether the variable `v`, whose promotion model is `pm`, is *readable*: it's definitely assigned,
+or it starts out holding the null object (`Variable.startsNull`). Reading a variable that isn't
+readable is a compile-time error. (This is the null-safety feature's definite assignment rule,
+rather than part of the flow analysis specification: "It is a compile time error to read a local
+variable when the variable is potentially unassigned unless the variable is non-`final` and has
+nullable type, or is `late`.")
+-/
+@[expose, reducible]
+public def PromotionModel.Readable (pm : PromotionModel) (v : Variable (τ := τ)) : Prop :=
+  pm.assigned = true ∨ v.startsNull = true
+
 end FlowAnalysis

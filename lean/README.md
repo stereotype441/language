@@ -95,10 +95,12 @@ What exists so far:
 - `DartLang` has the type representation, the run-time subtype check (`RuntimeTypes`), and the
   initial `LoweredExpr`, with run-time values (`Value`), evaluation contexts (`EctxItem`) and
   outcomes (`Outcome`).
-- `FlowAnalysis` has the representation of flow models (`State`), and models of promotion chains,
-  promotion models, value versions and promotion keys, on which the specification of flow analysis
-  will build. The specification itself, which produces `LoweredExpr`s from surface Dart, isn't here
-  yet.
+- `FlowAnalysis` has the model of flow analysis, for a small subset of surface Dart (`Syntax`). It
+  has a declarative specification (`Elaboration`): rules (`ElabExpr`, `ElabStmt`) that relate a
+  surface expression or statement, and the flow model before it, to the `LoweredExpr` that it
+  produces and the flow model after it. The specification builds on the representation of flow
+  models (`State`), and on models of promotion chains, promotion models, value versions and
+  promotion keys.
 - `DartSemantics` and `Tests` are set up, with iris-lean as a dependency. The semantics itself, the
   interpreter and the program logic come next.
 - The Kernel translator hasn't been started.
