@@ -228,7 +228,14 @@ What exists so far:
   has a declarative specification (`Elaboration`): rules (`ElabExpr`, `ElabStmt`) that relate a
   surface expression or statement, and the flow model before it, to the `LoweredExpr` that it
   produces and the flow model after it. The specification builds on the representation of flow
-  models (`State`), and on models of promotion chains, promotion models and promotion keys.
+  models (`State`), and on models of promotion chains, promotion models and promotion keys. It
+  keys a property path such as `x._f._g` by its root variable and its path of property names,
+  and forgets the promotions of the properties rooted at a variable when the variable is assigned
+  or declared. It also has an algorithm that mirrors Dart's implementation (`Algorithm`), which
+  instead keys properties by the value version of their target, and re-keys them where control
+  flow paths join; it is proved sound and complete with respect to the specification
+  (`AlgorithmTheorems`), through a refinement relation between their flow models
+  (`AlgorithmRefinement`).
 - `DartSemantics` has the run-time semantics of `LoweredExpr`: the run-time state (`State`), how
   declarations resolve variable references to heap cells (`Resolve`), and the head-step relation
   (`HeadStep`), which is the definition of the semantics, made into an iris-lean language
