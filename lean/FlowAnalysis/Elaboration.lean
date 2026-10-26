@@ -188,6 +188,20 @@ public inductive ElabExpr : AstPath → Scope → FlowModel → Expr →
   /-- Null literal (`null`). -/
   | nullLiteral {π σ fm} :
       ElabExpr π σ fm .null .null ⟨Γ.Null, none, fm, fm⟩
+  /--
+  Property read (`e₁.p`). Mirrors Dart's `propertyGet`.
+
+  The read refers to the property of the value that `e₁` read, if flow analysis tracks it (see
+  `Reference.property?`), and its type is the property's promoted type, if any. The read doesn't
+  change the flow model: like Dart's `_handleProperty`, it only looks up the property's promotion
+  model, and doesn't create one.
+  -/
+  | propertyGet {π σ fm₀ e₁ m₁ em₁ p ref? T} :
+      ElabExpr (0 :: π) σ fm₀ e₁ m₁ em₁ →
+      ref? = em₁.ref?.bind (·.property? p) →
+      T = em₁.fm_after.currentTypeOf ref? p.type →
+      ElabExpr π σ fm₀ (e₁.property p) (m₁.propertyGet p T)
+        ⟨T, ref?, em₁.fm_after, em₁.fm_after⟩
 
 mutual
 
@@ -297,6 +311,30 @@ public theorem ElabExpr.wellFormed {π σ} {fm₀ : FlowModel} {e m} {em : ExprM
     subst_vars
     refine ⟨?_, ?_, by simp⟩ <;> exact (hwf_true.join hwf_false).tryPromote? hvalid _ _
   case nullLiteral => exact ⟨hwf, hwf, by simp⟩
+  case propertyGet ih =>
+    obtain ⟨hwf_true, hwf_false, hvalid⟩ := ih hwf
+    subst_vars
+    refine ⟨hwf_true.join hwf_false, hwf_true.join hwf_false, ?_⟩
+    -- The property target has the same root as the reference it was made from.
+    intro r hr htracked
+    simp only [ExprModel.simple_after]
+    simp only [Option.mem_def, Option.bind_eq_some_iff] at hr
+    obtain ⟨r₁, hr₁, hr⟩ := hr
+    have hvalid₁ := hvalid r₁ hr₁
+    unfold Reference.property? at hr
+    split at hr
+    case isFalse => simp at hr
+    case isTrue =>
+      cases r₁
+      case var decl tracked =>
+        cases tracked <;> simp only [Bool.false_eq_true, ↓reduceIte, reduceCtorEq,
+          Option.some.injEq] at hr
+        subst hr
+        exact hvalid₁ rfl
+      case property root path =>
+        simp only [Option.some.injEq] at hr
+        subst hr
+        exact hvalid₁ rfl
 
 mutual
 
