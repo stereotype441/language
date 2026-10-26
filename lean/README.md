@@ -100,7 +100,8 @@ What exists so far:
   surface expression or statement, and the flow model before it, to the `LoweredExpr` that it
   produces and the flow model after it. The specification builds on the representation of flow
   models (`State`), and on models of promotion chains, promotion models, value versions and
-  promotion keys.
+  promotion keys. It also has an algorithm that mirrors Dart's implementation (`Algorithm`), proved
+  sound and complete with respect to the specification (`AlgorithmTheorems`).
 - `DartSemantics` and `Tests` are set up, with iris-lean as a dependency. The semantics itself, the
   interpreter and the program logic come next.
 - The Kernel translator hasn't been started.

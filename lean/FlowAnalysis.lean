@@ -7,3 +7,5 @@ public import FlowAnalysis.Syntax
 public import DartLang.Lowered
 public import FlowAnalysis.State
 public import FlowAnalysis.Elaboration
+public import FlowAnalysis.Algorithm
+public import FlowAnalysis.AlgorithmTheorems
