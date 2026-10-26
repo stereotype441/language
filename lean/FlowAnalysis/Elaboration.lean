@@ -156,6 +156,20 @@ public inductive ElabExpr : AstPath → Scope → FlowModel → Expr →
   /-- Null literal (`null`). -/
   | nullLiteral {π σ fm} :
       ElabExpr π σ fm .null .null ⟨Γ.Null, none, fm, fm⟩
+  /--
+  Property read (`e₁.p`). Mirrors Dart's `propertyGet`.
+
+  The read refers to the property of the value that `e₁` read, if flow analysis tracks it (see
+  `Reference.property?`), and its type is the property's promoted type, if any. The read doesn't
+  change the flow model: like Dart's `_handleProperty`, it only looks up the property's promotion
+  model, and doesn't create one.
+  -/
+  | propertyGet {π σ fm₀ e₁ m₁ em₁ p ref? T} :
+      ElabExpr (0 :: π) σ fm₀ e₁ m₁ em₁ →
+      ref? = em₁.ref?.bind (·.property? p) →
+      T = em₁.fm_after.currentTypeOf ref? p.type →
+      ElabExpr π σ fm₀ (e₁.property p) (m₁.propertyGet p T)
+        ⟨T, ref?, em₁.fm_after, em₁.fm_after⟩
 
 mutual
 
@@ -253,6 +267,10 @@ public theorem ElabExpr.wellFormed {π σ} {fm₀ : FlowModel} {e m} {em : ExprM
     subst_vars
     exact ⟨(hwf_true.join hwf_false).tryPromote _ _ _, (hwf_true.join hwf_false).tryPromote _ _ _⟩
   case nullLiteral => exact ⟨hwf, hwf⟩
+  case propertyGet ih =>
+    obtain ⟨hwf_true, hwf_false⟩ := ih hwf
+    subst_vars
+    exact ⟨hwf_true.join hwf_false, hwf_true.join hwf_false⟩
 
 mutual
 
