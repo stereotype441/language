@@ -18,8 +18,8 @@ models must preserve them.
 
 It also defines the operations on promotion models that flow analysis needs: creating one for a
 newly declared variable or a newly read property (`declared`, `fresh`), promoting
-(`tryPromote`), and joining two control flow paths (`join`), which is idempotent, commutative and
-associative.
+(`tryPromote`), recording an assignment (`write`), and joining two control flow paths (`join`),
+which is idempotent, commutative and associative.
 -/
 
 namespace FlowAnalysis
@@ -132,6 +132,35 @@ public def tryPromote (pm : PromotionModel) (T : τ) (h : ¬pm.writeCaptured) : 
 @[simp]
 public theorem writeCaptured_tryPromote {pm : PromotionModel} {T : τ} {h : ¬pm.writeCaptured} :
     (pm.tryPromote T h).writeCaptured = pm.writeCaptured := rfl
+
+/--
+The promotion model after a value of static type `writtenType` is assigned. Mirrors the
+specification's `assign(x, E, M)` (in the flow analysis specification's "Promotion" section), as far
+as the variable's own promotion model is concerned, apart from promotion to a type of interest,
+which isn't modeled yet: the promoted types are demoted (`PromotionChain.demote`), and the location
+becomes definitely assigned, and not definitely unassigned. (A write-captured location has no
+promotions to demote.) Forgetting the property targets rooted at the variable is the flow model's
+job (`FlowModel.eraseRooted`).
+
+TODO: promote to a type of interest (the specification's `toi_promote`), once `tested` is tracked.
+-/
+@[expose]
+public def write (pm : PromotionModel) (writtenType : τ) : PromotionModel where
+  promotedTypes := pm.promotedTypes.demote writtenType
+  tested := pm.tested
+  assigned := true
+  unassigned := false
+  writeCaptured := pm.writeCaptured
+  writeCaptured_promotedTypes := by
+    intro hwc
+    simp [pm.writeCaptured_promotedTypes hwc]
+  not_assigned_and_unassigned := by simp
+  not_writeCaptured_and_unassigned := by simp
+
+/-- Writing doesn't change whether a variable is write-captured. -/
+@[simp]
+public theorem writeCaptured_write {pm : PromotionModel} {writtenType : τ} :
+    (pm.write writtenType).writeCaptured = pm.writeCaptured := rfl
 
 /--
 `pm₁.join pm₂` is the promotion model at a point where two control flow paths, on which the
