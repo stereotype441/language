@@ -10,7 +10,8 @@ meta import DartLang.SimpleTypes
 Runs programs on `SimpleType`. The programs include `LoweredExpr`s of the kind flow analysis
 produces (some run with their local variable `x` replaced by a parameter, so that it can hold
 something other than the null object), programs for each way a program can fail (throwing, and
-getting stuck), and a program that runs out of fuel.
+getting stuck), the redex at which a stuck program is reported to be stuck, and a program that
+runs out of fuel.
 
 A block's value is the null object, so a program that is a block completes normally with the null
 object, unless it throws or gets stuck.
@@ -63,11 +64,16 @@ location 0) of type `int`, whose instance variable `_f` (at location 1) holds `t
 def σx : State :=
   ⟨#[.object int [("_f", ⟨1⟩)], .val (.bool true), .val (.obj ⟨0⟩)]⟩
 
-/-- A summary of the result of a run, without the final state. -/
+/-- A summary of the result of a run, without the final state or the redex of a stuck run. -/
 def summary : Interp.RunResult (τ := SimpleType) → Std.Format
   | .done o _ => "done: " ++ repr o
-  | .stuck e _ => "stuck at: " ++ repr e
+  | .stuck e _ _ => "stuck at: " ++ repr e
   | .outOfFuel e _ => "out of fuel at: " ++ repr e
+
+/-- The redex at which a run got stuck, if it did. -/
+def stuckRedex : Interp.RunResult (τ := SimpleType) → Std.Format
+  | .stuck _ redex _ => "stuck at redex: " ++ repr redex
+  | _ => "not stuck"
 
 /-- Run `m`, with parameter `x` bound to location 2 of `σx`. -/
 def runWithX (P : SemanticParams SimpleType) (m : LoweredExpr) : Std.Format :=
@@ -345,6 +351,49 @@ info: stuck at: DartLang.LoweredExpr.var
 -/
 #guard_msgs in
 #eval runClosed verify (.var x ObjectQ)
+
+/-! ## The redex of a stuck program -/
+
+-- `{ x!; x }`, with `x` not bound to a cell: the run gets stuck inside the null check, at the read
+-- of `x`.
+/--
+info: stuck at redex: DartLang.LoweredExpr.var
+  { name := "x", type := DartLang.SimpleType.ObjectQ, isFinal := false }
+  (DartLang.SimpleType.ObjectQ)
+-/
+#guard_msgs in
+#eval stuckRedex
+  (Interp.run (P := verify) 100 (.block [.nullCheck (.var x ObjectQ), .var x Object]) State.empty)
+
+-- `{ Object y; y }` reads `y` before it is assigned: the run gets stuck at the read of `y`,
+-- resolved to its cell.
+/--
+info: stuck at redex: DartLang.LoweredExpr.varAt
+  { name := "y", type := DartLang.SimpleType.Object, isFinal := false }
+  (DartLang.SimpleType.Object)
+  { n := 0 }
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.block [.declare y Object false, .var y Object])
+  State.empty)
+
+-- `x._f`, wrongly promoted to `int` (see `runWithX`): the run gets stuck at the property read,
+-- once its receiver has been evaluated.
+/--
+info: stuck at redex: DartLang.LoweredExpr.propertyGet
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 }))
+  { name := "_f", type := DartLang.SimpleType.ObjectQ, isPromotable := true }
+  (DartLang.SimpleType.int)
+-/
+#guard_msgs in
+#eval stuckRedex
+  (Interp.run (P := verify) 100 ((LoweredExpr.propertyGet (.var x ObjectQ) f int).bindVariables
+    [(x, ⟨2⟩)]) σx)
+
+-- A program that completes isn't stuck.
+/-- info: not stuck -/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.nullCheck .null) State.empty)
 
 /-! ## A program that runs out of fuel -/
 

@@ -15,6 +15,11 @@ or `stuck` if `e` has none, or `outOfFuel` if a check didn't answer within the b
 of fuel is never reported as `stuck`, and given enough fuel, the interpreter finds every step
 except one that a check that doesn't terminate would take, forever.
 
+When `e` is stuck, the interpreter also reports the *redex* it was trying to step: the
+subexpression of `e` in evaluation position, which has no head step (`primStep_stuck_redex`). For
+example, `{ x!; y }` with `x` unbound is stuck at the redex `x`. This tells a user of the
+interpreter *why* a program is stuck, without repeating the semantics' evaluation order.
+
 The interpreter follows two implementation rules:
 - `primStep` is structurally recursive, so that the kernel can evaluate it. (Well-founded
   recursion would make it irreducible.)
@@ -39,18 +44,24 @@ local notation "State" => State (τ := τ)
 public inductive StepResult where
   /-- The step goes to expression `e` and state `σ`. -/
   | next (e : LoweredExpr) (σ : State)
-  /-- There is no step. -/
-  | stuck
+  /--
+  There is no step. `redex` is the subexpression in evaluation position, which has no head step
+  (see `primStep_stuck_redex`).
+  -/
+  | stuck (redex : LoweredExpr)
   /-- A run-time subtype check didn't answer within the budget of fuel. -/
   | outOfFuel
 
 local notation "StepResult" => StepResult (τ := τ)
 
-/-- Apply `f` to the expression that a step goes to. -/
+/--
+Apply `f` to the expression that a step goes to. (A redex that is stuck is left alone: it is still
+the subexpression in evaluation position.)
+-/
 @[expose]
 public def StepResult.map (f : LoweredExpr → LoweredExpr) : StepResult → StepResult
   | .next e σ => .next (f e) σ
-  | .stuck => .stuck
+  | .stuck redex => .stuck redex
   | .outOfFuel => .outOfFuel
 
 /-- Plug the expression that a step goes to into the hole of context item `Ki`. -/
@@ -73,19 +84,23 @@ variable [P : SemanticParams τ]
 
 /--
 Perform the promotion check of value `v` against type `T` (if the semantics performs promotion
-checks), within a budget of `fuel`, and continue with `r` if it passes.
+checks), within a budget of `fuel`, and continue with `r` if it passes. If it fails, the step is
+stuck at `redex`.
 -/
 @[expose]
-public def promotionCheck (fuel : Nat) (σ : State) (v : Value) (T : τ) (r : StepResult) :
-    StepResult :=
+public def promotionCheck (fuel : Nat) (σ : State) (v : Value) (T : τ) (redex : LoweredExpr)
+    (r : StepResult) : StepResult :=
   match P.promotionChecks with
   | .trust => r
   | .verify =>
     match σ.dynamicType v with
-    | some S => withCheck fuel S T fun b => if b then r else .stuck
-    | none => .stuck
+    | some S => withCheck fuel S T fun b => if b then r else .stuck redex
+    | none => .stuck redex
 
-/-- The head step of `e` in state `σ` (see `HeadStep`), with a budget of `fuel` for each check. -/
+/--
+The head step of `e` in state `σ` (see `HeadStep`), with a budget of `fuel` for each check. If
+there is none, the result is stuck at `e` itself.
+-/
 @[expose]
 public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   match e with
@@ -99,8 +114,8 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .seq (.val _) m => .next m σ
   | .varAt _ T ℓ =>
     match σ.lookup ℓ with
-    | some (.val v) => promotionCheck fuel σ v T (.next (.val v) σ)
-    | _ => .stuck
+    | some (.val v) => promotionCheck fuel σ v T e (.next (.val v) σ)
+    | _ => .stuck e
   | .nullCheck (.val .null) => .next (.throwing (.error .typeError)) σ
   | .nullCheck (.val v) => .next (.val v) σ
   | .as (.val v) T =>
@@ -108,30 +123,30 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     | some S =>
       withCheck fuel S T fun b =>
         if b then .next (.val v) σ else .next (.throwing (.error .typeError)) σ
-    | none => .stuck
+    | none => .stuck e
   | .is (.val v) T =>
     match σ.dynamicType v with
     | some S => withCheck fuel S T fun b => .next (.val (.bool b)) σ
-    | none => .stuck
+    | none => .stuck e
   | .cond (.val (.bool true)) m₂ _ _ => .next m₂ σ
   | .cond (.val (.bool false)) _ m₃ _ => .next m₃ σ
   | .propertyGet (.val v) p T =>
     match σ.instanceVariable? v p.name with
     | some ℓf =>
       match σ.lookup ℓf with
-      | some (.val w) => promotionCheck fuel σ w T (.next (.val w) σ)
-      | _ => .stuck
+      | some (.val w) => promotionCheck fuel σ w T e (.next (.val w) σ)
+      | _ => .stuck e
     | none =>
       match P.getterImpl p v σ with
-      | some w => promotionCheck fuel σ w T (.next (.val w) σ)
-      | none => .stuck
+      | some w => promotionCheck fuel σ w T e (.next (.val w) σ)
+      | none => .stuck e
   | .variableSetAt x ℓ (.val w) =>
     -- Inspect the cell before updating it, so that the update can be done in place.
     match σ.lookup ℓ with
-    | some (.object _ _) => .stuck
-    | some (.val _) => if x.isFinal then .stuck else .next (.val w) (σ.update ℓ (.val w))
+    | some (.object _ _) => .stuck e
+    | some (.val _) => if x.isFinal then .stuck e else .next (.val w) (σ.update ℓ (.val w))
     | some .uninit => .next (.val w) (σ.update ℓ (.val w))
-    | none => .stuck
+    | none => .stuck e
   | .nullCheck (.throwing v) => .next (.throwing v) σ
   | .as (.throwing v) _ => .next (.throwing v) σ
   | .is (.throwing v) _ => .next (.throwing v) σ
@@ -139,7 +154,7 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .propertyGet (.throwing v) _ _ => .next (.throwing v) σ
   | .seq (.throwing v) _ => .next (.throwing v) σ
   | .variableSetAt _ _ (.throwing v) => .next (.throwing v) σ
-  | _ => .stuck
+  | _ => .stuck e
 
 /--
 The step that `e` takes in state `σ`, with a budget of `fuel` for each check: the head step of
@@ -173,8 +188,11 @@ termination_by structural e
 public inductive RunResult where
   /-- The program completed with outcome `o`, in state `σ`. -/
   | done (o : Outcome) (σ : State)
-  /-- The program got stuck at expression `e`, in state `σ`. -/
-  | stuck (e : LoweredExpr) (σ : State)
+  /--
+  The program got stuck at expression `e`, in state `σ`. `redex` is the subexpression of `e` in
+  evaluation position, which has no head step (see `run_stuck`).
+  -/
+  | stuck (e redex : LoweredExpr) (σ : State)
   /-- The program ran out of fuel at expression `e`, in state `σ`. -/
   | outOfFuel (e : LoweredExpr) (σ : State)
   deriving Repr
@@ -195,7 +213,7 @@ public def run (fuel : Nat) (e : LoweredExpr) (σ : State) : RunResult :=
     | fuel + 1 =>
       match primStep fuel e σ with
       | .next e' σ' => run fuel e' σ'
-      | .stuck => .stuck e σ
+      | .stuck redex => .stuck e redex σ
       | .outOfFuel => .outOfFuel e σ
 
 /-! ## Agreement with the semantics -/
@@ -292,21 +310,23 @@ theorem withCheck_eq_next {fuel : Nat} {S T : τ} {k : Bool → StepResult} {e :
 If `v` passes the promotion check against `T` (`h`), then `promotionCheck` converges to `r`: it
 lets the step go ahead once its budget of fuel is large enough.
 -/
-theorem promotionCheck_converges {σ : State} {v : Value} {T : τ} (h : PassesPromotionCheck σ v T)
-    (r : StepResult) : Converges (fun fuel => promotionCheck fuel σ v T r) r := by
+theorem promotionCheck_converges {σ : State} {v : Value} {T : τ} {redex : LoweredExpr}
+    (h : PassesPromotionCheck σ v T) (r : StepResult) :
+    Converges (fun fuel => promotionCheck fuel σ v T redex r) r := by
   cases h with
   | trust h => exact Converges.of_eq fun fuel => by simp [promotionCheck, h]
   | verify h hS hT =>
     refine Converges.congr (fun fuel => ?_) (withCheck_converges (k := fun b => if b then r
-      else .stuck) hT rfl)
+      else .stuck redex) hT rfl)
     simp [promotionCheck, h, hS]
 
 /--
 If `promotionCheck` lets a step go ahead (`h`), then `v` passes the promotion check against `T`
 (`PassesPromotionCheck σ v T`), and the step is `r` (`r = .next e σ'`).
 -/
-theorem promotionCheck_eq_next {fuel : Nat} {σ σ' : State} {v : Value} {T : τ} {r : StepResult}
-    {e : LoweredExpr} (h : promotionCheck fuel σ v T r = .next e σ') :
+theorem promotionCheck_eq_next {fuel : Nat} {σ σ' : State} {v : Value} {T : τ}
+    {redex : LoweredExpr} {r : StepResult} {e : LoweredExpr}
+    (h : promotionCheck fuel σ v T redex r = .next e σ') :
     PassesPromotionCheck σ v T ∧ r = .next e σ' := by
   unfold promotionCheck at h
   split at h
@@ -338,7 +358,7 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
     all_goals exact .inl (Converges.of_eq fun _ => rfl)
   | @varAt x T ℓ v σ hℓ hv =>
     exact .inl (Converges.congr (fun fuel => by simp [headStep, hℓ])
-      (promotionCheck_converges hv _))
+      (promotionCheck_converges (redex := .varAt x T ℓ) hv _))
   | @nullCheck v σ h =>
     cases v
     case null => exact absurd rfl h
@@ -348,12 +368,12 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
       (withCheck_converges h (by rfl)))
   | asDiverge hS h | isDiverge hS h =>
     exact .inr ⟨rfl, rfl, fun fuel => by simp only [headStep, hS]; exact withCheck_diverge h⟩
-  | propertyGetField hf hw hc =>
+  | @propertyGetField v w p T ℓf σ hf hw hc =>
     exact .inl (Converges.congr (fun fuel => by simp [headStep, hf, hw])
-      (promotionCheck_converges hc _))
-  | propertyGetGetter hf hg hc =>
+      (promotionCheck_converges (redex := .propertyGet (.val v) p T) hc _))
+  | @propertyGetGetter v w p T σ hf hg hc =>
     exact .inl (Converges.congr (fun fuel => by simp [headStep, hf, hg])
-      (promotionCheck_converges hc _))
+      (promotionCheck_converges (redex := .propertyGet (.val v) p T) hc _))
   | @variableSetAt x ℓ w c σ hℓ hc hfin =>
     cases c
     case object C fs => exact absurd rfl (hc C fs)
@@ -461,7 +481,7 @@ theorem stepIn_sound {Ki : EctxItem} {e e' : LoweredExpr} {σ σ' : State} {r : 
     simp only [stepIn, StepResult.map, StepResult.next.injEq] at h
     obtain ⟨rfl, rfl⟩ := h
     exact primStep_fillItem (hr rfl)
-  | stuck | outOfFuel => cases h
+  | stuck _ | outOfFuel => cases h
 
 /--
 **Soundness of the interpreter**: every step that `primStep` takes from `e` in state `σ`, to `e'` in
@@ -502,14 +522,140 @@ public theorem primStep_complete {e e' : LoweredExpr} {σ σ' : State} {obs : Li
   · exact .inl (Converges.congr heq (hc.map _))
   · exact .inr ⟨rfl, rfl, fun fuel => by rw [heq, hd]; rfl⟩
 
-/-- If `primStep` reports that `e` is stuck (`h`), it is: `e` takes no step (`Irreducible`). -/
-public theorem primStep_stuck {fuel : Nat} {e : LoweredExpr} {σ : State}
-    (h : primStep fuel e σ = .stuck) : Irreducible (e, σ) := by
+/--
+If `primStep` reports that `e` is stuck (at some redex; `h`), it is: `e` takes no step
+(`Irreducible`).
+-/
+public theorem primStep_stuck {fuel : Nat} {e redex : LoweredExpr} {σ : State}
+    (h : primStep fuel e σ = .stuck redex) : Irreducible (e, σ) := by
   intro obs e' σ' efs hstep
   obtain ⟨-, -, hc | ⟨-, -, hd⟩⟩ := primStep_complete hstep
   · rcases hc.1 fuel with h' | h' <;> simp only [h] at h' <;> cases h'
   · rw [hd fuel] at h
     cases h
+
+/-! ## The redex of a stuck expression -/
+
+omit P in
+/--
+`withCheck` is stuck at `redex` (`h`) only if its continuation `k` is stuck, at `redex`, when
+given some answer `b` of the run-time subtype check (`k b = .stuck redex`).
+
+`withCheck` itself never gets stuck: it either runs out of fuel, or passes the check's answer to
+`k`. So `b` is the answer that the check gave.
+-/
+theorem withCheck_eq_stuck {fuel : Nat} {S T : τ} {k : Bool → StepResult} {redex : LoweredExpr}
+    (h : withCheck fuel S T k = .stuck redex) : ∃ b, k b = .stuck redex := by
+  unfold withCheck at h
+  split at h
+  · exact ⟨_, h⟩
+  · cases h
+
+/--
+`promotionCheck` is stuck at `redex'` (`h`) only if either:
+- the step `r` that it continues with is stuck at `redex'` (`r = .stuck redex'`); or
+- the promotion check failed, so `promotionCheck` is stuck at the redex it was given
+  (`redex' = redex`).
+-/
+theorem promotionCheck_eq_stuck {fuel : Nat} {σ : State} {v : Value} {T : τ}
+    {redex redex' : LoweredExpr} {r : StepResult}
+    (h : promotionCheck fuel σ v T redex r = .stuck redex') :
+    r = .stuck redex' ∨ redex' = redex := by
+  unfold promotionCheck at h
+  split at h
+  · exact .inl h
+  · split at h
+    · obtain ⟨b, hb⟩ := withCheck_eq_stuck h
+      cases b
+      · -- The check failed: `if false then r else .stuck redex` is `.stuck redex`.
+        simp only [Bool.false_eq_true, ite_false, StepResult.stuck.injEq] at hb
+        exact .inr hb.symm
+      · simp only [ite_true] at hb
+        exact .inl hb
+    · simp only [StepResult.stuck.injEq] at h
+      exact .inr h.symm
+
+/--
+`headStep` is only ever stuck at its own argument: if it is stuck at `redex` (`h`), then
+`redex = e`.
+-/
+theorem headStep_eq_stuck {fuel : Nat} {e redex : LoweredExpr} {σ : State}
+    (h : headStep fuel e σ = .stuck redex) : redex = e := by
+  unfold headStep at h
+  repeat' split at h
+  all_goals first
+    | (cases h; done)
+    | (simp only [StepResult.stuck.injEq] at h; exact h.symm)
+    | (rcases promotionCheck_eq_stuck h with h | h
+       · cases h
+       · exact h)
+    | (obtain ⟨b, hb⟩ := withCheck_eq_stuck h
+       cases b <;> simp at hb)
+
+/--
+If `headStep` reports that `e` is stuck at `redex` (`h`), then:
+- `redex` is in evaluation position in `e`, trivially: `e` is `redex` in the empty evaluation
+  context (`∃ K, e = fillCtx K redex`); and
+- `redex` takes no head step (`∀ e' σ', ¬ HeadStep redex σ e' σ'`).
+-/
+theorem headStep_stuck_redex {fuel : Nat} {e redex : LoweredExpr} {σ : State}
+    (h : headStep fuel e σ = .stuck redex) :
+    (∃ K, e = fillCtx K redex) ∧ ∀ e' σ', ¬ HeadStep redex σ e' σ' := by
+  obtain rfl := headStep_eq_stuck h
+  refine ⟨⟨[], rfl⟩, fun e' σ' hstep => ?_⟩
+  rcases headStep_complete hstep with hc | ⟨-, -, hd⟩
+  · rcases hc.1 fuel with h' | h' <;> simp only [h] at h' <;> cases h'
+  · rw [hd fuel] at h
+    cases h
+
+omit Γ [RtSubChecker τ] P in
+/--
+Plugging into a context with one more item on the outside (`K ++ [Ki]`, since contexts list their
+items innermost first) produces the same result as plugging into `K`, then into the hole of `Ki`.
+-/
+theorem fillCtx_append_singleton (K : List EctxItem) (Ki : EctxItem) (m : LoweredExpr) :
+    fillCtx (K ++ [Ki]) m = Ki.fill (fillCtx K m) := by
+  simp [fillCtx, List.foldl_append]
+
+omit [RtSubChecker τ] in
+/--
+If `r` being stuck at `redex` means that `redex` is a stuck redex of `m` (`hr`), and plugging `r`
+into the hole of `Ki` is stuck at `redex` (`h`), then `redex` is a stuck redex of `Ki.fill m`:
+- `redex` is in evaluation position in `Ki.fill m` (`∃ K, Ki.fill m = fillCtx K redex`); and
+- `redex` takes no head step (`∀ e' σ', ¬ HeadStep redex σ e' σ'`).
+
+`primStep_stuck_redex` uses this to carry the redex from the hole of `Ki` out to the whole
+expression.
+-/
+theorem stepIn_stuck_redex {Ki : EctxItem} {m redex : LoweredExpr} {σ : State} {r : StepResult}
+    (hr : r = .stuck redex →
+      (∃ K, m = fillCtx K redex) ∧ ∀ e' σ', ¬ HeadStep redex σ e' σ')
+    (h : stepIn Ki r = .stuck redex) :
+    (∃ K, Ki.fill m = fillCtx K redex) ∧ ∀ e' σ', ¬ HeadStep redex σ e' σ' := by
+  cases r with
+  | stuck redex' =>
+    simp only [stepIn, StepResult.map, StepResult.stuck.injEq] at h
+    subst h
+    obtain ⟨⟨K, rfl⟩, hirr⟩ := hr rfl
+    exact ⟨⟨K ++ [Ki], (fillCtx_append_singleton K Ki redex').symm⟩, hirr⟩
+  | next | outOfFuel => cases h
+
+/--
+**The redex of a stuck expression**: if `primStep` reports that `e` is stuck at `redex` (`h`),
+then:
+- `redex` is in evaluation position in `e`: `e` is `redex` plugged into some evaluation context `K`
+  (`∃ K, e = fillCtx K redex`); and
+- `redex` takes no head step (`∀ e' σ', ¬ HeadStep redex σ e' σ'`).
+-/
+public theorem primStep_stuck_redex {fuel : Nat} (e : LoweredExpr) {redex : LoweredExpr}
+    {σ : State} (h : primStep fuel e σ = .stuck redex) :
+    (∃ K, e = fillCtx K redex) ∧ ∀ e' σ', ¬ HeadStep redex σ e' σ' := by
+  rw [primStep.eq_def] at h
+  cases e <;> dsimp only at h <;>
+    repeat' first
+      | exact headStep_stuck_redex h
+      | (have := stepIn_stuck_redex (primStep_stuck_redex _) h; exact this)
+      | split at h
 
 /--
 `Steps (e, σ) (e', σ')` says that expression `e`, in state `σ`, reaches expression `e'` and state
@@ -545,7 +691,7 @@ theorem run_succ {fuel : Nat} {e : LoweredExpr} {σ : State} (h : e.toOutcome? =
     run (fuel + 1) e σ =
       match primStep fuel e σ with
       | .next e' σ' => run fuel e' σ'
-      | .stuck => .stuck e σ
+      | .stuck redex => .stuck e redex σ
       | .outOfFuel => .outOfFuel e σ := by
   rw [run]
   simp [h]
@@ -580,11 +726,16 @@ public theorem run_done {fuel : Nat} {e : LoweredExpr} {σ σ' : State} {o : Out
       · cases h
 
 /--
-If `run` says that a program gets stuck at `e'` in state `σ'` (`h`), it does: it steps there
-(`Steps (e, σ) (e', σ')`), and gets stuck (`Stuck (e', σ')`).
+If `run` says that a program gets stuck at `e'`, at redex `redex`, in state `σ'` (`h`), it does:
+- it steps there (`Steps (e, σ) (e', σ')`);
+- it gets stuck (`Stuck (e', σ')`);
+- `redex` is in evaluation position in `e'` (`∃ K, e' = fillCtx K redex`); and
+- `redex` takes no head step (`∀ e'' σ'', ¬ HeadStep redex σ' e'' σ''`).
 -/
-public theorem run_stuck {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
-    (h : run fuel e σ = .stuck e' σ') : Steps (e, σ) (e', σ') ∧ Stuck (e', σ') := by
+public theorem run_stuck {fuel : Nat} {e e' redex : LoweredExpr} {σ σ' : State}
+    (h : run fuel e σ = .stuck e' redex σ') :
+    Steps (e, σ) (e', σ') ∧ Stuck (e', σ') ∧ (∃ K, e' = fillCtx K redex) ∧
+      ∀ e'' σ'', ¬ HeadStep redex σ' e'' σ'' := by
   induction fuel generalizing e σ with
   | zero =>
     cases ho : e.toOutcome? with
@@ -602,10 +753,10 @@ public theorem run_stuck {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
     | none =>
       rw [run_succ ho] at h
       cases hs : primStep fuel e σ <;> simp only [hs] at h
-      · obtain ⟨hsteps, hstuck⟩ := ih h
-        exact ⟨.head (primStep_sound _ hs) hsteps, hstuck⟩
+      · obtain ⟨hsteps, hrest⟩ := ih h
+        exact ⟨.head (primStep_sound _ hs) hsteps, hrest⟩
       · cases h
-        exact ⟨.refl, by simpa using ho, primStep_stuck hs⟩
+        exact ⟨.refl, ⟨by simpa using ho, primStep_stuck hs⟩, primStep_stuck_redex _ hs⟩
       · cases h
 
 end DartSemantics.Interp
