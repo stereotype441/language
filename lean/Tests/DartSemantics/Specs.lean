@@ -6,7 +6,8 @@ import DartLang.SimpleTypes
 # Specs proved with the program logic
 
 Weakest preconditions for small programs, on `SimpleType`, for every choice of `SemanticParams`.
-They exercise the primitive laws and the proof-mode tactics (see `ProofMode.lean`).
+They exercise the primitive laws and the proof-mode tactics (see `ProofMode.lean`). A larger
+example with calls, and specifications of functions, is in `CallSpecs.lean`.
 
 The spec of `{ x._f!; x._f }` is proved twice, to compare: once applying the laws for its four
 reads by hand (45 lines of tactics, not counting comments), and once with `wp_load` (11 lines).
