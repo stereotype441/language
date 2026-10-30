@@ -110,8 +110,12 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
         simp [resolve, hx, resolve_comm hne m]
       · simp [resolve, hx, hy, resolve_comm hne m]
   | .unsupported _ _ => rfl
+  | .call _ args _ => by simp only [resolve, resolveList_comm hne args]
+  | .ret m => by simp only [resolve, resolve_comm hne m]
   | .val _ => rfl
   | .throwing _ => rfl
+  | .returning _ => rfl
+  | .frame m _ => by simp only [resolve, resolve_comm hne m]
   | .varAt _ _ _ => rfl
   | .seq m₁ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
   | .variableSetAt _ _ m => by simp only [resolve, resolve_comm hne m]
@@ -137,6 +141,13 @@ public theorem LoweredExpr.resolveBlock_comm {x y : Variable} {ℓ ℓ' : Loc} (
       rw [resolveBlock_cons_of_ne hm', resolveBlock_cons_of_ne (resolve_ne_declare hm' _ _),
         resolveBlock_cons_of_ne hm', resolveBlock_cons_of_ne (resolve_ne_declare hm' _ _),
         resolve_comm hne m, resolveBlock_comm hne ms]
+
+/-- Resolving two different variables (`hne`) in a list gives the same result in either order. -/
+public theorem LoweredExpr.resolveList_comm {x y : Variable} {ℓ ℓ' : Loc} (hne : x ≠ y) :
+    ∀ ms : List LoweredExpr,
+      resolveList y ℓ' (resolveList x ℓ ms) = resolveList x ℓ (resolveList y ℓ' ms)
+  | [] => rfl
+  | m :: ms => by simp only [resolveList, resolve_comm hne m, resolveList_comm hne ms]
 
 end
 

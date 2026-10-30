@@ -15,13 +15,15 @@ expression `e` takes one step (a head step inside some evaluation context) to `e
 `σ'`, making the observations `obs` (see `Obs`) and forking the threads `efs`. The semantics makes
 no observations and forks no threads, so both lists are always empty.
 
-iris-lean's *values* are `Outcome`s: an expression that has thrown an exception counts as a value,
-as well as one that has completed normally. This is what makes propagating exceptions by head
-steps lawful. iris-lean requires that if `Ki.fill e` takes a head step, then `e` is a value
-(`base_ctx_step_val`), and propagating an exception (`HeadStep.bubbleException`) is a head step of
-`Ki.fill (throwing v)`. Once the semantics has `return`, `break` and `continue` statements, they
-will complete abruptly in the same way, with new kinds of `Outcome` that propagate outward one
-evaluation context item at a time until they reach the construct that handles them.
+iris-lean's *values* are `Outcome`s: an expression that has thrown an exception, or is returning,
+counts as a value, as well as one that has completed normally. This is what makes propagating
+exceptions and returns by head steps lawful. iris-lean requires that if `Ki.fill e` takes a head
+step, then `e` is a value (`base_ctx_step_val`), and propagating an exception
+(`HeadStep.bubbleException`) is a head step of `Ki.fill (throwing v)`. A return
+(`HeadStep.bubbleReturn`) propagates outward in the same way, one evaluation context item at a
+time, until it reaches the body of the running call (`frame`), which handles it. Once the semantics
+has `break` and `continue` statements, they will complete abruptly in the same way, with new kinds
+of `Outcome`.
 -/
 
 namespace DartSemantics
@@ -53,6 +55,24 @@ omit Γ in
 @[simp]
 public theorem ofVal_eq (o : Outcome) : ToVal.ofVal (Expr := LoweredExpr) o = o.toExpr := rfl
 
+omit Γ in
+/--
+An expression splits into an evaluation context item and an expression in its hole that isn't a
+value in at most one way: if `Ki₁.fill e₁ = Ki₂.fill e₂` (`h`), where neither `e₁` (`h₁`) nor `e₂`
+(`h₂`) is a value, then `Ki₁ = Ki₂` and `e₁ = e₂`. (The only item for which this isn't immediate
+is a call's, whose hole can be at any argument after the ones that are values.)
+-/
+public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredExpr}
+    (h₁ : ∀ v, e₁ ≠ .val v) (h₂ : ∀ v, e₂ ≠ .val v) (h : Ki₁.fill e₁ = Ki₂.fill e₂) :
+    Ki₁ = Ki₂ ∧ e₁ = e₂ := by
+  cases Ki₁ <;> cases Ki₂ <;> simp only [EctxItem.fill, reduceCtorEq] at h
+  case call.call f vs ms T f' vs' ms' T' =>
+    simp only [LoweredExpr.call.injEq] at h
+    obtain ⟨rfl, hl, rfl⟩ := h
+    obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ hl
+    exact ⟨rfl, rfl⟩
+  all_goals simp_all
+
 variable [P : SemanticParams τ]
 
 /--
@@ -66,15 +86,29 @@ public theorem HeadStep.toOutcome?_eq_none {e e' : LoweredExpr} {σ σ' : State}
 /--
 If `Ki.fill e` takes a head step (`h`), then `e` has completed (`e.toOutcome?.isSome`): each head
 step of an expression with a hole either uses the completed value in the hole, or propagates the
-exception thrown there.
+exception thrown or the return in progress there.
 -/
 public theorem HeadStep.isSome_toOutcome?_of_fill {Ki : EctxItem} {e e' : LoweredExpr}
     {σ σ' : State} (h : HeadStep (Ki.fill e) σ e' σ') : e.toOutcome?.isSome := by
+  by_cases hv : ∃ v, e = .val v
+  · obtain ⟨v, rfl⟩ := hv
+    rfl
+  have hv' : ∀ v, e ≠ .val v := fun v he => hv ⟨v, he⟩
   generalize hE : Ki.fill e = E at h
   cases h with
   | bubbleException =>
     rename_i Ki' _
-    cases Ki <;> cases Ki' <;> simp_all [EctxItem.fill, LoweredExpr.toOutcome?]
+    obtain ⟨-, rfl⟩ := EctxItem.fill_inj hv' (by simp) hE
+    rfl
+  | bubbleReturn =>
+    rename_i Ki' _ _
+    obtain ⟨-, rfl⟩ := EctxItem.fill_inj hv' (by simp) hE
+    rfl
+  | call =>
+    cases Ki <;> simp only [EctxItem.fill, reduceCtorEq, LoweredExpr.call.injEq] at hE
+    obtain ⟨-, hl, -⟩ := hE
+    obtain ⟨v, rfl⟩ := LoweredExpr.eq_val_of_map_val_append hl
+    exact absurd rfl (hv' v)
   | _ => cases Ki <;> simp_all [EctxItem.fill, LoweredExpr.toOutcome?]
 
 /--
@@ -116,13 +150,18 @@ public instance instEctxItemLanguage : EctxItemLanguage LoweredExpr EctxItem Sta
   -- If plugging `e` into an item gives a completed expression (a value, for iris-lean), then `e`
   -- has completed. This holds trivially, because plugging an expression into an item never gives a
   -- completed expression: the result is a null check, a cast, and so on, which still has a step to
-  -- take, whatever `e` is. (Only `val` and `throwing` expressions are completed.)
+  -- take, whatever `e` is. (Only `val`, `throwing` and `returning` expressions are completed.)
   fillItem_val e Ki h := by
     simp [EctxItem.toOutcome?_fill] at h
   -- An expression can be split into an item and a subexpression that hasn't completed in at most
   -- one way: evaluation order is deterministic.
   fillItem_no_val_inj Ki₁ Ki₂ hv₁ hv₂ heq := by
-    cases Ki₁ <;> cases Ki₂ <;> simp_all [EctxItem.fill]
+    rename_i e₁ e₂
+    have h₁ : ∀ v, e₁ ≠ LoweredExpr.val v := fun v h => by
+      subst h; simp [LoweredExpr.toOutcome?] at hv₁
+    have h₂ : ∀ v, e₂ ≠ LoweredExpr.val v := fun v h => by
+      subst h; simp [LoweredExpr.toOutcome?] at hv₂
+    exact (EctxItem.fill_inj h₁ h₂ heq).1
   -- A completed expression takes no head step.
   val_stuck {e σ obs e' σ' eₜ} h := by
     obtain ⟨h, -, -⟩ := h

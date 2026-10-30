@@ -65,7 +65,7 @@ A property read is only typed when its receiver reads a property path from a var
 reads path `["_f", "_g"]` from `x`; see `SemTypedPath` in `Compat.lean`), and the context promises
 that the path leads to an instance variable (`Fact.field`). Reading a property whose getter is user
 code, or of an object that isn't reached from a variable, waits for the semantics to have class
-declarations and calls (see `SemanticParams.getterImpl`).
+declarations with instance members (see `SemanticParams.getterImpl`).
 -/
 
 namespace DartSemantics
@@ -432,7 +432,8 @@ public instance interpCtx_persistent (bindings : List (Variable × Loc)) (env : 
 What an expression of static type `T` promises when it completes with outcome `o`: if it completes
 normally with value `v`, then `v` satisfies `T`, and for some environment `env'` (what the
 variables' cells hold afterwards), the cells are owned, and the facts `Δa v` hold. If it throws,
-nothing.
+nothing. If it returns, nothing either: there are no typing rules for calls or return statements
+yet, and a return can only complete an expression that contains a return statement.
 -/
 @[expose]
 public def interpOutcome (bindings : List (Variable × Loc)) (T : τ) (Δa : Value → Ctx) :
@@ -440,6 +441,7 @@ public def interpOutcome (bindings : List (Variable × Loc)) (T : τ) (Δa : Val
   | .normal v => iprop(∃ env', interpEnv bindings env' ∗ interpVal T v ∗
       interpCtx bindings env' (Δa v))
   | .throwing _ => iprop(True)
+  | .returning _ => iprop(True)
 
 variable [SemanticParams τ]
 
@@ -844,7 +846,7 @@ public theorem SemTyped.weaken {Δb Δb' : Ctx} {m : LoweredExpr} {T T' : τ}
     isplitr
     · iapply interpVal_mono hT $$ Hv
     · iapply interpCtx_mono (hout v) $$ H
-  | throwing _ => exact .rfl
+  | throwing _ | returning _ => exact .rfl
 
 /--
 Weakening up to implication between facts: like `SemTyped.weaken`, but each fact that the new
@@ -872,7 +874,7 @@ public theorem SemTyped.weaken' {Δb Δb' : Ctx} {m : LoweredExpr} {T T' : τ}
     isplitr
     · iapply interpVal_mono hT $$ Hv
     · iapply interpCtx_mono' (hout v) $$ H
-  | throwing _ => exact .rfl
+  | throwing _ | returning _ => exact .rfl
 
 /--
 Running an evaluation context item `Ki` around an expression `e` satisfies a postcondition `Ψ`
@@ -882,7 +884,10 @@ Running an evaluation context item `Ki` around an expression `e` satisfies a pos
 - for each value `v` that `e` can complete normally with, running `Ki` around `v` satisfies `Ψ`,
   given the ownership of the cells (`interpEnv bindings env'`), the fact that `v` satisfies `T`
   (`interpVal T v`), and the guaranteed facts (`interpCtx bindings env' (Δa v)`) (`Hn`); and
-- `Ψ` holds of throwing any exception (`Ht`): an exception thrown by `e` propagates out of `Ki`.
+- `Ψ` holds of throwing any exception (`Ht`): an exception thrown by `e` propagates out of `Ki`;
+  and
+- `Ki` doesn't handle returns (`hKi`), and `Ψ` holds of returning any value (`Hr`): a return in
+  `e` propagates out of `Ki`.
 -/
 public theorem wp_fill_typed {P : IProp GF} {Ki : EctxItem (τ := τ)} {e : LoweredExpr}
     {bindings : List (Variable × Loc)} {T : τ} {Δa : Value → Ctx}
@@ -890,7 +895,8 @@ public theorem wp_fill_typed {P : IProp GF} {Ki : EctxItem (τ := τ)} {e : Lowe
     (H : P ⊢ WP e {{ o, interpOutcome bindings T Δa o }})
     (Hn : ∀ v env', interpEnv bindings env' ∗ interpVal T v ∗ interpCtx bindings env' (Δa v) ⊢
       WP (Ki.fill (.val v)) {{ Ψ }})
-    (Ht : ∀ v, ⊢ Ψ (.throwing v)) : P ⊢ WP (Ki.fill e) {{ Ψ }} := by
+    (Ht : ∀ v, ⊢ Ψ (.throwing v)) (hKi : Ki.handlesReturn = false)
+    (Hr : ∀ v, ⊢ Ψ (.returning v)) : P ⊢ WP (Ki.fill e) {{ Ψ }} := by
   refine H.trans ((wp_mono fun o => ?_).trans (wp_bind_item Ki))
   cases o with
   | normal v =>
@@ -902,6 +908,11 @@ public theorem wp_fill_typed {P : IProp GF} {Ki : EctxItem (τ := τ)} {e : Lowe
     iintro -
     inext
     iapply Ht
+  | returning v =>
+    refine .trans ?_ (wp_bubble_return hKi v)
+    iintro -
+    inext
+    iapply Hr
 
 end Interp
 

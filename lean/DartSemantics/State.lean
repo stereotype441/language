@@ -89,6 +89,29 @@ public def State.update (σ : State) (ℓ : Loc) (c : Cell) : State :=
   { σ with heap := σ.heap.set! ℓ.n c }
 
 /--
+Allocate a new cell for each of `cs`, in order: the locations of the new cells (`.1`, in the
+order of `cs`), and the state afterwards (`.2`). (Calling a function uses this to allocate the
+cells of its formal parameters.)
+-/
+@[expose]
+public def State.allocAll (σ : State) : List Cell → List Loc × State
+  | [] => ([], σ)
+  | c :: cs =>
+    -- `σ.fresh` is read before `σ` is used by `alloc`, so that the update can be done in place.
+    let ℓ := σ.fresh
+    let r := (σ.alloc c).allocAll cs
+    (ℓ :: r.1, r.2)
+
+omit Γ in
+/-- Allocating a cell for each of `cs` gives one location per cell. -/
+@[simp]
+public theorem State.length_allocAll (σ : State) (cs : List Cell) :
+    (σ.allocAll cs).1.length = cs.length := by
+  induction cs generalizing σ with
+  | nil => rfl
+  | cons c cs ih => simp [State.allocAll, ih]
+
+/--
 The dynamic type of value `v`, in the specification's sense: the class of the object that `v`
 represents.
 

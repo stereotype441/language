@@ -336,7 +336,7 @@ public theorem SemTyped.nullCheck (L : TypeLaws τ) {Δ : Ctx} {m : LoweredExpr}
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_nullCheck]
   refine wp_fill_typed (Ki := .nullCheck) (h bindings hnd env) (fun v env' => ?_)
-    (fun _ => true_intro)
+    (fun _ => true_intro) rfl (fun _ => true_intro)
   by_cases hv : v = .null
   · subst hv
     refine .trans ?_ wp_nullCheck_null
@@ -445,7 +445,7 @@ public theorem SemTyped.as {Δ : Ctx} {m : LoweredExpr} {S T : τ} {Δ' : Value 
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_as]
   refine wp_fill_typed (Ki := .as T) (h bindings hnd env) (fun v env' => ?_)
-    (fun _ => true_intro)
+    (fun _ => true_intro) rfl (fun _ => true_intro)
   simp only [EctxItem.fill]
   iintro ⟨He, #Hv, #H⟩
   icases Hv with ⟨%S₀, #Hty, %hS, %hok⟩
@@ -572,7 +572,7 @@ public theorem SemTyped.is {Δ Δ₁ : Ctx} {m : LoweredExpr} {S T : τ}
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_is]
   refine wp_fill_typed (Ki := .is T) (h bindings hnd env) (fun v env' => ?_)
-    (fun _ => true_intro)
+    (fun _ => true_intro) rfl (fun _ => true_intro)
   simp only [EctxItem.fill]
   iintro ⟨He, #Hv, #H⟩
   icases Hv with ⟨%S₀, #Hty, %hS, %hok⟩
@@ -699,7 +699,7 @@ public theorem SemTyped.cond (L : TypeLaws τ) {Δ Δ' : Ctx} {Δc : Value → C
   intro bindings hnd env
   rw [LoweredExpr.bindVariables_cond]
   refine wp_fill_typed (Ki := .cond (m₂.bindVariables bindings) (m₃.bindVariables bindings) T)
-    (h₁ bindings hnd env) (fun v env' => ?_) (fun _ => true_intro)
+    (h₁ bindings hnd env) (fun v env' => ?_) (fun _ => true_intro) rfl (fun _ => true_intro)
   simp only [EctxItem.fill]
   iintro ⟨He, #Hv, #H⟩
   ihave %hb := interpVal_bool_inv L $$ Hv
@@ -767,7 +767,7 @@ public theorem SemTyped.variableSet {Δb : Ctx} {v : Variable} {m : LoweredExpr}
   | some ℓ =>
   dsimp only
   refine wp_fill_typed (Ki := .variableSetAt v ℓ) (hm bindings hnd env) (fun w env' => ?_)
-    (fun _ => true_intro)
+    (fun _ => true_intro) rfl (fun _ => true_intro)
   simp only [EctxItem.fill]
   iintro ⟨He, #Hw, #H'⟩
   ihave %hfin' : ⌜v.isFinal = true → env' v = .uninit⌝ $$ []
@@ -852,7 +852,7 @@ public theorem SemTyped.block_cons {Δ Δ₁ Δ₂ : Ctx} {m : LoweredExpr} {ms 
   refine .trans ?_ (wp_blockCons (LoweredExpr.bindVariables_ne_declare bindings hm))
   refine .trans ?_ later_intro
   refine wp_fill_typed (Ki := .seq (.block (LoweredExpr.bindBlock bindings ms)))
-    (h bindings hnd env) (fun v env' => ?_) (fun _ => true_intro)
+    (h bindings hnd env) (fun v env' => ?_) (fun _ => true_intro) rfl (fun _ => true_intro)
   refine .trans ?_ wp_seq
   refine .trans ?_ later_intro
   have hr' := hr bindings hnd env'
@@ -1023,7 +1023,7 @@ public theorem SemTyped.block_declare {Δ Δ₂ : Ctx} {v : Variable} {T : τ} {
             rw [hfv, Env.set_self])
         iapply interpCtx_mono (fun f hf => (List.mem_filter.1 hf).1)
         iexact H
-  | throwing _ =>
+  | throwing _ | returning _ =>
     simp only [interpOutcome]
     itrivial
 

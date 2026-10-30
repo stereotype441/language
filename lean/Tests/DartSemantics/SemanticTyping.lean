@@ -38,13 +38,13 @@ here read only properties backed by instance variables, so the choice doesn't ma
 def getterImpl : Property → Value → State → Option Value
   | _, _, _ => some .null
 
-/-- The semantics with promotion checks. -/
+/-- The semantics with promotion checks, for a program with no functions. -/
 @[instance_reducible]
-def verify : SemanticParams SimpleType := ⟨.verify, getterImpl⟩
+def verify : SemanticParams SimpleType := ⟨.verify, getterImpl, fun _ => none⟩
 
-/-- The semantics without promotion checks. -/
+/-- The semantics without promotion checks, for a program with no functions. -/
 @[instance_reducible]
-def trust : SemanticParams SimpleType := ⟨.trust, getterImpl⟩
+def trust : SemanticParams SimpleType := ⟨.trust, getterImpl, fun _ => none⟩
 
 def x : Variable := { name := "x", type := ObjectQ }
 

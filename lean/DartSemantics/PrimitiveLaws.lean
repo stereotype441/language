@@ -496,6 +496,17 @@ public theorem wp_bubble_exception (Ki : EctxItem) (v : Value) :
   exact .bubbleException
 
 /--
+A return of `v` propagates out of an evaluation context item `Ki` that doesn't handle returns
+(`hKi`: anything but the body of a running call): `Ki.fill (.returning v)` satisfies a
+postcondition `Φ` that holds, one step later, of returning `v` (`▷ Φ (.returning v)`).
+-/
+public theorem wp_bubble_return {Ki : EctxItem} (hKi : Ki.handlesReturn = false) (v : Value) :
+    ▷ Φ (.returning v) ⊢ WP (Ki.fill (.returning v)) @ s; E {{ Φ }} := by
+  refine (later_mono (wp_value' (v := Outcome.returning v))).trans
+    (wp_pure_step (EctxItem.toOutcome?_fill _ _) fun _ => ?_)
+  exact .bubbleReturn hKi
+
+/--
 A cast `v as T` whose check answers yes evaluates to its operand: if the dynamic type of `v` is `S`
 (`HasDynamicType v S`), and the run-time check of whether `S` is a subtype of `T` answers yes
 (`h`), the cast satisfies a postcondition `Φ` that holds, one step later, of completing normally
@@ -771,10 +782,11 @@ public theorem wp_propertyGetField {ℓ ℓf : Loc} {p : Property} {T C S : τ}
 Reading property `p` of a value `v` that doesn't refer to an object with an instance variable of
 that name runs the property's getter, which is user code (see `SemanticParams.getterImpl`).
 
-Until the semantics has calls, a getter is a function of the whole state, which a proof doesn't
-own, so this law takes a specification of the getter instead, as the getter's own body would
-guarantee. The placeholder getter model can't loop forever or throw; real getters can, and the law
-will change when calls replace `SemanticParams.getterImpl`.
+Until the semantics has instance members (calls so far are only of top-level functions), a getter
+is a function of the whole state, which a proof doesn't own, so this law takes a specification of
+the getter instead, as the getter's own body would guarantee. The placeholder getter model can't
+loop forever or throw; real getters can, and the law will change when instance getters replace
+`SemanticParams.getterImpl`.
 
 The read, with (possibly promoted) static type `T`, satisfies a postcondition `Φ` if:
 - `v` has no instance variable named `p.name` (`NoInstanceVariable v p.name`);

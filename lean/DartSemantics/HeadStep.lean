@@ -90,15 +90,24 @@ public class SemanticParams where
   variable): `getterImpl p v σ` is the result of reading property `p` of value `v` in state `σ`,
   or `none` if the read gets stuck.
 
-  In Dart, a getter runs arbitrary code. Until the semantics has function calls, a getter is
-  modeled as a pure function of the state: it can't change the state, throw, or fail to
-  terminate. Theorems quantify over all implementations that are well-formed, in the sense that
-  the result (if any) has the property's static type. This parameter is a placeholder. Once the
-  semantics has function calls, reading a property whose getter is user code will invoke the
-  getter like any other call, and `getterImpl` will be removed. Theorems will then quantify over
-  programs instead, assuming that each getter is well typed.
+  In Dart, a getter runs arbitrary code. Until the semantics has instance members (calls so far
+  are only of top-level functions), a getter is modeled as a pure function of the state: it can't
+  change the state, throw, or fail to terminate. Theorems quantify over all implementations that
+  are well-formed, in the sense that the result (if any) has the property's static type. This
+  parameter is a placeholder. Once the semantics has instance members, reading a property whose
+  getter is user code will invoke the getter like any other call, and `getterImpl` will be
+  removed. Theorems will then quantify over programs instead, assuming that each getter is well
+  typed.
   -/
   getterImpl : Property → Value → State → Option Value
+  /--
+  The program's function table: the declaration of each top-level function, by key (`none` for a
+  key that isn't declared). A function's key identifies it uniquely in the program, so it isn't
+  necessarily the function's name (see `LoweredExpr.call`). The program is a parameter of the
+  semantics, like `getterImpl`, so that a theorem can be about one program, or quantify over
+  programs. Functions may call each other, and themselves, in any way.
+  -/
+  functions : String → Option (FunctionDecl (τ := τ))
 
 variable [P : SemanticParams τ]
 
@@ -261,16 +270,52 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
       (hc : PassesPromotionCheck σ w T) :
       HeadStep (.propertyGet (.val v) p T) σ (.val w) σ
   /--
+  Once every argument of a call has been evaluated (to `vs`), the call looks up the function in the
+  function table (`hf`), and checks that it has one formal parameter per argument (`hlen`). It
+  allocates one cell per formal parameter, holding its argument, and runs the function's body, with
+  the formal parameters bound to their cells, as the body of a running call (`frame`).
+
+  So far, every formal parameter is a required positional parameter, and every call is a static
+  call of a top-level function, so a call must pass exactly one argument per formal parameter. A
+  call of a function that isn't declared, or with a different number of arguments, gets stuck;
+  with these restrictions, that can't happen in a program that Dart accepts. Optional parameters
+  (positional or named), which allow some arguments to be omitted, and dynamic calls, whose
+  arguments are checked at run time (throwing `NoSuchMethodError` on a mismatch), aren't modeled
+  yet.
+  -/
+  | call {f : String} {d : FunctionDecl (τ := τ)} {vs : List Value} {T : τ} {σ : State}
+      (hf : P.functions f = some d) (hlen : d.params.length = vs.length) :
+      HeadStep (.call f (vs.map .val) T) σ
+        (.frame (d.body.bindVariables (d.params.zip (σ.allocAll (vs.map Cell.val)).1)) T)
+        (σ.allocAll (vs.map Cell.val)).2
+  /-- A return statement, once its operand has evaluated to `v`, starts returning `v`. -/
+  | ret {v : Value} {σ : State} : HeadStep (.ret (.val v)) σ (.returning v) σ
+  /-- When the body of a running call returns `v`, the call completes normally with `v`. -/
+  | frameReturning {v : Value} {T : τ} {σ : State} :
+      HeadStep (.frame (.returning v) T) σ (.val v) σ
+  /--
+  When the body of a running call completes normally (falling off the end of the body), the call
+  completes normally with the null object.
+  -/
+  | frameVal {v : Value} {T : τ} {σ : State} : HeadStep (.frame (.val v) T) σ (.val .null) σ
+  /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.
 
-  Every evaluation context item so far propagates exceptions. Once the semantics has `try`
+  Every evaluation context item so far propagates exceptions, including the body of a running call
+  (`frame`), so an exception propagates out of the call. Once the semantics has `try`
   statements, their context items will handle exceptions instead (running the matching `catch`
   clause, or the `finally` clause), so this rule will gain a hypothesis that `Ki` isn't one of
   them.
   -/
   | bubbleException {Ki : EctxItem} {v : Value} {σ : State} :
       HeadStep (Ki.fill (.throwing v)) σ (.throwing v) σ
+  /--
+  A return propagates outward in the same way, through every evaluation context item that doesn't
+  handle it (`hKi`): that is, up to the body of the running call (`frame`).
+  -/
+  | bubbleReturn {Ki : EctxItem} {v : Value} {σ : State} (hKi : Ki.handlesReturn = false) :
+      HeadStep (Ki.fill (.returning v)) σ (.returning v) σ
 
 /--
 The semantics is deterministic: an expression takes at most one head step. If `e`, in state `σ`,
@@ -284,7 +329,7 @@ public theorem HeadStep.deterministic {e e₁ e₂ : LoweredExpr} {σ σ₁ σ�
   all_goals
     (try cases ‹EctxItem›) <;> (try cases ‹EctxItem›) <;>
       (try simp only [EctxItem.fill, reduceCtorEq] at hE)
-  all_goals (try simp_all)
+  all_goals (try simp_all [EctxItem.handlesReturn])
   all_goals first
     | grind [rtSub_unique]
     | (cases ‹Bool› <;> grind)

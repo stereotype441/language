@@ -30,7 +30,8 @@ Resolve each reference to variable `x` in `m` to the cell at `ℓ`: replace each
 isn't shadowed for with `varAt x T ℓ`, and each assignment `variableSet x m'` with
 `variableSetAt x ℓ m'`.
 
-Values (in `val` and `throwing`) are left alone, since they contain no variable references.
+Values (in `val`, `throwing` and `returning`) are left alone, since they contain no variable
+references.
 -/
 @[expose]
 public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → LoweredExpr
@@ -48,8 +49,13 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .variableSet v m =>
     if v = x then .variableSetAt v ℓ (m.resolve x ℓ) else .variableSet v (m.resolve x ℓ)
   | .unsupported kind T => .unsupported kind T
+  -- The callee's body is in the function table, not here, so only the arguments are resolved.
+  | .call f args T => .call f (LoweredExpr.resolveList x ℓ args) T
+  | .ret m => .ret (m.resolve x ℓ)
   | .val v => .val v
   | .throwing v => .throwing v
+  | .returning v => .returning v
+  | .frame m T => .frame (m.resolve x ℓ) T
   | .varAt v T ℓ' => .varAt v T ℓ'
   | .seq m₁ m₂ => .seq (m₁.resolve x ℓ) (m₂.resolve x ℓ)
   -- The target is already resolved, but `x` may still occur in the right-hand side.
@@ -68,6 +74,16 @@ public def LoweredExpr.resolveBlock (x : Variable) (ℓ : Loc) :
     match m with
     | .declare v _ _ => if v = x then m :: ms else m :: resolveBlock x ℓ ms
     | _ => m.resolve x ℓ :: resolveBlock x ℓ ms
+
+/--
+Resolve each reference to variable `x` in a list of expressions (such as a call's arguments) to the
+cell at `ℓ`, as `LoweredExpr.resolve` does.
+-/
+@[expose]
+public def LoweredExpr.resolveList (x : Variable) (ℓ : Loc) :
+    List LoweredExpr → List LoweredExpr
+  | [] => []
+  | m :: ms => m.resolve x ℓ :: resolveList x ℓ ms
 
 end
 

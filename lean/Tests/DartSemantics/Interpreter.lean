@@ -9,9 +9,9 @@ meta import DartLang.SimpleTypes
 
 Runs programs on `SimpleType`. The programs include `LoweredExpr`s of the kind flow analysis
 produces (some run with their local variable `x` replaced by a parameter, so that it can hold
-something other than the null object), programs for each way a program can fail (throwing, and
-getting stuck), the redex at which a stuck program is reported to be stuck, and a program that
-runs out of fuel.
+something other than the null object), literals, calls of top-level functions (see `functions`),
+programs for each way a program can fail (throwing, and getting stuck), the redex at which a stuck
+program is reported to be stuck, and a program that runs out of fuel.
 
 A block's value is the null object, so a program that is a block completes normally with the null
 object, unless it throws or gets stuck.
@@ -33,16 +33,39 @@ The getter of every property that isn't backed by an instance variable returns t
 def getterImpl : Property → Value → State → Option Value
   | _, _, _ => some .null
 
+def x : Variable := { name := "x", type := ObjectQ }
+def y : Variable := { name := "y", type := Object }
+def b : Variable := { name := "b", type := bool }
+def n : Variable := { name := "n", type := int }
+
+/--
+The top-level functions of the programs tested here:
+- `bool not(bool b) { if (b) return false; return true; }`;
+- `bool alwaysTrue(bool b) { if (b) return alwaysTrue(false); return true; }`, which is recursive;
+- `Null noReturn(int n) { n; }`, which falls off the end of its body;
+- `int nested() { { return 2; 3; } }`, which returns from inside a nested block;
+- `Null fail() { null!; }`, which throws; and
+- `int first(int n, bool b) { return n; }`, which has two parameters.
+-/
+def functions : String → Option (FunctionDecl (τ := SimpleType))
+  | "not" => some ⟨[b],
+      .block [.cond (.var b bool) (.ret (.bool false)) .null Null, .ret (.bool true)]⟩
+  | "alwaysTrue" => some ⟨[b],
+      .block [.cond (.var b bool) (.ret (.call "alwaysTrue" [.bool false] bool)) .null Null,
+        .ret (.bool true)]⟩
+  | "noReturn" => some ⟨[n], .block [.var n int]⟩
+  | "nested" => some ⟨[], .block [.block [.ret (.int 2), .int 3]]⟩
+  | "fail" => some ⟨[], .block [.nullCheck .null]⟩
+  | "first" => some ⟨[n, b], .ret (.var n int)⟩
+  | _ => none
+
 /-- The semantics with promotion checks. -/
 @[instance_reducible]
-def verify : SemanticParams SimpleType := ⟨.verify, getterImpl⟩
+def verify : SemanticParams SimpleType := ⟨.verify, getterImpl, functions⟩
 
 /-- The semantics without promotion checks. -/
 @[instance_reducible]
-def trust : SemanticParams SimpleType := ⟨.trust, getterImpl⟩
-
-def x : Variable := { name := "x", type := ObjectQ }
-def y : Variable := { name := "y", type := Object }
+def trust : SemanticParams SimpleType := ⟨.trust, getterImpl, functions⟩
 
 /-- A promotable property, backed by an instance variable of the object in `σx`. -/
 def f : Property := ⟨"_f", ObjectQ, true⟩
@@ -291,6 +314,75 @@ info: stuck at: DartLang.LoweredExpr.seq
 #guard_msgs in
 #eval runWithX verify
   (.block [.declare z ObjectQ false, .variableSet z .null, .variableSet z .null])
+
+/-! ## Calls and returns (see `functions`) -/
+
+-- `not(true)`
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.bool false) -/
+#guard_msgs in
+#eval runClosed verify (.call "not" [.bool true] bool)
+
+-- `not(not(true))`
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.bool true) -/
+#guard_msgs in
+#eval runClosed verify (.call "not" [.call "not" [.bool true] bool] bool)
+
+-- `alwaysTrue(true)` calls itself once.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.bool true) -/
+#guard_msgs in
+#eval runClosed verify (.call "alwaysTrue" [.bool true] bool)
+
+-- `noReturn(1)` falls off the end of its body, so it returns the null object.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
+#guard_msgs in
+#eval runClosed verify (.call "noReturn" [.int 1] Null)
+
+-- `nested()` returns from inside a nested block, so the rest of the block doesn't run.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 2) -/
+#guard_msgs in
+#eval runClosed verify (.call "nested" [] int)
+
+-- `first(7, false)` returns its first parameter.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 7) -/
+#guard_msgs in
+#eval runClosed verify (.call "first" [.int 7, .bool false] int)
+
+-- `fail()`: the exception propagates out of the call.
+/--
+info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))
+-/
+#guard_msgs in
+#eval runClosed verify (.seq (.call "fail" [] Null) (.int 1))
+
+-- `first(1, null!)`: an exception thrown by an argument propagates out of the call.
+/--
+info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))
+-/
+#guard_msgs in
+#eval runClosed verify (.call "first" [.int 1, .nullCheck .null] int)
+
+-- `return 1;` outside any call returns from the whole program.
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 1) -/
+#guard_msgs in
+#eval runClosed verify (.block [.ret (.int 1), .int 2])
+
+-- A call of a function that isn't declared gets stuck, once its arguments have been evaluated.
+/--
+info: stuck at redex: DartLang.LoweredExpr.call
+  "undeclared"
+  [DartLang.LoweredExpr.val (DartLang.Value.bool true)]
+  (DartLang.SimpleType.Null)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.call "undeclared" [.bool true] Null)
+  State.empty)
+
+-- A call with the wrong number of arguments gets stuck.
+/--
+info: stuck at redex: DartLang.LoweredExpr.call "not" [] (DartLang.SimpleType.bool)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.call "not" [] bool) State.empty)
 
 /-! ## Programs that throw -/
 
