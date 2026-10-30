@@ -102,6 +102,7 @@ object, so it has no dynamic type.
 public def State.dynamicType (σ : State) : Value → Option τ
   | .null => some Γ.Null
   | .bool _ => some Γ.bool
+  | .int _ => some Γ.int
   | .obj ℓ =>
     match σ.lookup ℓ with
     | some (.object T _) => some T

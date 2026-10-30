@@ -166,6 +166,10 @@ stuck because it uses something that isn't modeled yet.
 public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → Prop where
   /-- The null literal evaluates to the null object. -/
   | null {σ : State} : HeadStep .null σ (.val .null) σ
+  /-- A boolean literal evaluates to its boolean. -/
+  | bool {b : Bool} {σ : State} : HeadStep (.bool b) σ (.val (.bool b)) σ
+  /-- An integer literal evaluates to its integer. -/
+  | int {n : Int} {σ : State} : HeadStep (.int n) σ (.val (.int n)) σ
   /--
   A local variable declaration outside a block is converted to a block containing just that
   declaration.

@@ -94,6 +94,8 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
   | .as m T => by simp only [resolve, resolve_comm hne m]
   | .is m T => by simp only [resolve, resolve_comm hne m]
   | .null => rfl
+  | .bool _ => rfl
+  | .int _ => rfl
   | .declare _ _ _ => rfl
   | .cond m₁ m₂ m₃ T => by
     simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂, resolve_comm hne m₃]

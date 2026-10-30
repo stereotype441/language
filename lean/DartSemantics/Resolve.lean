@@ -39,6 +39,8 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .as m T => .as (m.resolve x ℓ) T
   | .is m T => .is (m.resolve x ℓ) T
   | .null => .null
+  | .bool b => .bool b
+  | .int n => .int n
   | .declare v T startsNull => .declare v T startsNull
   | .cond m₁ m₂ m₃ T => .cond (m₁.resolve x ℓ) (m₂.resolve x ℓ) (m₃.resolve x ℓ) T
   | .block ms => .block (LoweredExpr.resolveBlock x ℓ ms)

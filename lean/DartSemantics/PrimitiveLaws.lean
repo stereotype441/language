@@ -47,6 +47,7 @@ public def HasDynamicType (v : Value) (S : τ) : IProp GF :=
   match v with
   | .null => iprop(⌜S = Γ.Null⌝)
   | .bool _ => iprop(⌜S = Γ.bool⌝)
+  | .int _ => iprop(⌜S = Γ.int⌝)
   | .obj ℓ => iprop(∃ fs, ℓ ↦{.discard} (.object S fs : Cell))
   | .error _ => iprop(False)
   | .cont _ => iprop(False)
@@ -68,6 +69,13 @@ public theorem HasDynamicType.null : ⊢ HasDynamicType (GF := GF) (.null : Valu
 /-- The dynamic type of a boolean is `bool`. -/
 public theorem HasDynamicType.bool (b : Bool) :
     ⊢ HasDynamicType (GF := GF) (.bool b : Value) Γ.bool := by
+  simp only [HasDynamicType]
+  ipureintro
+  trivial
+
+/-- The dynamic type of an integer is `int`. -/
+public theorem HasDynamicType.int (n : Int) :
+    ⊢ HasDynamicType (GF := GF) (.int n : Value) Γ.int := by
   simp only [HasDynamicType]
   ipureintro
   trivial
@@ -99,6 +107,12 @@ public theorem HasDynamicType.valid {σ : State} {v : Value} {S : τ} :
     ipureintro
     simp [State.dynamicType, h]
   | bool b =>
+    simp only [HasDynamicType]
+    iintro ⟨-, %h⟩
+    imodintro
+    ipureintro
+    simp [State.dynamicType, h]
+  | int n =>
     simp only [HasDynamicType]
     iintro ⟨-, %h⟩
     imodintro
@@ -136,6 +150,13 @@ public theorem HasDynamicType.of_headers {σ : State} {v : Value} {S : τ}
     ipureintro
     trivial
   | bool b =>
+    simp only [State.dynamicType, Option.some.injEq] at h
+    subst h
+    simp only [HasDynamicType]
+    iintro -
+    ipureintro
+    trivial
+  | int n =>
     simp only [State.dynamicType, Option.some.injEq] at h
     subst h
     simp only [HasDynamicType]
@@ -368,6 +389,24 @@ later, of completing normally with the null object (`▷ Φ (.normal .null)`).
 public theorem wp_null : ▷ Φ (.normal .null) ⊢ WP (LoweredExpr.null (τ := τ)) @ s; E {{ Φ }} := by
   refine wp_pure_step_val (by rfl) fun _ => ?_
   exact .null
+
+/--
+A boolean literal evaluates to its boolean: it satisfies a postcondition `Φ` that holds, one step
+later, of completing normally with that boolean (`▷ Φ (.normal (.bool b))`).
+-/
+public theorem wp_bool {b : Bool} :
+    ▷ Φ (.normal (.bool b)) ⊢ WP (LoweredExpr.bool (τ := τ) b) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .bool
+
+/--
+An integer literal evaluates to its integer: it satisfies a postcondition `Φ` that holds, one step
+later, of completing normally with that integer (`▷ Φ (.normal (.int n))`).
+-/
+public theorem wp_int {n : Int} :
+    ▷ Φ (.normal (.int n)) ⊢ WP (LoweredExpr.int (τ := τ) n) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .int
 
 /--
 A declaration outside a block is converted to a block containing just that declaration: it

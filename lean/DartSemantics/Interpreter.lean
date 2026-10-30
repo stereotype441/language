@@ -105,6 +105,8 @@ there is none, the result is stuck at `e` itself.
 public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   match e with
   | .null => .next (.val .null) σ
+  | .bool b => .next (.val (.bool b)) σ
+  | .int n => .next (.val (.int n)) σ
   | .declare v T startsNull => .next (.block [.declare v T startsNull]) σ
   | .block [] => .next (.val .null) σ
   | .block (.declare v _ startsNull :: ms) =>
@@ -350,7 +352,8 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
     Converges (headStep · e σ) (.next e' σ') ∨
       (e' = e ∧ σ' = σ ∧ ∀ fuel, headStep fuel e σ = .outOfFuel) := by
   cases h with
-  | null | declare | blockNil | blockDeclare | seq | nullCheckNull | condTrue | condFalse =>
+  | null | bool | int | declare | blockNil | blockDeclare | seq | nullCheckNull | condTrue
+  | condFalse =>
     exact .inl (Converges.of_eq fun _ => rfl)
   | @blockCons m ms σ h =>
     cases m

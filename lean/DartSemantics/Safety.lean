@@ -32,14 +32,15 @@ local notation "Env" => Env (τ := τ)
 /--
 What the safety theorem says about an outcome of an expression of static type `T`: a value it
 completes normally with is the null object only if `Null` is a subtype of `T`, a boolean only if
-`bool` is, and never an exception object (the model so far doesn't support catching exceptions) or
-a captured continuation. (Whether an object satisfies `T` depends on the final state, which
-adequacy doesn't describe.)
+`bool` is, an integer only if `int` is, and never an exception object (the model so far doesn't
+support catching exceptions) or a captured continuation. (Whether an object satisfies `T` depends
+on the final state, which adequacy doesn't describe.)
 -/
 @[expose]
 public def OutcomeOk (T : τ) : DartLang.Outcome (τ := τ) → Prop
   | .normal .null => Γ.Null ≤ T
   | .normal (.bool _) => Γ.bool ≤ T
+  | .normal (.int _) => Γ.int ≤ T
   | .normal (.obj _) => True
   | .normal (.error _) => False
   | .normal (.cont _) => False
@@ -256,6 +257,10 @@ theorem interpVal_of_unbound {σ : State} {bindings : List (Variable × Loc)}
       simp only [State.dynamicType, Option.some.injEq] at hS
       subst hS
       iapply HasDynamicType.bool
+    | int n =>
+      simp only [State.dynamicType, Option.some.injEq] at hS
+      subst hS
+      iapply HasDynamicType.int
     | obj ℓ =>
       simp only [State.dynamicType] at hS
       split at hS
@@ -352,6 +357,12 @@ theorem outcomeOk_of_interpVal {T : τ} {v : Value} :
     ipureintro
     exact hS
   | bool b =>
+    simp only [interpVal, HasDynamicType]
+    iintro ⟨%S, %h, %hS, -⟩
+    subst h
+    ipureintro
+    exact hS
+  | int n =>
     simp only [interpVal, HasDynamicType]
     iintro ⟨%S, %h, %hS, -⟩
     subst h

@@ -37,14 +37,21 @@ expressions still to be evaluated.
 mutual
 
 /--
-A run-time value: in the specification's terms, an object. The null object, booleans and error
-objects are represented directly; other objects live in the heap and are referred to by location.
+A run-time value: in the specification's terms, an object. The null object, booleans, integers
+and error objects are represented directly; other objects live in the heap and are referred to by
+location.
 -/
 public inductive Value where
   /-- The null object. -/
   | null
   /-- The object `true` or `false`. -/
   | bool (b : Bool)
+  /--
+  An integer: an instance of `int`. Every Dart `int` is represented by its mathematical value, a
+  Lean `Int` (which is unbounded). Integer literals are always in 64-bit range; how arithmetic
+  stays in range will be decided per member when the semantics has arithmetic.
+  -/
+  | int (n : Int)
   /-- A reference to the object stored at location `ℓ`. -/
   | obj (ℓ : Loc)
   /-- The object thrown when dynamic error `e` occurs. -/
@@ -76,6 +83,10 @@ public inductive LoweredExpr where
   | is (m : LoweredExpr) (T : τ)
   /-- The null literal, `null`. -/
   | null
+  /-- A boolean literal, `true` or `false`. -/
+  | bool (b : Bool)
+  /-- An integer literal. -/
+  | int (n : Int)
   /--
   A local variable declaration of `v`, with type `T`. Its scope is the rest of the enclosing
   `block`.
@@ -164,6 +175,7 @@ on the heap. (An object's class is in the heap, so an object reference just gets
 public def Value.typeOf : Value → τ
   | .null => Γ.Null
   | .bool _ => Γ.bool
+  | .int _ => Γ.int
   | .obj _ => Γ.Object
   | .error _ => Γ.Object
   | .cont _ => Γ.ObjectQ
@@ -183,6 +195,8 @@ public def LoweredExpr.typeOf :
   | as _ T => T
   | is _ _ => Γ.bool
   | null => Γ.Null
+  | bool _ => Γ.bool
+  | int _ => Γ.int
   | declare _ _ _ => Γ.Null
   | cond _ _ _ T => T
   | block _ => Γ.Null

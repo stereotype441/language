@@ -94,11 +94,12 @@ public structure TypeLaws : Prop where
 
 /--
 What the typing rules need to know about a value whose dynamic type is `S`, besides `S` itself: if
-the value is an object (other than the null object and booleans), its class isn't nullable, and
-isn't a subtype of `bool`. (In Dart, `bool` can't be extended or implemented.)
+the value is an integer or an object (other than the null object and booleans), its class isn't
+nullable, and isn't a subtype of `bool`. (In Dart, `bool` can't be extended or implemented.)
 -/
 @[expose]
 public def ValOk : Value → τ → Prop
+  | .int _, S => ¬ Γ.Null ≤ S ∧ ¬ S ≤ Γ.bool
   | .obj _, S => ¬ Γ.Null ≤ S ∧ ¬ S ≤ Γ.bool
   | _, _ => True
 
@@ -506,6 +507,9 @@ public theorem interpVal_bool_inv (L : TypeLaws τ) {v : Value} :
     iintro -
     ipureintro
     exact ⟨b, rfl⟩
+  | int n =>
+    iintro ⟨%S, -, %hS, %hok⟩
+    exact absurd hS hok.2
   | obj ℓ =>
     iintro ⟨%S, -, %hS, %hok⟩
     exact absurd hS hok.2
@@ -535,6 +539,13 @@ public theorem interpVal_nonNull (L : TypeLaws τ) {T : τ} {v : Value} (hv : v 
       rfl
     · ipureintro
       exact ⟨L.le_nonNull L.not_null_le_bool hS, hok⟩
+  | int n =>
+    iintro ⟨%S, #Hty, %hS, %hok⟩
+    iexists S
+    isplitr
+    · iexact Hty
+    · ipureintro
+      exact ⟨L.le_nonNull hok.1 hS, hok⟩
   | obj ℓ =>
     iintro ⟨%S, #Hty, %hS, %hok⟩
     iexists S

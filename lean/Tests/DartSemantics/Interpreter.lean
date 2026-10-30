@@ -172,6 +172,35 @@ def runClosed (P : SemanticParams SimpleType) (m : LoweredExpr) : Std.Format :=
 #guard_msgs in
 #eval runWithX verify (.seq (.block [.declare x ObjectQ true]) (.nullCheck (.var x ObjectQ)))
 
+/-! ## Literals -/
+
+-- `true`
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.bool true) -/
+#guard_msgs in
+#eval runClosed verify (.bool true)
+
+-- `-3`
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int (-3)) -/
+#guard_msgs in
+#eval runClosed verify (.int (-3))
+
+-- `false ? 1 : 2`
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 2) -/
+#guard_msgs in
+#eval runClosed verify (.cond (.bool false) (.int 1) (.int 2) int)
+
+-- `(7 as Object) as int`: an integer's dynamic type is `int`, so both casts succeed.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 7) -/
+#guard_msgs in
+#eval runClosed verify (.as (.as (.int 7) Object) int)
+
+-- `7 as bool` fails.
+/--
+info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))
+-/
+#guard_msgs in
+#eval runClosed verify (.as (.int 7) bool)
+
 /-! ## Assignments -/
 
 -- `x = null` evaluates to the value assigned.

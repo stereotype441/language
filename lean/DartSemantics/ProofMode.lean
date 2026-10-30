@@ -25,9 +25,10 @@ program's execution:
   `ℓ` and its points-to `H`.
 - `wp_load H`: take the step of reading a variable or an instance variable, using the points-to
   `H` for the cell read. The value's dynamic type is proved automatically for the null object,
-  booleans, objects whose header is in the context, and values with a `HasDynamicType` hypothesis
-  in the context. Pure side conditions (such as the subtype fact for the promotion check) are
-  proved by `decide` or `rfl` when they can be, and otherwise left as goals after the main one.
+  booleans, integers, objects whose header is in the context, and values with a `HasDynamicType`
+  hypothesis in the context. Pure side conditions (such as the subtype fact for the promotion
+  check) are proved by `decide` or `rfl` when they can be, and otherwise left as goals after the
+  main one.
 - `wp_store H`: take the step of an assignment to a local variable, using the points-to `H` for
   the variable's cell, which afterwards holds the value assigned. If the variable may be `final`,
   the cell must be unassigned: that side condition is proved when the variable isn't `final`, or
@@ -199,6 +200,8 @@ syntax "dart_pure_head_step" : tactic
 macro_rules
   | `(tactic| dart_pure_head_step) => `(tactic| first
     | exact DartSemantics.HeadStep.null
+    | exact DartSemantics.HeadStep.bool
+    | exact DartSemantics.HeadStep.int
     | exact DartSemantics.HeadStep.declare
     | exact DartSemantics.HeadStep.blockNil
     | (refine DartSemantics.HeadStep.blockCons ?_; intro _ _ _ h; cases h)
@@ -287,15 +290,16 @@ macro_rules
      simp (config := { decide := true }) only [DartLang.LoweredExpr.resolveBlock,
        DartLang.LoweredExpr.resolve, ite_true, ite_false, Bool.false_eq_true, ↓reduceIte]))
 
-/-- Prove that a value has a dynamic type: the null object, a boolean, an object whose header
-(a persistent points-to for its own cell) is in the context, or a value with a `HasDynamicType`
-hypothesis in the context. -/
+/-- Prove that a value has a dynamic type: the null object, a boolean, an integer, an object whose
+header (a persistent points-to for its own cell) is in the context, or a value with a
+`HasDynamicType` hypothesis in the context. -/
 syntax "dart_dynamic_type" : tactic
 
 macro_rules
   | `(tactic| dart_dynamic_type) => `(tactic| first
     | iapply DartSemantics.HasDynamicType.null
     | iapply DartSemantics.HasDynamicType.bool
+    | iapply DartSemantics.HasDynamicType.int
     | (iapply DartSemantics.HasDynamicType.obj; iassumption)
     | iassumption)
 

@@ -36,6 +36,14 @@ example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType) [.nullCheck .n
   ipureintro
   trivial
 
+/-- `true ? 1 : 2` evaluates to `1`: boolean and integer literals evaluate to their values. -/
+example : ⊢@{IProp GF} WP (LoweredExpr.cond (τ := SimpleType) (.bool true) (.int 1) (.int 2) int)
+    {{ o, ⌜o = DartLang.Outcome.normal (.int 1)⌝ }} := by
+  iintro
+  wp_pures
+  ipureintro
+  trivial
+
 def x : Variable := { name := "x", type := ObjectQ }
 
 /-- `{ Object? x; x! }` throws: a declared nullable variable starts out null. -/
@@ -52,11 +60,10 @@ example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
 
 /--
 `{ Object? x; x = true; x! }` completes normally: after the assignment, `x` holds `true`, so the
-null check succeeds. (`true` is written as a value, since `LoweredExpr` has no boolean literals
-yet.)
+null check succeeds.
 -/
 example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
-    [.declare x ObjectQ true, .variableSet x (.val (.bool true)), .nullCheck (.var x ObjectQ)])
+    [.declare x ObjectQ true, .variableSet x (.bool true), .nullCheck (.var x ObjectQ)])
     {{ o, ⌜o = DartLang.Outcome.normal .null⌝ }} := by
   iintro
   wp_alloc ℓ Hl
@@ -76,7 +83,7 @@ def z : Variable := { name := "z", type := ObjectQ, isFinal := true }
 (flow analysis sets `startsNull` to `false`), so it can be assigned once.
 -/
 example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
-    [.declare z ObjectQ false, .variableSet z (.val (.bool true)), .nullCheck (.var z ObjectQ)])
+    [.declare z ObjectQ false, .variableSet z (.bool true), .nullCheck (.var z ObjectQ)])
     {{ o, ⌜o = DartLang.Outcome.normal .null⌝ }} := by
   iintro
   wp_alloc ℓ Hl
