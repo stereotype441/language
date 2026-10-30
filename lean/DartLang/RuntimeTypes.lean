@@ -85,7 +85,9 @@ budget large enough for every check in a run can be found.
 public class RtSubChecker (τ : Type) [DartRuntimeTypeRepr τ] where
   /-- Runs the run-time subtype check of `S` against `T`, with a budget of `fuel`. -/
   check (fuel : Nat) (S T : τ) : Option (Bool × Nat)
-  /-- The check never uses more fuel than it's given. -/
+  /--
+  The check never creates fuel: what it leaves over is at most what it was given (`fuel' ≤ fuel`).
+  -/
   check_fuel_le {fuel : Nat} {S T : τ} {b : Bool} {fuel' : Nat} :
     check fuel S T = some (b, fuel') → fuel' ≤ fuel
   /-- Extra fuel doesn't change the answer, and is left over unused. -/

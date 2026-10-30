@@ -199,6 +199,14 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | varAt {x : Variable (τ := τ)} {T : τ} {ℓ : Loc} {v : Value} {σ : State}
       (hℓ : σ.lookup ℓ = some (.val v)) (hv : PassesPromotionCheck σ v T) :
       HeadStep (.varAt x T ℓ) σ (.val v) σ
+  /--
+  An assignment to a local variable stores the value in the variable's cell, and evaluates to
+  that value. The cell must belong to a local variable (holding a value or uninitialized), not be
+  an object's own cell.
+  -/
+  | variableSetAt {x : Variable (τ := τ)} {ℓ : Loc} {w : Value} {c : Cell} {σ : State}
+      (hℓ : σ.lookup ℓ = some c) (hc : ∀ C fs, c ≠ .object C fs) :
+      HeadStep (.variableSetAt x ℓ (.val w)) σ (.val w) (σ.update ℓ (.val w))
   /-- A null check on the null object is a dynamic type error. -/
   | nullCheckNull {σ : State} :
       HeadStep (.nullCheck (.val .null)) σ (.throwing (.error .typeError)) σ
@@ -256,8 +264,9 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
       HeadStep (Ki.fill (.throwing v)) σ (.throwing v) σ
 
 /--
-The semantics is deterministic: an expression takes at most one head step. If `e` takes head steps
-to `e₁` (`h₁`) and `e₂` (`h₂`), they're the same (`e₁ = e₂ ∧ σ₁ = σ₂`).
+The semantics is deterministic: an expression takes at most one head step. If `e`, in state `σ`,
+takes head steps to `e₁` in state `σ₁` (`h₁`) and to `e₂` in state `σ₂` (`h₂`), they're the same
+expression (`e₁ = e₂`) and the same state (`σ₁ = σ₂`).
 -/
 public theorem HeadStep.deterministic {e e₁ e₂ : LoweredExpr} {σ σ₁ σ₂ : State}
     (h₁ : HeadStep e σ e₁ σ₁) (h₂ : HeadStep e σ e₂ σ₂) : e₁ = e₂ ∧ σ₁ = σ₂ := by

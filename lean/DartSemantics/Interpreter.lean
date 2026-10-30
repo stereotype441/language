@@ -125,12 +125,19 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
       match P.getterImpl p v σ with
       | some w => promotionCheck fuel σ w T (.next (.val w) σ)
       | none => .stuck
+  | .variableSetAt _ ℓ (.val w) =>
+    -- Inspect the cell before updating it, so that the update can be done in place.
+    match σ.lookup ℓ with
+    | some (.object _ _) => .stuck
+    | some _ => .next (.val w) (σ.update ℓ (.val w))
+    | none => .stuck
   | .nullCheck (.throwing v) => .next (.throwing v) σ
   | .as (.throwing v) _ => .next (.throwing v) σ
   | .is (.throwing v) _ => .next (.throwing v) σ
   | .cond (.throwing v) _ _ _ => .next (.throwing v) σ
   | .propertyGet (.throwing v) _ _ => .next (.throwing v) σ
   | .seq (.throwing v) _ => .next (.throwing v) σ
+  | .variableSetAt _ _ (.throwing v) => .next (.throwing v) σ
   | _ => .stuck
 
 /--
@@ -155,6 +162,9 @@ public def primStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     else stepIn (.propertyGet p T) (primStep fuel m σ)
   | .seq m₁ m₂ =>
     if m₁.toOutcome?.isSome then headStep fuel e σ else stepIn (.seq m₂) (primStep fuel m₁ σ)
+  | .variableSetAt x ℓ m =>
+    if m.toOutcome?.isSome then headStep fuel e σ
+    else stepIn (.variableSetAt x ℓ) (primStep fuel m σ)
   | _ => headStep fuel e σ
 termination_by structural e
 
@@ -311,9 +321,9 @@ theorem promotionCheck_eq_next {fuel : Nat} {σ σ' : State} {v : Value} {T : τ
 Completeness of `headStep`: if `e` takes a head step to `e'` (`h`), then either:
 - `headStep` finds it, given enough fuel, and never reports that `e` is stuck
   (`Converges (headStep · e σ) (.next e' σ')`); or
-- the step is one that a check that doesn't terminate takes, which goes nowhere
-  (`e' = e ∧ σ' = σ`), and `headStep` runs out of fuel there, however much it has
-  (`∀ fuel, headStep fuel e σ = .outOfFuel`).
+- the step is one that a check that doesn't terminate takes, which goes nowhere: it leaves the
+  expression (`e' = e`) and the state (`σ' = σ`) unchanged, and `headStep` runs out of fuel there,
+  however much it has (`∀ fuel, headStep fuel e σ = .outOfFuel`).
 -/
 theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e σ e' σ') :
     Converges (headStep · e σ) (.next e' σ') ∨
@@ -343,6 +353,10 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
   | propertyGetGetter hf hg hc =>
     exact .inl (Converges.congr (fun fuel => by simp [headStep, hf, hg])
       (promotionCheck_converges hc _))
+  | @variableSetAt x ℓ w c σ hℓ hc =>
+    cases c
+    case object C fs => exact absurd rfl (hc C fs)
+    all_goals exact .inl (Converges.of_eq fun _ => by simp [headStep, hℓ])
   | @bubble Ki v σ =>
     cases Ki <;> exact .inl (Converges.of_eq fun _ => rfl)
 
@@ -367,7 +381,8 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubble (Ki := .is _)
          | exact .bubble (Ki := .cond _ _ _)
          | exact .bubble (Ki := .propertyGet _ _)
-         | exact .bubble (Ki := .seq _))
+         | exact .bubble (Ki := .seq _)
+         | exact .bubble (Ki := .variableSetAt _ _))
     | (obtain ⟨hc, hr⟩ := promotionCheck_eq_next h
        obtain ⟨rfl, rfl⟩ := StepResult.next.inj hr
        first
@@ -422,6 +437,7 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
   | cond m₁ m₂ m₃ T => simp [primStep, hin (.cond m₂ m₃ T) m₁ rfl]
   | propertyGet m p T => simp [primStep, hin (.propertyGet p T) m rfl]
   | seq m₁ m₂ => simp [primStep, hin (.seq m₂) m₁ rfl]
+  | variableSetAt x ℓ m => simp [primStep, hin (.variableSetAt x ℓ) m rfl]
   | _ => rfl
 
 omit [RtSubChecker τ] in
@@ -441,27 +457,26 @@ theorem stepIn_sound {Ki : EctxItem} {e e' : LoweredExpr} {σ σ' : State} {r : 
   | stuck | outOfFuel => cases h
 
 /--
-**Soundness of the interpreter**: every step that `primStep` takes
-(`primStep fuel e σ = .next e' σ'`) is a step of the semantics (`(e, σ) -<[]>-> (e', σ', [])`).
+**Soundness of the interpreter**: every step that `primStep` takes from `e` in state `σ`, to `e'` in
+state `σ'` (`h`), is a step of the semantics (`(e, σ) -<[]>-> (e', σ', [])`).
 -/
-public theorem primStep_sound {fuel : Nat} : ∀ (e : LoweredExpr) {σ : State} {e' : LoweredExpr}
-    {σ' : State}, primStep fuel e σ = .next e' σ' → (e, σ) -<[]>-> (e', σ', [])
-  | e, σ, e', σ', h => by
-    rw [primStep.eq_def] at h
-    cases e <;> dsimp only at h <;>
-      repeat' first
-        | exact (headStep_sound h).primStep
-        | (have := stepIn_sound (primStep_sound _) h; exact this)
-        | split at h
+public theorem primStep_sound {fuel : Nat} (e : LoweredExpr) {σ : State} {e' : LoweredExpr}
+    {σ' : State} (h : primStep fuel e σ = .next e' σ') : (e, σ) -<[]>-> (e', σ', []) := by
+  rw [primStep.eq_def] at h
+  cases e <;> dsimp only at h <;>
+    repeat' first
+      | exact (headStep_sound h).primStep
+      | (have := stepIn_sound (primStep_sound _) h; exact this)
+      | split at h
 
 /--
 **Completeness of the interpreter**: if `e` takes a step to `e'` (`h`), then the step makes no
-observations and forks no threads (`obs = [] ∧ efs = []`), and either:
+observations (`obs = []`) and forks no threads (`efs = []`), and either:
 - `primStep` finds it, given enough fuel, and never reports that `e` is stuck
   (`Converges (primStep · e σ) (.next e' σ')`); or
-- the step is one that a run-time subtype check that doesn't terminate takes, which goes nowhere
-  (`e' = e ∧ σ' = σ`), and `primStep` runs out of fuel there, however much it has
-  (`∀ fuel, primStep fuel e σ = .outOfFuel`).
+- the step is one that a run-time subtype check that doesn't terminate takes, which goes nowhere:
+  it leaves the expression (`e' = e`) and the state (`σ' = σ`) unchanged, and `primStep` runs out
+  of fuel there, however much it has (`∀ fuel, primStep fuel e σ = .outOfFuel`).
 -/
 public theorem primStep_complete {e e' : LoweredExpr} {σ σ' : State} {obs : List Obs}
     {efs : List LoweredExpr} (h : (e, σ) -<obs>-> (e', σ', efs)) :

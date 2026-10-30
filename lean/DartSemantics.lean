@@ -1,9 +1,17 @@
 module
 public import DartLang
+public import DartSemantics.Bind
+public import DartSemantics.Compat
+public import DartSemantics.GhostState
 public import DartSemantics.HeadStep
+public import DartSemantics.Heap
 public import DartSemantics.Interpreter
 public import DartSemantics.Language
+public import DartSemantics.PrimitiveLaws
+public import DartSemantics.ProofMode
 public import DartSemantics.Resolve
+public import DartSemantics.Safety
+public import DartSemantics.SemanticTyping
 public import DartSemantics.State
 
 /-!
