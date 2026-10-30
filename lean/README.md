@@ -240,9 +240,16 @@ What exists so far:
   Assignments to local variables, including `final` ones (which can only be assigned while they
   are unassigned), are covered throughout, and reads and promotions of property paths such as
   `x._f._g` can be typed. Connecting this to the model of flow analysis comes next.
+- For the Kernel translator, the semantics also has `bool` and `int` literals, calls of top-level
+  functions (from a function table in `SemanticParams`) with `return`, intrinsic checks for the
+  common `Expect` assertions, and a placeholder for constructs that the translator doesn't
+  support (`LoweredExpr.unsupported`, which gets stuck). These have interpreter support and
+  program-logic laws, including specifications of functions (`FunSpec`, proved by Löb induction,
+  so recursion is supported), but no typing rules yet.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
-  proved with the program logic, small programs proved safe with the typing rules
-  (`Corollaries`), and a check that `SimpleType` obeys the laws that the typing rules assume.
+  proved with the program logic, a program with calls proved safe and correct (`CallSpecs`), small
+  programs proved safe with the typing rules (`Corollaries`), and a check that `SimpleType` obeys
+  the laws that the typing rules assume.
 - The Kernel translator hasn't been started.
 
 ## Documentation conventions
