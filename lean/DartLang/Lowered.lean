@@ -27,6 +27,24 @@ public inductive DynamicError where
   null object, or a failed cast (`e as T`).
   -/
   | typeError
+  /--
+  A failed intrinsic check (`LoweredExpr.check` or `LoweredExpr.checkEq`), which the translator
+  produces for an `Expect` assertion from the language tests. In Dart, a failed `Expect` throws an
+  `ExpectException`; this placeholder stands for it.
+  -/
+  | expectFailed
+  deriving Repr, BEq, DecidableEq
+
+/-- The kinds of intrinsic check (`LoweredExpr.check`) on one value, for `Expect` assertions. -/
+public inductive CheckKind where
+  /-- `Expect.isTrue(v)`: `v` is `true`. -/
+  | isTrue
+  /-- `Expect.isFalse(v)`: `v` is `false`. -/
+  | isFalse
+  /-- `Expect.isNull(v)`: `v` is the null object. -/
+  | isNull
+  /-- `Expect.isNotNull(v)`: `v` isn't the null object. -/
+  | isNotNull
   deriving Repr, BEq, DecidableEq
 
 /-
@@ -139,6 +157,18 @@ public inductive LoweredExpr where
   | call (f : String) (args : List LoweredExpr) (T : τ)
   /-- A return statement, `return m;`. (`return;` is `ret null`.) -/
   | ret (m : LoweredExpr)
+  /--
+  An intrinsic check of the value of `m`, for an `Expect` assertion of kind `kind` (such as
+  `Expect.isTrue(m)`): completes normally with the null object if the check holds, and otherwise
+  throws.
+  -/
+  | check (kind : CheckKind) (m : LoweredExpr)
+  /--
+  An intrinsic check that the values of `m₁` and `m₂` are equal, for `Expect.equals(m₁, m₂)`:
+  completes normally with the null object if they are, and otherwise throws. Only the null object,
+  booleans and integers can be compared; comparing anything else gets stuck.
+  -/
+  | checkEq (m₁ m₂ : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -198,6 +228,12 @@ public inductive EctxItem where
   | call (f : String) (vs : List Value) (ms : List LoweredExpr) (T : τ)
   /-- `return □;` -/
   | ret
+  /-- `check(kind, □)` -/
+  | check (kind : CheckKind)
+  /-- `checkEq(□, m₂)` -/
+  | checkEqL (m₂ : LoweredExpr)
+  /-- `checkEq(v₁, □)`, where the first operand has evaluated to `v₁` -/
+  | checkEqR (v₁ : Value)
   /-- `frame(□)` (of type `T`): the body of a running call -/
   | frame (T : τ)
 
@@ -221,6 +257,33 @@ public def Value.typeOf : Value → τ
   | .obj _ => Γ.Object
   | .error _ => Γ.Object
   | .cont _ => Γ.ObjectQ
+
+omit Γ in
+/-- Whether the intrinsic check of kind `kind` holds of value `v`. -/
+@[expose]
+public def CheckKind.holds : CheckKind → Value → Bool
+  | .isTrue, .bool true => true
+  | .isFalse, .bool false => true
+  | .isNull, .null => true
+  | .isNotNull, .null => false
+  | .isNotNull, _ => true
+  | _, _ => false
+
+omit Γ in
+/--
+Whether two values are equal, for the intrinsic check `LoweredExpr.checkEq`, if they can be
+compared: two values that are each the null object, a boolean or an integer are equal if they're
+the same value. Any other value can't be compared yet (`none`): `==` on objects runs user code,
+which the semantics doesn't support yet.
+-/
+@[expose]
+public def Value.primEq? : Value → Value → Option Bool
+  | .null, .null => some true
+  | .bool b₁, .bool b₂ => some (b₁ == b₂)
+  | .int n₁, .int n₂ => some (n₁ == n₂)
+  | .null, .bool _ | .null, .int _ | .bool _, .null | .bool _, .int _ | .int _, .null
+  | .int _, .bool _ => some false
+  | _, _ => none
 
 /--
 The static type of an expression.
@@ -248,6 +311,8 @@ public def LoweredExpr.typeOf :
   | unsupported _ T => T
   | call _ _ T => T
   | ret _ => Γ.ObjectQ
+  | check _ _ => Γ.Null
+  | checkEq _ _ => Γ.Null
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -327,6 +392,9 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .variableSetAt v ℓ, m => .variableSetAt v ℓ m
   | .call f vs ms T, m => .call f (vs.map .val ++ m :: ms) T
   | .ret, m => .ret m
+  | .check kind, m => .check kind m
+  | .checkEqL m₂, m => .checkEq m m₂
+  | .checkEqR v₁, m => .checkEq (.val v₁) m
   | .frame T, m => .frame m T
 
 /--

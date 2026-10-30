@@ -384,6 +384,60 @@ info: stuck at redex: DartLang.LoweredExpr.call "not" [] (DartLang.SimpleType.bo
 #guard_msgs in
 #eval stuckRedex (Interp.run (P := verify) 100 (.call "not" [] bool) State.empty)
 
+/-! ## Intrinsic checks for `Expect` assertions -/
+
+/--
+Whether running `m` from the empty state completes normally with the null object (`passes`), or
+throws because an intrinsic check failed (`fails`); otherwise, the summary of the run.
+-/
+def checkResult (m : LoweredExpr) : Std.Format :=
+  match Interp.run (P := verify) 100 m State.empty with
+  | .done (.normal .null) _ => "passes"
+  | .done (.throwing (.error .expectFailed)) _ => "fails"
+  | r => summary r
+
+-- Each kind of check, on a value it holds of, passes.
+/-- info: [passes, passes, passes, passes] -/
+#guard_msgs in
+#eval [checkResult (.check .isTrue (.bool true)), checkResult (.check .isFalse (.bool false)),
+  checkResult (.check .isNull .null), checkResult (.check .isNotNull (.int 0))]
+
+-- Each kind of check, on a value it doesn't hold of, fails.
+/-- info: [fails, fails, fails, fails] -/
+#guard_msgs in
+#eval [checkResult (.check .isTrue (.bool false)), checkResult (.check .isFalse .null),
+  checkResult (.check .isNull (.int 0)), checkResult (.check .isNotNull .null)]
+
+-- `Expect.equals` on equal integers, booleans and null objects passes, and on different ones
+-- (including values of different types) fails.
+/-- info: [passes, passes, passes, fails, fails, fails] -/
+#guard_msgs in
+#eval [checkResult (.checkEq (.int 3) (.int 3)), checkResult (.checkEq (.bool true) (.bool true)),
+  checkResult (.checkEq .null .null), checkResult (.checkEq (.int 3) (.int 4)),
+  checkResult (.checkEq (.bool true) (.bool false)), checkResult (.checkEq (.int 0) .null)]
+
+-- `Expect.equals(first(7, true), 7)`: the operands are evaluated left to right.
+/-- info: passes -/
+#guard_msgs in
+#eval checkResult (.checkEq (.call "first" [.int 7, .bool true] int) (.int 7))
+
+-- `Expect.isTrue(null!)`: an exception thrown by the operand propagates.
+/--
+info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))
+-/
+#guard_msgs in
+#eval checkResult (.check .isTrue (.nullCheck .null))
+
+-- `Expect.equals` on objects (here, the object that parameter `x` refers to; see `runWithX`) gets
+-- stuck: `==` on objects runs user code, which isn't supported yet.
+/--
+info: stuck at: DartLang.LoweredExpr.checkEq
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 }))
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 }))
+-/
+#guard_msgs in
+#eval runWithX verify (.checkEq (.var x ObjectQ) (.var x ObjectQ))
+
 /-! ## Programs that throw -/
 
 -- `null!`

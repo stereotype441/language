@@ -52,6 +52,8 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   -- The callee's body is in the function table, not here, so only the arguments are resolved.
   | .call f args T => .call f (LoweredExpr.resolveList x ℓ args) T
   | .ret m => .ret (m.resolve x ℓ)
+  | .check kind m => .check kind (m.resolve x ℓ)
+  | .checkEq m₁ m₂ => .checkEq (m₁.resolve x ℓ) (m₂.resolve x ℓ)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v

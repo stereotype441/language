@@ -174,6 +174,15 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .ret (.val v) => .next (.returning v) σ
   | .frame (.returning v) _ => .next (.val v) σ
   | .frame (.val _) _ => .next (.val .null) σ
+  | .check kind (.val v) =>
+    match kind.holds v with
+    | true => .next (.val .null) σ
+    | false => .next (.throwing (.error .expectFailed)) σ
+  | .checkEq (.val v₁) (.val v₂) =>
+    match Value.primEq? v₁ v₂ with
+    | some true => .next (.val .null) σ
+    | some false => .next (.throwing (.error .expectFailed)) σ
+    | none => .stuck e
   | .nullCheck (.throwing v) => .next (.throwing v) σ
   | .as (.throwing v) _ => .next (.throwing v) σ
   | .is (.throwing v) _ => .next (.throwing v) σ
@@ -183,6 +192,9 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .variableSetAt _ _ (.throwing v) => .next (.throwing v) σ
   | .ret (.throwing v) => .next (.throwing v) σ
   | .frame (.throwing v) _ => .next (.throwing v) σ
+  | .check _ (.throwing v) => .next (.throwing v) σ
+  | .checkEq (.throwing v) _ => .next (.throwing v) σ
+  | .checkEq (.val _) (.throwing v) => .next (.throwing v) σ
   | .nullCheck (.returning v) => .next (.returning v) σ
   | .as (.returning v) _ => .next (.returning v) σ
   | .is (.returning v) _ => .next (.returning v) σ
@@ -191,6 +203,9 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .seq (.returning v) _ => .next (.returning v) σ
   | .variableSetAt _ _ (.returning v) => .next (.returning v) σ
   | .ret (.returning v) => .next (.returning v) σ
+  | .check _ (.returning v) => .next (.returning v) σ
+  | .checkEq (.returning v) _ => .next (.returning v) σ
+  | .checkEq (.val _) (.returning v) => .next (.returning v) σ
   | _ => .stuck e
 
 /-
@@ -230,6 +245,16 @@ public def primStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     if m.toOutcome?.isSome then headStep fuel e σ else stepIn .ret (primStep fuel m σ)
   | .frame m T =>
     if m.toOutcome?.isSome then headStep fuel e σ else stepIn (.frame T) (primStep fuel m σ)
+  | .check kind m =>
+    if m.toOutcome?.isSome then headStep fuel e σ else stepIn (.check kind) (primStep fuel m σ)
+  | .checkEq m₁ m₂ =>
+    if m₁.toOutcome?.isSome then
+      match m₁ with
+      | .val v₁ =>
+        if m₂.toOutcome?.isSome then headStep fuel e σ
+        else stepIn (.checkEqR v₁) (primStep fuel m₂ σ)
+      | _ => headStep fuel e σ
+    else stepIn (.checkEqL m₂) (primStep fuel m₁ σ)
   | _ => headStep fuel e σ
 termination_by structural e
 
@@ -424,6 +449,8 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
     exact .inl (Converges.of_eq fun _ => rfl)
   | call hf hlen =>
     exact .inl (Converges.of_eq fun _ => by simp [headStep, headStepCall, hf, hlen])
+  | checkPass h | checkFail h | checkEqPass h | checkEqFail h =>
+    exact .inl (Converges.of_eq fun _ => by simp [headStep, h])
   | @blockCons m ms σ h =>
     cases m
     case declare v T startsNull => exact absurd rfl (h v T startsNull)
@@ -546,6 +573,9 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleException (Ki := .variableSetAt _ _)
          | exact .bubbleException (Ki := .ret)
          | exact .bubbleException (Ki := .frame _)
+         | exact .bubbleException (Ki := .check _)
+         | exact .bubbleException (Ki := .checkEqL _)
+         | exact .bubbleException (Ki := .checkEqR _)
          | exact .bubbleReturn (Ki := .nullCheck) rfl
          | exact .bubbleReturn (Ki := .as _) rfl
          | exact .bubbleReturn (Ki := .is _) rfl
@@ -553,7 +583,10 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleReturn (Ki := .propertyGet _ _) rfl
          | exact .bubbleReturn (Ki := .seq _) rfl
          | exact .bubbleReturn (Ki := .variableSetAt _ _) rfl
-         | exact .bubbleReturn (Ki := .ret) rfl)
+         | exact .bubbleReturn (Ki := .ret) rfl
+         | exact .bubbleReturn (Ki := .check _) rfl
+         | exact .bubbleReturn (Ki := .checkEqL _) rfl
+         | exact .bubbleReturn (Ki := .checkEqR _) rfl)
     | exact headStepCall_sound h
     | (obtain ⟨hc, hr⟩ := promotionCheck_eq_next h
        obtain ⟨rfl, rfl⟩ := StepResult.next.inj hr
@@ -597,6 +630,9 @@ theorem primStep_fill (fuel : Nat) {Ki : EctxItem} {e : LoweredExpr} (σ : State
     simp only [EctxItem.fill, primStep]
     rw [primStepArgs_map_val_append]
     simp [primStepArgs, he]
+  case checkEqR v₁ =>
+    have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
+    simp [EctxItem.fill, primStep, he, hv]
   all_goals simp [EctxItem.fill, primStep, he]
 
 /--
@@ -656,6 +692,14 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
       hin (.call f ws ms T) m (by rw [heq]; rfl)
   | ret m => simp [primStep, hin .ret m rfl]
   | frame m T => simp [primStep, hin (.frame T) m rfl]
+  | check kind m => simp [primStep, hin (.check kind) m rfl]
+  | checkEq m₁ m₂ =>
+    have h₁ := hin (.checkEqL m₂) m₁ rfl
+    cases m₁ with
+    | val v₁ =>
+      have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
+      simp [primStep, hin (.checkEqR v₁) m₂ rfl, hv]
+    | _ => simp_all [primStep, LoweredExpr.toOutcome?]
   | _ => rfl
 
 omit [RtSubChecker τ] in

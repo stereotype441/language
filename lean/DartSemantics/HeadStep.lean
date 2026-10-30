@@ -298,6 +298,21 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   completes normally with the null object.
   -/
   | frameVal {v : Value} {T : τ} {σ : State} : HeadStep (.frame (.val v) T) σ (.val .null) σ
+  /-- An intrinsic check that holds of its operand (`h`) completes normally. -/
+  | checkPass {kind : CheckKind} {v : Value} {σ : State} (h : kind.holds v = true) :
+      HeadStep (.check kind (.val v)) σ (.val .null) σ
+  /-- An intrinsic check that doesn't hold of its operand (`h`) throws. -/
+  | checkFail {kind : CheckKind} {v : Value} {σ : State} (h : kind.holds v = false) :
+      HeadStep (.check kind (.val v)) σ (.throwing (.error .expectFailed)) σ
+  /-- An intrinsic equality check whose operands are equal (`h`) completes normally. -/
+  | checkEqPass {v₁ v₂ : Value} {σ : State} (h : Value.primEq? v₁ v₂ = some true) :
+      HeadStep (.checkEq (.val v₁) (.val v₂)) σ (.val .null) σ
+  /--
+  An intrinsic equality check whose operands are different (`h`) throws. (One whose operands
+  can't be compared gets stuck.)
+  -/
+  | checkEqFail {v₁ v₂ : Value} {σ : State} (h : Value.primEq? v₁ v₂ = some false) :
+      HeadStep (.checkEq (.val v₁) (.val v₂)) σ (.throwing (.error .expectFailed)) σ
   /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.

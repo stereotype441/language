@@ -71,6 +71,8 @@ public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredEx
     obtain ⟨rfl, hl, rfl⟩ := h
     obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ hl
     exact ⟨rfl, rfl⟩
+  case checkEqL.checkEqR => exact absurd (LoweredExpr.checkEq.inj h).1 (h₁ _)
+  case checkEqR.checkEqL => exact absurd (LoweredExpr.checkEq.inj h).1.symm (h₂ _)
   all_goals simp_all
 
 variable [P : SemanticParams τ]
