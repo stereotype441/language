@@ -161,7 +161,8 @@ guarantee has failed, such as reading a variable that hasn't been assigned, or a
 promotion check. Giving such an expression no step makes the failure loud: the interpreter reports
 it, and the safety theorem (that well-typed programs don't get stuck) rules it out, so proving that
 theorem proves the guarantee. Until the semantics covers more of Dart, an expression can also get
-stuck because it uses something that isn't modeled yet.
+stuck because it uses something that isn't modeled yet: in particular, `unsupported`, the
+translator's placeholder for an unsupported construct, has no head step.
 -/
 public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → Prop where
   /-- The null literal evaluates to the null object. -/

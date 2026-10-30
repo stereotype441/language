@@ -117,6 +117,12 @@ public inductive LoweredExpr where
   `final`, it must still be unassigned.
   -/
   | variableSet (v : Variable) (m : LoweredExpr)
+  /--
+  A placeholder for a construct that the translator from Kernel doesn't support yet, of static
+  type `T`. `kind` names the construct (for example, the Kernel node's class), so that a program
+  that gets stuck on it says why. It has no head step: running it gets stuck.
+  -/
+  | unsupported (kind : String) (T : τ)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -202,6 +208,7 @@ public def LoweredExpr.typeOf :
   | block _ => Γ.Null
   | propertyGet _ _ T => T
   | variableSet _ m => m.typeOf
+  | unsupported _ T => T
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | varAt _ T _ => T

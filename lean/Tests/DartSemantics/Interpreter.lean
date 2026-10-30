@@ -381,6 +381,14 @@ info: stuck at: DartLang.LoweredExpr.var
 #guard_msgs in
 #eval runClosed verify (.var x ObjectQ)
 
+-- A construct that the translator doesn't support gets stuck, inside a null check.
+/--
+info: stuck at redex: DartLang.LoweredExpr.unsupported "Switch" (DartLang.SimpleType.ObjectQ)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100
+  (.block [.null, .nullCheck (.unsupported "Switch" ObjectQ)]) State.empty)
+
 /-! ## The redex of a stuck program -/
 
 -- `{ x!; x }`, with `x` not bound to a cell: the run gets stuck inside the null check, at the read

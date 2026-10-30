@@ -47,6 +47,7 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .propertyGet m p T => .propertyGet (m.resolve x ℓ) p T
   | .variableSet v m =>
     if v = x then .variableSetAt v ℓ (m.resolve x ℓ) else .variableSet v (m.resolve x ℓ)
+  | .unsupported kind T => .unsupported kind T
   | .val v => .val v
   | .throwing v => .throwing v
   | .varAt v T ℓ' => .varAt v T ℓ'

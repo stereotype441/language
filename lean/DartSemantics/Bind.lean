@@ -109,6 +109,7 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
       · subst hy
         simp [resolve, hx, resolve_comm hne m]
       · simp [resolve, hx, hy, resolve_comm hne m]
+  | .unsupported _ _ => rfl
   | .val _ => rfl
   | .throwing _ => rfl
   | .varAt _ _ _ => rfl
