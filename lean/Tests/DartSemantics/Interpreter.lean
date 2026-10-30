@@ -40,8 +40,8 @@ def verify : SemanticParams SimpleType := ⟨.verify, getterImpl⟩
 @[instance_reducible]
 def trust : SemanticParams SimpleType := ⟨.trust, getterImpl⟩
 
-def x : Variable := ⟨"x", ObjectQ⟩
-def y : Variable := ⟨"y", Object⟩
+def x : Variable := { name := "x", type := ObjectQ }
+def y : Variable := { name := "y", type := Object }
 
 /-- A promotable property, backed by an instance variable of the object in `σx`. -/
 def f : Property := ⟨"_f", ObjectQ, true⟩
@@ -196,7 +196,7 @@ def runClosed (P : SemanticParams SimpleType) (m : LoweredExpr) : Std.Format :=
 /--
 info: stuck at: DartLang.LoweredExpr.seq
   (DartLang.LoweredExpr.varAt
-    { name := "x", type := DartLang.SimpleType.ObjectQ }
+    { name := "x", type := DartLang.SimpleType.ObjectQ, isFinal := false }
     (DartLang.SimpleType.int)
     { n := 2 })
   (DartLang.LoweredExpr.block [])
@@ -212,12 +212,50 @@ info: stuck at: DartLang.LoweredExpr.seq
 -- An assignment to an object's own cell (which flow analysis never produces) gets stuck.
 /--
 info: stuck at: DartLang.LoweredExpr.variableSetAt
-  { name := "x", type := DartLang.SimpleType.ObjectQ }
+  { name := "x", type := DartLang.SimpleType.ObjectQ, isFinal := false }
   { n := 0 }
   (DartLang.LoweredExpr.val (DartLang.Value.null))
 -/
 #guard_msgs in
 #eval runWithX verify (.variableSetAt x ⟨0⟩ (.val .null))
+
+/-! ## `final` local variables -/
+
+/-- A `final` local variable `z`, with type `Object?`. -/
+def z : Variable := { name := "z", type := ObjectQ, isFinal := true }
+
+-- `{ final Object? z; z = x; z as int }`: a `final` variable can be assigned once.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
+#guard_msgs in
+#eval runWithX verify
+  (.block [.declare z ObjectQ false, .variableSet z (.var x ObjectQ), .as (.var z ObjectQ) int])
+
+-- `{ final Object? z; z }`: a `final` variable starts out unassigned, even if its type is nullable
+-- (flow analysis sets `startsNull` to `false`), so reading it before it's assigned gets stuck.
+/--
+info: stuck at: DartLang.LoweredExpr.seq
+  (DartLang.LoweredExpr.varAt
+    { name := "z", type := DartLang.SimpleType.ObjectQ, isFinal := true }
+    (DartLang.SimpleType.ObjectQ)
+    { n := 3 })
+  (DartLang.LoweredExpr.block [])
+-/
+#guard_msgs in
+#eval runWithX verify (.block [.declare z ObjectQ false, .var z ObjectQ])
+
+-- `{ final Object? z; z = null; z = null }` (which flow analysis rejects): assigning to a `final`
+-- variable that has already been assigned gets stuck.
+/--
+info: stuck at: DartLang.LoweredExpr.seq
+  (DartLang.LoweredExpr.variableSetAt
+    { name := "z", type := DartLang.SimpleType.ObjectQ, isFinal := true }
+    { n := 3 }
+    (DartLang.LoweredExpr.val (DartLang.Value.null)))
+  (DartLang.LoweredExpr.block [])
+-/
+#guard_msgs in
+#eval runWithX verify
+  (.block [.declare z ObjectQ false, .variableSet z .null, .variableSet z .null])
 
 /-! ## Programs that throw -/
 
@@ -247,7 +285,7 @@ info: stuck at: DartLang.LoweredExpr.variableSetAt
 /--
 info: stuck at: DartLang.LoweredExpr.seq
   (DartLang.LoweredExpr.varAt
-    { name := "y", type := DartLang.SimpleType.Object }
+    { name := "y", type := DartLang.SimpleType.Object, isFinal := false }
     (DartLang.SimpleType.Object)
     { n := 0 })
   (DartLang.LoweredExpr.block [])
@@ -259,7 +297,7 @@ info: stuck at: DartLang.LoweredExpr.seq
 -- promotion check fails.
 /--
 info: stuck at: DartLang.LoweredExpr.varAt
-  { name := "x", type := DartLang.SimpleType.ObjectQ }
+  { name := "x", type := DartLang.SimpleType.ObjectQ, isFinal := false }
   (DartLang.SimpleType.bool)
   { n := 2 }
 -/
@@ -301,7 +339,9 @@ info: stuck at: DartLang.LoweredExpr.propertyGet
 
 -- A variable that isn't bound to a cell can't be read.
 /--
-info: stuck at: DartLang.LoweredExpr.var { name := "x", type := DartLang.SimpleType.ObjectQ } (DartLang.SimpleType.ObjectQ)
+info: stuck at: DartLang.LoweredExpr.var
+  { name := "x", type := DartLang.SimpleType.ObjectQ, isFinal := false }
+  (DartLang.SimpleType.ObjectQ)
 -/
 #guard_msgs in
 #eval runClosed verify (.var x ObjectQ)
@@ -314,12 +354,12 @@ info: stuck at: DartLang.LoweredExpr.var { name := "x", type := DartLang.SimpleT
 info: out of fuel at: DartLang.LoweredExpr.seq
   (DartLang.LoweredExpr.nullCheck
     (DartLang.LoweredExpr.varAt
-      { name := "x", type := DartLang.SimpleType.ObjectQ }
+      { name := "x", type := DartLang.SimpleType.ObjectQ, isFinal := false }
       (DartLang.SimpleType.ObjectQ)
       { n := 2 }))
   (DartLang.LoweredExpr.block
     [DartLang.LoweredExpr.varAt
-       { name := "x", type := DartLang.SimpleType.ObjectQ }
+       { name := "x", type := DartLang.SimpleType.ObjectQ, isFinal := false }
        (DartLang.SimpleType.Object)
        { n := 2 }])
 -/

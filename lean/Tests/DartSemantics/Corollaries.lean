@@ -4,10 +4,10 @@ public import DartSemantics.Safety
 /-!
 # Corollaries of safety
 
-Two small programs whose safety depends on promotion, proved safe for every type representation
-that obeys `TypeLaws`, and every choice of `SemanticParams`. When
-`SemanticParams.promotionChecks` is `PromotionChecks.verify`, "safe" includes that the promoted
-read passes its promotion check: the promotion is sound.
+Small programs whose safety depends on promotion (and, for one, on demotion by an assignment),
+proved safe for every type representation that obeys `TypeLaws`, and every choice of
+`SemanticParams`. When `SemanticParams.promotionChecks` is `PromotionChecks.verify`, "safe"
+includes that every promoted read passes its promotion check: the promotions are sound.
 
 These are worked examples, by hand, of using the typing rules (`Compat`) and the safety theorem
 (`safety`) end to end: the flow analysis soundness theorem will produce proofs like these for every
@@ -51,17 +51,18 @@ public theorem castThenRead_typed {hlc : HasLC} {GF : BundledGFunctors} [DartGS 
 /--
 `{ x as T; x }`, started in state `σ` with its variables bound by `bindings`, never gets stuck, and
 every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`), if:
-- `U` is a subtype of `x`'s static type `Tx` (`hU`); and
+- `U` is a subtype of `x`'s static type `Tx` (`hU`);
+- the bindings are suitable (`hb`); and
 - `x` holds a value that satisfies `U` in `σ` (`hσ`).
 
 In particular, the read of `x` promoted to `T` never fails its promotion check.
 -/
 public theorem castThenRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     {x : Variable} {U Tx T : τ} (hU : U ≤ Tx) (σ : State) (bindings : List (Variable × Loc))
-    (hσ : FactHolds σ bindings (.var x U)) :
+    (hb : BindingsOk σ bindings) (hσ : FactHolds σ bindings (.var x U)) :
     adequate .NotStuck ((castThenRead x Tx T).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (castThenRead_typed hU) fun f hf => by
+  safety (GF := GF) σ bindings (castThenRead_typed hU) hb fun f hf => by
     rw [List.mem_singleton.1 hf]
     exact hσ
 
@@ -95,6 +96,7 @@ public theorem nullCheckThenRead_typed {hlc : HasLC} {GF : BundledGFunctors} [Da
 `{ x._f!; x._f }`, started in state `σ` with its variables bound by `bindings`, never gets stuck,
 and every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`), if:
 - `U` is a subtype of `x`'s static type `Tx` (`hU`);
+- the bindings are suitable (`hb`);
 - `x` holds a value that satisfies `U` in `σ` (`hx`); and
 - that value refers to an object with an instance variable named `p.name`, holding a value that
   satisfies `W` in `σ` (`hf`).
@@ -103,14 +105,73 @@ In particular, the read of `x._f` promoted to `NonNull W` never fails its promot
 -/
 public theorem nullCheckThenRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     (L : TypeLaws τ) {x : Variable} {p : Property} {U Tx W : τ} (hU : U ≤ Tx) (σ : State)
-    (bindings : List (Variable × Loc)) (hx : FactHolds σ bindings (.var x U))
-    (hf : FactHolds σ bindings (.field x p.name W)) :
+    (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x U)) (hf : FactHolds σ bindings (.field x p.name W)) :
     adequate .NotStuck ((nullCheckThenRead x Tx p W).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (nullCheckThenRead_typed L hU) fun f hf' => by
-    simp only [List.mem_cons, List.not_mem_nil, or_false] at hf'
+  safety (GF := GF) σ bindings (nullCheckThenRead_typed L hU) hb fun f hf' => by
+    simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf'
     rcases hf' with rfl | rfl
     · exact hx
     · exact hf
+
+/--
+The program `{ x as T; x = y; x }`, where `x` has static type `Tx`, `y` has static type `Ty`, and
+the last read of `x` has static type `Ty`: the assignment demotes `x` from `T`, the type the cast
+promoted it to.
+-/
+@[expose]
+public def castAssignRead (x : Variable) (Tx T : τ) (y : Variable) (Ty : τ) : LoweredExpr :=
+  .block [.as (.var x Tx) T, .variableSet x (.var y Ty), .var x Ty]
+
+/--
+`{ x as T; x = y; x }` is semantically well typed, with type `Null`, given that `x` is in
+scope and holds a value that satisfies `Ux`, and `y` holds a value that satisfies `U`
+(`[.var x Ux, .decl x, .var y U]`), if:
+- `x` isn't `final` (`hnf`);
+- `Ux` is a subtype of `x`'s static type `Tx` (`hUx`); and
+- `U` is a subtype of `y`'s static type `Ty` (`hU`).
+
+It guarantees afterwards that `x` holds a value that satisfies `Ty` (`.var x Ty`), but not that it
+holds a value that satisfies `T`: the promotion to `T` is forgotten (`Ctx.forget … x`).
+-/
+public theorem castAssignRead_typed {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
+    [SemanticParams τ] {x y : Variable} {Ux Tx T U Ty : τ} (hnf : x.isFinal = false)
+    (hUx : Ux ≤ Tx) (hU : U ≤ Ty) :
+    SemTyped GF [.var x Ux, .decl x, .var y U] (castAssignRead x Tx T y Ty) Γ.Null
+      (fun _ => .var x Ty :: .decl x ::
+        Ctx.forget [.var x T, .var x Ux, .decl x, .var y U] x) := by
+  refine SemTyped.block_cons (fun _ _ _ h => by cases h)
+    (SemTyped.as_var (List.mem_cons_self ..) hUx) ?_
+  refine SemTyped.block_cons (fun _ _ _ h => by cases h)
+    (SemTyped.variableSet hnf (by simp) (SemTyped.var (by simp) hU)) ?_
+  exact SemTyped.block_cons (fun _ _ _ h => by cases h)
+    (SemTyped.var (List.mem_cons_self ..) le_rfl) (SemTyped.block_nil _)
+
+/--
+`{ x as T; x = y; x }`, started in state `σ` with its variables bound by `bindings`, never gets
+stuck, and every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`), if:
+- `x` isn't `final` (`hnf`);
+- `Ux` is a subtype of `x`'s static type `Tx` (`hUx`);
+- `U` is a subtype of `y`'s static type `Ty` (`hU`);
+- the bindings are suitable (`hb`);
+- `x` holds a value that satisfies `Ux` in `σ` (`hx`); and
+- `y` holds a value that satisfies `U` in `σ` (`hy`).
+
+In particular, the last read of `x`, demoted to `Ty`, never fails its promotion check.
+-/
+public theorem castAssignRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
+    {x y : Variable} {Ux Tx T U Ty : τ} (hnf : x.isFinal = false) (hUx : Ux ≤ Tx) (hU : U ≤ Ty)
+    (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x Ux)) (hy : FactHolds σ bindings (.var y U)) :
+    adequate .NotStuck ((castAssignRead x Tx T y Ty).bindVariables bindings) σ
+      (fun o _ => OutcomeOk Γ.Null o) :=
+  safety (GF := GF) σ bindings (castAssignRead_typed (T := T) hnf hUx hU) hb fun f hf => by
+    simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf
+    rcases hf with rfl | rfl | rfl
+    · exact hx
+    · obtain ⟨ℓ, -, -, hl, -⟩ := hx
+      exact ⟨ℓ, hl⟩
+    · exact hy
 
 end DartSemantics

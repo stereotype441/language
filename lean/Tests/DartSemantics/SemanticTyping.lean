@@ -46,7 +46,7 @@ def verify : SemanticParams SimpleType := ⟨.verify, getterImpl⟩
 @[instance_reducible]
 def trust : SemanticParams SimpleType := ⟨.trust, getterImpl⟩
 
-def x : Variable := ⟨"x", ObjectQ⟩
+def x : Variable := { name := "x", type := ObjectQ }
 
 /-- A promotable property whose static type is `Object?`. -/
 def f : Property := ⟨"_f", ObjectQ, true⟩
@@ -59,22 +59,37 @@ attribute [local instance] verify
 With promotion checks, `{ x as int; x }` is safe whenever `x` holds a value that satisfies
 `Object?`: the second read of `x`, promoted to `int`, passes its promotion check.
 -/
-example (σ : State) (bindings : List (Variable × Loc)) (h : FactHolds σ bindings (.var x ObjectQ)) :
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (h : FactHolds σ bindings (.var x ObjectQ)) :
     adequate .NotStuck ((castThenRead x ObjectQ int).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings h
+  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h
 
 /--
 With promotion checks, `{ x._f!; x._f }` is safe whenever `x` refers to an object whose instance
 variable `_f` holds a value that satisfies `Object?`: the second read of `x._f`, promoted to
 `Object`, passes its promotion check.
 -/
-example (σ : State) (bindings : List (Variable × Loc)) (hx : FactHolds σ bindings (.var x Object))
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x Object))
     (hf : FactHolds σ bindings (.field x "_f" ObjectQ)) :
     adequate .NotStuck ((nullCheckThenRead x ObjectQ f ObjectQ).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
   nullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) typeLaws (by decide) σ bindings
-    hx hf
+    hb hx hf
+
+def y : Variable := { name := "y", type := ObjectQ }
+
+/--
+With promotion checks, `{ x as int; x = y; x }` is safe whenever `x` and `y` hold values that
+satisfy `Object?`: the last read of `x` is demoted to `Object?` by the assignment, and passes its
+promotion check.
+-/
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hx : FactHolds σ bindings (.var x ObjectQ)) (hy : FactHolds σ bindings (.var y ObjectQ)) :
+    adequate .NotStuck ((castAssignRead x ObjectQ int y ObjectQ).bindVariables bindings) σ
+      (fun o _ => OutcomeOk Null o) :=
+  castAssignRead_safe (GF := DartS SimpleType) rfl le_rfl le_rfl σ bindings hb hx hy
 
 end Verify
 
@@ -83,10 +98,11 @@ section Trust
 attribute [local instance] trust
 
 /-- Without promotion checks, `{ x as int; x }` is safe too. -/
-example (σ : State) (bindings : List (Variable × Loc)) (h : FactHolds σ bindings (.var x ObjectQ)) :
+example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (h : FactHolds σ bindings (.var x ObjectQ)) :
     adequate .NotStuck ((castThenRead x ObjectQ int).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings h
+  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h
 
 end Trust
 

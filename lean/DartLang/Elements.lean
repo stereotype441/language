@@ -8,19 +8,24 @@ variable {τ : Type} [DartTypeRepr τ]
 /--
 A local variable or formal parameter.
 
-A variable is identified by its name and declared type, so two distinct variables with the same
-name and declared type (for example, one declared in a nested block that shadows the other) are
-equal. Equality therefore doesn't respect scoping: anything that looks variables up by equality,
-such as the semantics when it resolves references to declarations, or flow analysis when it tracks
-what it knows about each variable, must account for shadowing itself. A later change is expected
-to give each variable a unique identity during elaboration (for example, a De Bruijn index), which
-will remove this subtlety.
+A variable is identified by its name, declared type and finality, so two distinct variables with
+the same name, declared type and finality (for example, one declared in a nested block that
+shadows the other) are equal. Equality therefore doesn't respect scoping: anything that looks
+variables up by equality, such as the semantics when it resolves references to declarations, or
+flow analysis when it tracks what it knows about each variable, must account for shadowing itself.
+A later change is expected to give each variable a unique identity during elaboration (for
+example, a De Bruijn index), which will remove this subtlety.
 -/
 public structure Variable where
   /-- The variable's name. -/
   name : String
   /-- The variable's declared type. -/
   type : τ
+  /--
+  Whether the variable is declared `final` (as in Kernel's `VariableDeclaration.isFinal`). A
+  `final` local variable can be assigned only while it is unassigned.
+  -/
+  isFinal : Bool := false
   deriving Repr, BEq, DecidableEq
 
 local notation "Variable" => Variable (τ := τ)
@@ -38,7 +43,7 @@ public instance Variable.instLawfulBEq : LawfulBEq Variable where
     simp [BEq.beq, instBEqVariable.beq]
 
   eq_of_beq := by
-    rintro ⟨n, T⟩ ⟨n', T'⟩
+    rintro ⟨n, T, f⟩ ⟨n', T', f'⟩
     simp [BEq.beq, instBEqVariable.beq]
 
 /-- Hashing variables is lawful, so variables can be used as hash map keys. -/

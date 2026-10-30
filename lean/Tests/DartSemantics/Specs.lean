@@ -36,7 +36,7 @@ example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType) [.nullCheck .n
   ipureintro
   trivial
 
-def x : Variable := ⟨"x", ObjectQ⟩
+def x : Variable := { name := "x", type := ObjectQ }
 
 /-- `{ Object? x; x! }` throws: a declared nullable variable starts out null. -/
 example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
@@ -44,6 +44,24 @@ example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
     ⌜o = DartLang.Outcome.throwing (.error .typeError)⌝ }} := by
   iintro
   wp_alloc ℓ Hl
+  wp_pures
+  wp_load Hl
+  wp_pures
+  ipureintro
+  trivial
+
+/--
+`{ Object? x; x = true; x! }` completes normally: after the assignment, `x` holds `true`, so the
+null check succeeds. (`true` is written as a value, since `LoweredExpr` has no boolean literals
+yet.)
+-/
+example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
+    [.declare x ObjectQ true, .variableSet x (.val (.bool true)), .nullCheck (.var x ObjectQ)])
+    {{ o, ⌜o = DartLang.Outcome.normal .null⌝ }} := by
+  iintro
+  wp_alloc ℓ Hl
+  wp_pures
+  wp_store Hl
   wp_pures
   wp_load Hl
   wp_pures
