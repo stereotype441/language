@@ -33,6 +33,15 @@ program's execution:
   the variable's cell, which afterwards holds the value assigned. If the variable may be `final`,
   the cell must be unassigned: that side condition is proved when the variable isn't `final`, or
   the cell is `.uninit`, and otherwise left as a goal after the main one.
+- `wp_call hf`: take the step of a call of a top-level function whose arguments are all values,
+  given the function table's declaration of it (`hf`). `dart_bind_params` then binds the formal
+  parameters in the body, once their cells' locations are concrete.
+- `wp_call_spec H`: take a call of a top-level function whose arguments are all values, using its
+  specification `H` (a `FunSpec`).
+
+`wp_pures` also takes the steps of literals, returns (and their propagation), the body of a
+running call (`frame`) once it has completed, and intrinsic checks whose answer `rfl` can compute.
+To reason about a function's body separately from the call's outcome, apply `tac_wp_frame`.
 
 Steps that involve a run-time subtype check (cast expressions and is-expressions) or a getter that
 is user code are taken by applying the laws in `PrimitiveLaws.lean` directly.
@@ -77,8 +86,50 @@ public theorem tidy_fill_propertyGet (p : Property) (T : τ) (m : LoweredExpr) :
 public theorem tidy_fill_seq (m₂ m : LoweredExpr) : (EctxItem.seq m₂).fill m = .seq m m₂ := rfl
 public theorem tidy_fill_variableSetAt (x : Variable) (ℓ : Loc) (m : LoweredExpr) :
     (EctxItem.variableSetAt x ℓ).fill m = .variableSetAt x ℓ m := rfl
+public theorem tidy_toExpr_returning (v : Value) :
+    (DartLang.Outcome.returning v).toExpr = LoweredExpr.returning v := rfl
+public theorem tidy_fill_call (f : String) (vs : List Value) (ms : List LoweredExpr) (T : τ)
+    (m : LoweredExpr) : (EctxItem.call f vs ms T).fill m = .call f (vs.map .val ++ m :: ms) T :=
+  rfl
+public theorem tidy_fill_ret (m : LoweredExpr) : (EctxItem.ret (τ := τ)).fill m = .ret m := rfl
+public theorem tidy_fill_frame (T : τ) (m : LoweredExpr) : (EctxItem.frame T).fill m = .frame m T :=
+  rfl
+public theorem tidy_fill_check (kind : CheckKind) (m : LoweredExpr) :
+    (EctxItem.check (τ := τ) kind).fill m = .check kind m := rfl
+public theorem tidy_fill_checkEqL (m₂ m : LoweredExpr) :
+    (EctxItem.checkEqL m₂).fill m = .checkEq m m₂ := rfl
+public theorem tidy_fill_checkEqR (v₁ : Value) (m : LoweredExpr) :
+    (EctxItem.checkEqR v₁).fill m = .checkEq (.val v₁) m := rfl
 
 variable [Γ : DartRuntimeTypeRepr τ]
+
+/-! Head steps that `dart_pure_head_step` uses for the arguments of a call. -/
+
+/--
+An exception thrown by an argument of a call propagates out of the call: if the arguments split
+into values, then throwing `v`, then the rest (`hsplit`), the call steps to throwing `v`.
+-/
+public theorem HeadStep.bubbleException_call [SemanticParams τ] {f : String}
+    {args : List LoweredExpr} {T : τ} {vs : List Value} {v : Value} {ms : List LoweredExpr}
+    {σ : State (τ := τ)} (hsplit : LoweredExpr.splitVals args = (vs, .throwing v :: ms)) :
+    HeadStep (.call f args T) σ (.throwing v) σ := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit] at h
+  subst h
+  exact .bubbleException (Ki := .call f vs ms T)
+
+/--
+A return in an argument of a call propagates out of the call: if the arguments split into values,
+then returning `v`, then the rest (`hsplit`), the call steps to returning `v`.
+-/
+public theorem HeadStep.bubbleReturn_call [SemanticParams τ] {f : String}
+    {args : List LoweredExpr} {T : τ} {vs : List Value} {v : Value} {ms : List LoweredExpr}
+    {σ : State (τ := τ)} (hsplit : LoweredExpr.splitVals args = (vs, .returning v :: ms)) :
+    HeadStep (.call f args T) σ (.returning v) σ := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit] at h
+  subst h
+  exact .bubbleReturn (Ki := .call f vs ms T) rfl
 variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF] [P : SemanticParams τ]
 -- (The type of `Φ` is spelled out because a local notation doesn't work in a `variable` binder; see
 -- the same binder in `PrimitiveLaws.lean`.)
@@ -192,6 +243,73 @@ public theorem tac_wp_store {x : Variable} {ℓ : Loc} {c : Cell} {w : Value}
     Entails' Δ (WP (LoweredExpr.variableSetAt x ℓ (.val w)) @ s; E {{ Φ }}) :=
   (show Δ ⊢ _ from H).trans (wp_variableSetAt hc hfin)
 
+/--
+The proof-mode form of `wp_value` for an expression that is returning `v`: to prove that
+`.returning v` satisfies `Φ` from the hypotheses `Δ`, prove `Φ (.returning v)` (`H`).
+-/
+public theorem tac_wp_returning {v : Value} (H : Entails' Δ (Φ (.returning v))) :
+    Entails' Δ (WP (LoweredExpr.returning v) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans (wp_value' (v := DartLang.Outcome.returning v))
+
+/--
+The proof-mode form of `wp_bind_item` for the argument of a call in evaluation position: if the
+arguments split into values `vs`, then an argument `m` that hasn't completed, then the rest `ms`
+(`hsplit` and `_hm`), then to prove that the call satisfies `Φ` from the hypotheses `Δ`, prove
+that `m` satisfies the postcondition that plugging its outcome `o` back into the call satisfies
+`Φ` (`H`). (`wp_bind` finds the split by computing `LoweredExpr.splitVals`.)
+-/
+public theorem tac_wp_bind_call {f : String} {args : List LoweredExpr} {T : τ} {vs : List Value}
+    {m : LoweredExpr} {ms : List LoweredExpr} (hsplit : LoweredExpr.splitVals args = (vs, m :: ms))
+    (_hm : m.toOutcome? = none)
+    (H : Entails' Δ (WP m @ s; E {{ o, WP ((EctxItem.call f vs ms T).fill o.toExpr) @ s; E
+      {{ Φ }} }})) :
+    Entails' Δ (WP (LoweredExpr.call f args T) @ s; E {{ Φ }}) := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit] at h
+  subst h
+  exact (show Δ ⊢ _ from H).trans (wp_bind_item (.call f vs ms T))
+
+/--
+The proof-mode form of `wp_call`, for a call whose arguments are all values `vs` (`hsplit`): to
+prove that it satisfies `Φ` from the hypotheses `Δ`, where the function table declares `f` as `d`
+(`hf`) with one formal parameter per argument (`hlen`), prove `wp_call`'s premise (`H`).
+-/
+public theorem tac_wp_call {f : String} {args : List LoweredExpr} {T : τ} {vs : List Value}
+    {d : FunctionDecl (τ := τ)} (hsplit : LoweredExpr.splitVals args = (vs, []))
+    (hf : P.functions f = some d) (hlen : d.params.length = vs.length)
+    (H : Entails' Δ iprop(▷ (∀ ℓs, PointsToVals ℓs vs -∗
+        WP (LoweredExpr.frame (d.body.bindVariables (d.params.zip ℓs)) T) @ s; E {{ Φ }}))) :
+    Entails' Δ (WP (LoweredExpr.call f args T) @ s; E {{ Φ }}) := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit, List.append_nil] at h
+  subst h
+  exact (show Δ ⊢ _ from H).trans (wp_call hf hlen)
+
+/--
+The proof-mode form of `FunSpec.wp_call`, for a call whose arguments are all values `vs`
+(`hsplit`): to prove that it satisfies `Φ` from the hypotheses `Δ`, prove that `f` meets a
+specification, its precondition holds, and its postcondition implies `Φ` (`H`).
+-/
+public theorem tac_wp_call_spec {f : String} {args : List LoweredExpr} {T : τ} {vs : List Value}
+    {Pre : List Value → IProp GF} {Post : List Value → DartLang.Outcome (τ := τ) → IProp GF}
+    {Φ : DartLang.Outcome (τ := τ) → IProp GF} (hsplit : LoweredExpr.splitVals args = (vs, []))
+    (H : Entails' Δ iprop(FunSpec f Pre Post ∗ Pre vs ∗ ∀ o, Post vs o -∗ Φ o)) :
+    Entails' Δ (WP (LoweredExpr.call f args T) {{ Φ }}) := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit, List.append_nil] at h
+  subst h
+  exact (show Δ ⊢ _ from H).trans FunSpec.wp_call
+
+/--
+The proof-mode form of `wp_frame`: to prove that the body `m` of a running call satisfies `Φ` from
+the hypotheses `Δ`, prove that `m` satisfies the postcondition that `Φ` holds, one step later, of
+the call's outcome (`H`; see `frameResult`).
+-/
+public theorem tac_wp_frame {m : LoweredExpr} {T : τ}
+    (H : Entails' Δ (WP m @ s; E {{ o, ▷ Φ (frameResult o) }})) :
+    Entails' Δ (WP (LoweredExpr.frame m T) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans wp_frame
+
 end DartSemantics
 
 /-- Take a head step that doesn't depend on, or change, the state (for `wp_pure`). -/
@@ -216,17 +334,50 @@ macro_rules
     | exact DartSemantics.HeadStep.bubbleException (Ki := .cond _ _ _)
     | exact DartSemantics.HeadStep.bubbleException (Ki := .propertyGet _ _)
     | exact DartSemantics.HeadStep.bubbleException (Ki := .seq _)
-    | exact DartSemantics.HeadStep.bubbleException (Ki := .variableSetAt _ _))
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .variableSetAt _ _)
+    | exact DartSemantics.HeadStep.ret
+    | exact DartSemantics.HeadStep.frameReturning
+    | exact DartSemantics.HeadStep.frameVal
+    | exact DartSemantics.HeadStep.checkPass rfl
+    | exact DartSemantics.HeadStep.checkFail rfl
+    | exact DartSemantics.HeadStep.checkEqPass rfl
+    | exact DartSemantics.HeadStep.checkEqFail rfl
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .ret)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .frame _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .check _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .checkEqL _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .checkEqR _)
+    | exact DartSemantics.HeadStep.bubbleException_call rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .nullCheck) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .as _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .is _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .cond _ _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .propertyGet _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .seq _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .variableSetAt _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .ret) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .check _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .checkEqL _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .checkEqR _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn_call rfl)
 
-/-- Tidy the goal after a step: reduce `Outcome.toExpr` and beta-reduce postconditions. -/
+/--
+Tidy the goal after a step: reduce `Outcome.toExpr`, `EctxItem.fill` and `frameResult`, the list
+operations that plugging into a call's arguments leaves, and beta-reduce postconditions.
+-/
 syntax "dart_wp_tidy" : tactic
 
 macro_rules
   | `(tactic| dart_wp_tidy) =>
     `(tactic| try simp only [DartSemantics.tidy_toExpr_normal, DartSemantics.tidy_toExpr_throwing,
+      DartSemantics.tidy_toExpr_returning,
       DartSemantics.tidy_fill_nullCheck, DartSemantics.tidy_fill_as, DartSemantics.tidy_fill_is,
       DartSemantics.tidy_fill_cond, DartSemantics.tidy_fill_propertyGet,
-      DartSemantics.tidy_fill_seq, DartSemantics.tidy_fill_variableSetAt])
+      DartSemantics.tidy_fill_seq, DartSemantics.tidy_fill_variableSetAt,
+      DartSemantics.tidy_fill_call, DartSemantics.tidy_fill_ret, DartSemantics.tidy_fill_frame,
+      DartSemantics.tidy_fill_check, DartSemantics.tidy_fill_checkEqL,
+      DartSemantics.tidy_fill_checkEqR, DartSemantics.frameResult, List.map_cons, List.map_nil,
+      List.cons_append, List.nil_append])
 
 /--
 When the expression has completed, replace its weakest precondition with the postcondition applied
@@ -238,7 +389,8 @@ macro_rules
   | `(tactic| wp_value) => `(tactic|
     ((first
       | refine DartSemantics.tac_wp_val ?_
-      | refine DartSemantics.tac_wp_throwing ?_); dart_wp_tidy))
+      | refine DartSemantics.tac_wp_throwing ?_
+      | refine DartSemantics.tac_wp_returning ?_); dart_wp_tidy))
 
 /-- Take one head step that doesn't depend on, or change, the state. -/
 syntax "wp_pure" : tactic
@@ -264,7 +416,13 @@ macro_rules
       | refine DartSemantics.tac_wp_bind (.cond _ _ _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.propertyGet _ _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.seq _) (by rfl) ?_
-      | refine DartSemantics.tac_wp_bind (.variableSetAt _ _) (by rfl) ?_); dart_wp_tidy))
+      | refine DartSemantics.tac_wp_bind (.variableSetAt _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind .ret (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.frame _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.check _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.checkEqL _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.checkEqR _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind_call (by rfl) (by rfl) ?_); dart_wp_tidy))
 
 /--
 Take every step that doesn't involve the state: repeat `wp_value`, `wp_pure` and `wp_bind` until
@@ -371,3 +529,45 @@ macro_rules
      inext
      iintro $h:ident
      dart_wp_tidy))
+
+/--
+`wp_call hf` takes the step of a call of top-level function `f` whose arguments are all values,
+using `hf : P.functions f = some d` (the function table's declaration of `f`). The number of
+arguments is checked by `rfl`. Afterwards, the goal is `wp_call`'s premise without its `▷`: for
+all locations `ℓs`, given the cells of the formal parameters (`PointsToVals ℓs vs`), the body
+satisfies the postcondition.
+-/
+syntax "wp_call " term : tactic
+
+macro_rules
+  | `(tactic| wp_call $hf) => `(tactic|
+    (refine DartSemantics.tac_wp_call (by rfl) $hf (by rfl) ?_
+     inext))
+
+/--
+`wp_call_spec H` takes a call of a top-level function `f` whose arguments are all values, using
+the specification `H : FunSpec f Pre Post` in the context. Afterwards, the goal is the
+precondition, and that the postcondition implies the goal's postcondition
+(`Pre vs ∗ ∀ o, Post vs o -∗ Φ o`).
+-/
+syntax "wp_call_spec " ident : tactic
+
+macro_rules
+  | `(tactic| wp_call_spec $h) => `(tactic|
+    (apply DartSemantics.tac_wp_call_spec (by rfl)
+     isplitr
+     · iexact $h:ident))
+
+/--
+Bind the formal parameters of a function's body to their cells, after `wp_call` or in a proof of
+`FunSpec.intro`'s premise, once the list of locations is concrete: compute
+`body.bindVariables (params.zip ℓs)`, resolving each parameter in the body to its cell.
+-/
+syntax "dart_bind_params" : tactic
+
+macro_rules
+  | `(tactic| dart_bind_params) => `(tactic|
+    simp (config := { decide := true }) only [List.zip_cons_cons, List.zip_nil_left,
+      List.zip_nil_right, DartLang.LoweredExpr.bindVariables, List.foldl_cons, List.foldl_nil,
+      DartLang.LoweredExpr.resolve, DartLang.LoweredExpr.resolveBlock,
+      DartLang.LoweredExpr.resolveList, ite_true, ite_false, Bool.false_eq_true, ↓reduceIte])

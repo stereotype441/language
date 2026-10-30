@@ -44,6 +44,55 @@ example : ⊢@{IProp GF} WP (LoweredExpr.cond (τ := SimpleType) (.bool true) (.
   ipureintro
   trivial
 
+/-- `Expect.equals(1, 1)` passes: it completes normally with the null object. -/
+example : ⊢@{IProp GF} WP (LoweredExpr.checkEq (τ := SimpleType) (.int 1) (.int 1))
+    {{ o, ⌜o = DartLang.Outcome.normal .null⌝ }} := by
+  iintro
+  wp_pures
+  ipureintro
+  trivial
+
+/-- `Expect.isNull(true)` fails: it throws. -/
+example : ⊢@{IProp GF} WP (LoweredExpr.check (τ := SimpleType) .isNull (.bool true))
+    {{ o, ⌜o = DartLang.Outcome.throwing (.error .expectFailed)⌝ }} := by
+  iintro
+  wp_pures
+  ipureintro
+  trivial
+
+/--
+The body `{ return 1; 2; }` of a running call (`frame`) makes the call complete normally with `1`:
+the return propagates out of the block, and `wp_frame` turns it into completing normally.
+-/
+example : ⊢@{IProp GF} WP (LoweredExpr.frame (τ := SimpleType) (.block [.ret (.int 1), .int 2])
+    int) {{ o, ⌜o = DartLang.Outcome.normal (.int 1)⌝ }} := by
+  iintro
+  refine DartSemantics.tac_wp_frame ?_
+  wp_pures
+  inext
+  ipureintro
+  trivial
+
+/--
+A call of `int one() { return 1; }` returns `1`, for every function table that declares `one` that
+way (`hf`). `wp_call` takes the call's step, and the body then runs with no parameters.
+-/
+example
+    (hf : SemanticParams.functions "one" = some ⟨[], LoweredExpr.ret (τ := SimpleType) (.int 1)⟩) :
+    ⊢@{IProp GF} WP (LoweredExpr.call (τ := SimpleType) "one" [] int)
+      {{ o, ⌜o = DartLang.Outcome.normal (.int 1)⌝ }} := by
+  iintro
+  wp_call hf
+  iintro %ℓs Hls
+  rcases ℓs with _ | ⟨ℓ, ℓs⟩
+  · dart_bind_params
+    wp_pures
+    ipureintro
+    trivial
+  · simp only [PointsToVals]
+    iexfalso
+    iexact Hls
+
 def x : Variable := { name := "x", type := ObjectQ }
 
 /-- `{ Object? x; x! }` throws: a declared nullable variable starts out null. -/

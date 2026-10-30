@@ -9,7 +9,12 @@ import all Iris.ProgramLogic.EctxLifting
 # Primitive laws of the program logic
 
 One weakest-precondition law for each head-step rule (`HeadStep`), plus bind. Each law is stated
-for every choice of `SemanticParams`.
+for every choice of `SemanticParams`. For calls, there are also specifications of functions
+(`FunSpec`, a Texan triple for every call of a function): a law for using one (`FunSpec.wp_call`),
+and one for proving one by Löb induction (`FunSpec.intro`), which works for recursive functions. A
+function's body runs as the body of a running call (`frame`), and a weakest precondition's
+postcondition, a predicate on outcomes, says what holds if the body returns
+(`Outcome.returning`); `wp_frame` turns that into the call's outcome.
 
 Run-time subtype checks and promotion checks need the dynamic type of a value. For the null object
 and booleans it's fixed; for an object it's recorded in the object's own cell, which never changes.
@@ -263,6 +268,18 @@ public theorem ObjectHeaders.update {σ : State} {ℓ : Loc} {c₀ c : Cell}
   refine (BigSepM.bigSepM_delete (by rw [State.get?_toMap]; exact h)).1.trans ?_
   refine .trans ?_ BigSepM.bigSepM_insert_delete.2
   exact sep_mono_left ((cellHeader_of_ne_object hc₀).1.trans (cellHeader_of_ne_object hc).2)
+
+/--
+Ownership of the cells at locations `ℓs`, holding the values `vs`, in order: `ℓ ↦ .val v` for the
+cell at each `ℓ` in `ℓs` and the value `v` in the same position in `vs`. If the lists have
+different lengths, it's `False`. (A call gives this for the cells of its formal parameters,
+holding their arguments; see `wp_call`.)
+-/
+@[expose]
+public def PointsToVals : List Loc → List Value → IProp GF
+  | [], [] => iprop(emp)
+  | ℓ :: ℓs, v :: vs => iprop(ℓ ↦ (.val v : Cell) ∗ PointsToVals ℓs vs)
+  | _, _ => iprop(False)
 
 end
 
@@ -839,6 +856,285 @@ public theorem wp_propertyGetGetter {v : Value} {p : Property} {T : τ} (Q : Val
     rfl
   · iapply HΦ $$ %w %S %hq Htyw %hSp
 
+/-! ### Calls, returns and intrinsic checks -/
+
+omit Γ P in
+/--
+Allocating a cell for each value in `vs` (`σ.allocAll (vs.map Cell.val)`), as a call does for its
+formal parameters, can be mirrored in the ghost state: given the state interpretation for `σ`
+(`genHeapInterp σ.toMap ∗ ObjectHeaders σ`), a basic update gives the state interpretation for the
+state afterwards, and the ownership of the new cells (`PointsToVals … vs`).
+-/
+public theorem allocAll_vals (σ : State) (vs : List Value) :
+    genHeapInterp σ.toMap ∗ ObjectHeaders (GF := GF) σ ⊢
+      |==> ((genHeapInterp (σ.allocAll (vs.map Cell.val)).2.toMap ∗
+        ObjectHeaders (σ.allocAll (vs.map Cell.val)).2) ∗
+        PointsToVals (σ.allocAll (vs.map Cell.val)).1 vs) := by
+  induction vs generalizing σ with
+  | nil =>
+    simp only [List.map_nil, State.allocAll, PointsToVals]
+    iintro ⟨Hh, Hhdr⟩
+    imodintro
+    isplitl
+    · isplitl [Hh]
+      · iexact Hh
+      · iexact Hhdr
+    · itrivial
+  | cons v vs ih =>
+    have hfresh : get? σ.toMap σ.fresh = none := by rw [State.get?_toMap, State.lookup_fresh]
+    have ih' := ih (σ.alloc (.val v))
+    rw [State.toMap_alloc] at ih'
+    simp only [List.map_cons, State.allocAll, PointsToVals]
+    iintro ⟨Hh, #Hhdr⟩
+    imod genHeap_alloc (v := (.val v : Cell)) hfresh $$ Hh with ⟨Hh, Hl, -⟩
+    ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ) (c := .val v)
+      (fun _ _ h => by cases h) $$ Hhdr
+    imod ih' $$ [$Hh $Hhdr'] with ⟨Hrest, Hls⟩
+    imodintro
+    isplitl [Hrest]
+    · iexact Hrest
+    · isplitl [Hl]
+      · iexact Hl
+      · iexact Hls
+
+/--
+A return statement whose operand has evaluated to `v` starts returning `v`: it satisfies a
+postcondition `Φ` that holds, one step later, of returning `v` (`▷ Φ (.returning v)`).
+-/
+public theorem wp_ret {v : Value} :
+    ▷ Φ (.returning v) ⊢ WP (LoweredExpr.ret (.val v)) @ s; E {{ Φ }} := by
+  refine (later_mono (wp_value' (v := Outcome.returning v))).trans
+    (wp_pure_step (by rfl) fun _ => ?_)
+  exact .ret
+
+/--
+When the body of a running call returns `v`, the call completes normally with `v`: it satisfies a
+postcondition `Φ` that holds, one step later, of completing normally with `v` (`▷ Φ (.normal v)`).
+-/
+public theorem wp_frame_returning {v : Value} {T : τ} :
+    ▷ Φ (.normal v) ⊢ WP (LoweredExpr.frame (.returning v) T) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .frameReturning
+
+/--
+When the body of a running call completes normally (falling off its end), the call completes
+normally with the null object: it satisfies a postcondition `Φ` that holds, one step later, of
+completing normally with the null object (`▷ Φ (.normal .null)`).
+-/
+public theorem wp_frame_val {v : Value} {T : τ} :
+    ▷ Φ (.normal .null) ⊢ WP (LoweredExpr.frame (.val v) T) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .frameVal
+
+/--
+The outcome of a call whose body completed with outcome `o`: a return of `v` becomes completing
+normally with `v`, completing normally (falling off the end of the body) becomes completing
+normally with the null object, and an exception propagates.
+-/
+@[expose, simp]
+public def frameResult : DartLang.Outcome (τ := τ) → DartLang.Outcome (τ := τ)
+  | .normal _ => .normal .null
+  | .returning v => .normal v
+  | .throwing v => .throwing v
+
+/--
+The body `m` of a running call: `.frame m T` satisfies a postcondition `Φ` if `m` satisfies the
+postcondition that `Φ` holds, one step later, of the call's outcome for each outcome `o` of the
+body (`WP m {{ o, ▷ Φ (frameResult o) }}`). This turns a return into completing normally (see
+`frameResult`), so a specification of a function's body can describe its returns with
+postconditions on `Outcome.returning`.
+-/
+public theorem wp_frame {m : LoweredExpr} {T : τ} :
+    WP m @ s; E {{ o, ▷ Φ (frameResult o) }} ⊢ WP (LoweredExpr.frame m T) @ s; E {{ Φ }} := by
+  refine (wp_mono fun o => ?_).trans (wp_bind_item (.frame T))
+  cases o with
+  | normal v => exact wp_frame_val
+  | returning v => exact wp_frame_returning
+  | throwing v => exact wp_bubble_exception (.frame T) v
+
+/--
+A call of a top-level function `f`, whose arguments have evaluated to `vs`, allocates a cell for
+each formal parameter, holding its argument, and runs the body. It satisfies a postcondition `Φ` if:
+- the function table declares `f` as `d` (`hf`), with one formal parameter per argument (`hlen`);
+  and
+- one step later (`▷`), for all locations `ℓs`, given the ownership of cells at `ℓs` holding the
+  arguments (`PointsToVals ℓs vs`), the body, with the formal parameters bound to those cells,
+  run as the body of a running call, satisfies `Φ`
+  (`WP (.frame (d.body.bindVariables (d.params.zip ℓs)) T) {{ Φ }}`).
+
+The `▷` is what makes recursive functions provable: a proof of a specification of `f` may assume
+the specification under a `▷` (by Löb induction), and this law removes the `▷` before the body
+runs, so the body's own calls of `f` can use it. `FunSpec.intro` packages this.
+-/
+public theorem wp_call {f : String} {d : FunctionDecl (τ := τ)} {vs : List Value} {T : τ}
+    (hf : P.functions f = some d) (hlen : d.params.length = vs.length) :
+    ▷ (∀ ℓs, PointsToVals ℓs vs -∗
+        WP (LoweredExpr.frame (d.body.bindVariables (d.params.zip ℓs)) T) @ s; E {{ Φ }}) ⊢
+      WP (LoweredExpr.call f (vs.map .val) T) @ s; E {{ Φ }} := by
+  iintro H
+  iapply wp_lift_base_step rfl
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt Hσ
+  iapply fupd_mask_intro Std.LawfulSet.empty_subset
+  iintro Hclose
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], .call hf hlen, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs (.call hf hlen)
+  imod Hclose
+  imod allocAll_vals σ₁ vs $$ Hσ with ⟨Hσ, Hls⟩
+  imodintro
+  isplitl [Hσ]
+  · iexact Hσ
+  isplitl
+  · iapply H $$ Hls
+  · isimp
+    itrivial
+
+/--
+An intrinsic check that holds of its operand `v` (`h`) completes normally: it satisfies a
+postcondition `Φ` that holds, one step later, of completing normally with the null object
+(`▷ Φ (.normal .null)`).
+-/
+public theorem wp_check_pass {kind : CheckKind} {v : Value} (h : kind.holds v = true) :
+    ▷ Φ (.normal .null) ⊢ WP (LoweredExpr.check kind (.val v)) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .checkPass h
+
+/--
+An intrinsic check that doesn't hold of its operand `v` (`h`) throws: it satisfies a postcondition
+`Φ` that holds, one step later, of throwing (`▷ Φ (.throwing (.error .expectFailed))`).
+-/
+public theorem wp_check_fail {kind : CheckKind} {v : Value} (h : kind.holds v = false) :
+    ▷ Φ (.throwing (.error .expectFailed)) ⊢
+      WP (LoweredExpr.check kind (.val v)) @ s; E {{ Φ }} := by
+  refine wp_pure_step_throwing (by rfl) fun _ => ?_
+  exact .checkFail h
+
+/--
+An intrinsic equality check whose operands `v₁` and `v₂` are equal (`h`) completes normally: it
+satisfies a postcondition `Φ` that holds, one step later, of completing normally with the null
+object (`▷ Φ (.normal .null)`).
+-/
+public theorem wp_checkEq_pass {v₁ v₂ : Value} (h : Value.primEq? v₁ v₂ = some true) :
+    ▷ Φ (.normal .null) ⊢ WP (LoweredExpr.checkEq (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .checkEqPass h
+
+/--
+An intrinsic equality check whose operands `v₁` and `v₂` are different (`h`) throws: it satisfies
+a postcondition `Φ` that holds, one step later, of throwing
+(`▷ Φ (.throwing (.error .expectFailed))`).
+-/
+public theorem wp_checkEq_fail {v₁ v₂ : Value} (h : Value.primEq? v₁ v₂ = some false) :
+    ▷ Φ (.throwing (.error .expectFailed)) ⊢
+      WP (LoweredExpr.checkEq (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
+  refine wp_pure_step_throwing (by rfl) fun _ => ?_
+  exact .checkEqFail h
+
 end Laws
+
+/-! ## Specifications of functions -/
+
+section FunSpecs
+
+variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF] [P : SemanticParams τ]
+include hlc
+
+/--
+`FunSpec f Pre Post` is a specification of top-level function `f`: every call of `f` whose
+arguments have evaluated to values `vs` satisfying the precondition `Pre vs` completes safely,
+with an outcome `o` satisfying the postcondition `Post vs o`.
+
+It's a Texan triple (`{{ Pre vs }} call f vs T {{ o, RET o; Post vs o }}`) for every call of `f`:
+for all argument values `vs`, and all static types `T` of the call expression.
+
+A Texan triple `{{ P }} e {{ o, RET o; Q o }}` is Iris's notation for a persistent Hoare triple.
+It stands for `□ ∀ Φ, P -∗ ▷ (∀ o, Q o -∗ Φ o) -∗ WP e {{ Φ }}`: given the precondition `P`, `e`
+satisfies every postcondition `Φ` that follows from the postcondition `Q`. The implication only
+has to hold one step later (`▷`), which is harmless here: a call always takes a step before its
+body runs. Being persistent (`□`), a specification can be used for any number of calls.
+
+Naming `FunSpec` lets the laws for using and proving a specification (`FunSpec.wp_call`,
+`FunSpec.intro`) be stated once, and keeps proof goals readable, since iris-lean doesn't display
+Texan triples compactly.
+-/
+@[expose]
+public def FunSpec (f : String) (Pre : List Value → IProp GF)
+    (Post : List Value → DartLang.Outcome (τ := τ) → IProp GF) : IProp GF :=
+  iprop(∀ (vs : List Value) (T : τ),
+    {{ Pre vs }} (LoweredExpr.call f (vs.map .val) T) {{ o, RET o; Post vs o }})
+
+/-- `FunSpec f Pre Post` is persistent, since each of its Texan triples is. -/
+public instance FunSpec_persistent (f : String) (Pre : List Value → IProp GF)
+    (Post : List Value → DartLang.Outcome (τ := τ) → IProp GF) :
+    Persistent (FunSpec f Pre Post) := by
+  unfold FunSpec
+  infer_instance
+
+/--
+Using a specification: a call of `f` whose arguments have evaluated to `vs` satisfies a
+postcondition `Φ`, given a specification of `f` (`FunSpec f Pre Post`), its precondition
+(`Pre vs`), and that its postcondition implies `Φ` (`∀ o, Post vs o -∗ Φ o`). (The Texan triple
+only needs that implication one step later, under a `▷`; having it now is enough.)
+-/
+public theorem FunSpec.wp_call {f : String} {Pre : List Value → IProp GF}
+    {Post : List Value → DartLang.Outcome (τ := τ) → IProp GF} {vs : List Value} {T : τ}
+    {Φ : DartLang.Outcome (τ := τ) → IProp GF} :
+    FunSpec f Pre Post ∗ Pre vs ∗ (∀ o, Post vs o -∗ Φ o) ⊢
+      WP (LoweredExpr.call f (vs.map .val) T) {{ Φ }} := by
+  unfold FunSpec
+  iintro ⟨#Hspec, HPre, HΦ⟩
+  ihave Hcall := Hspec $$ %vs %T %Φ HPre
+  iapply Hcall
+  inext
+  iexact HΦ
+
+/--
+Proving a specification of a top-level function `f`, by Löb induction: `f` meets the
+specification `FunSpec f Pre Post` if:
+- the function table declares `f` as `d` (`hf`);
+- the precondition implies that there's one argument per formal parameter (`hlen`); and
+- for all argument values `vs`, static types `T` and locations `ℓs`, the body, with the formal
+  parameters bound to cells at `ℓs`, run as the body of a running call, satisfies the
+  postcondition (`WP (.frame (d.body.bindVariables (d.params.zip ℓs)) T) {{ o, Post vs o }}`),
+  given the precondition (`Pre vs`), the ownership of the cells, holding the arguments
+  (`PointsToVals ℓs vs`), and the specification itself (`FunSpec f Pre Post`), for the body's own
+  calls of `f` (`H`).
+
+Assuming the specification for the body's calls isn't circular: each call takes a step before its
+body runs, which is what Löb induction requires (see `wp_call`). For a function that doesn't call
+itself, `H` can ignore the assumption.
+-/
+public theorem FunSpec.intro {f : String} {d : FunctionDecl (τ := τ)}
+    {Pre : List Value → IProp GF} {Post : List Value → DartLang.Outcome (τ := τ) → IProp GF}
+    (hf : P.functions f = some d) (hlen : ∀ vs, Pre vs ⊢ ⌜d.params.length = vs.length⌝)
+    (H : ∀ vs T ℓs, FunSpec f Pre Post ∗ Pre vs ∗ PointsToVals ℓs vs ⊢
+      WP (LoweredExpr.frame (d.body.bindVariables (d.params.zip ℓs)) T) {{ o, Post vs o }}) :
+    ⊢ FunSpec f Pre Post := by
+  iloeb as IH
+  unfold FunSpec
+  iintro %vs %T
+  imodintro
+  iintro %Φ HPre HΦ
+  rcases Decidable.em (d.params.length = vs.length) with hl | hl
+  · iapply DartSemantics.wp_call hf hl
+    inext
+    -- `unfold FunSpec` above unfolded the specification in `IH` too. Fold it back, as `H` needs.
+    ihave #IH' : FunSpec f Pre Post $$ []
+    · unfold FunSpec
+      iexact IH
+    iintro %ℓs Hls
+    ihave Hwp := H vs T ℓs $$ [$IH' $HPre $Hls]
+    iapply wp_wand $$ Hwp
+    iintro %o Ho
+    iapply HΦ $$ Ho
+  · ihave %h := hlen vs $$ HPre
+    exact absurd h hl
+
+end FunSpecs
 
 end DartSemantics
