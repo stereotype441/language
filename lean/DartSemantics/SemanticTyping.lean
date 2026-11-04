@@ -898,7 +898,7 @@ public theorem wp_fill_typed {P : IProp GF} {Ki : EctxItem (τ := τ)} {e : Lowe
     iintro ⟨%env', H⟩
     iapply Hn v env' $$ H
   | throwing v =>
-    refine .trans ?_ (wp_bubble Ki v)
+    refine .trans ?_ (wp_bubble_exception Ki v)
     iintro -
     inext
     iapply Ht

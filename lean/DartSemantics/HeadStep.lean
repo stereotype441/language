@@ -269,7 +269,7 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   clause, or the `finally` clause), so this rule will gain a hypothesis that `Ki` isn't one of
   them.
   -/
-  | bubble {Ki : EctxItem} {v : Value} {σ : State} :
+  | bubbleException {Ki : EctxItem} {v : Value} {σ : State} :
       HeadStep (Ki.fill (.throwing v)) σ (.throwing v) σ
 
 /--

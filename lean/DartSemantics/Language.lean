@@ -18,7 +18,7 @@ no observations and forks no threads, so both lists are always empty.
 iris-lean's *values* are `Outcome`s: an expression that has thrown an exception counts as a value,
 as well as one that has completed normally. This is what makes propagating exceptions by head
 steps lawful. iris-lean requires that if `Ki.fill e` takes a head step, then `e` is a value
-(`base_ctx_step_val`), and propagating an exception (`HeadStep.bubble`) is a head step of
+(`base_ctx_step_val`), and propagating an exception (`HeadStep.bubbleException`) is a head step of
 `Ki.fill (throwing v)`. Once the semantics has `return`, `break` and `continue` statements, they
 will complete abruptly in the same way, with new kinds of `Outcome` that propagate outward one
 evaluation context item at a time until they reach the construct that handles them.
@@ -72,7 +72,7 @@ public theorem HeadStep.isSome_toOutcome?_of_fill {Ki : EctxItem} {e e' : Lowere
     {σ σ' : State} (h : HeadStep (Ki.fill e) σ e' σ') : e.toOutcome?.isSome := by
   generalize hE : Ki.fill e = E at h
   cases h with
-  | bubble =>
+  | bubbleException =>
     rename_i Ki' _
     cases Ki <;> cases Ki' <;> simp_all [EctxItem.fill, LoweredExpr.toOutcome?]
   | _ => cases Ki <;> simp_all [EctxItem.fill, LoweredExpr.toOutcome?]

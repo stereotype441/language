@@ -385,7 +385,7 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
       · exact .inl (Converges.of_eq fun _ => by simp [headStep, hℓ, hx])
       · exact absurd (hfin hx) nofun
     case uninit => exact .inl (Converges.of_eq fun _ => by simp [headStep, hℓ])
-  | @bubble Ki v σ =>
+  | @bubbleException Ki v σ =>
     cases Ki <;> exact .inl (Converges.of_eq fun _ => rfl)
 
 /--
@@ -406,13 +406,13 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
             first
               | (subst hb; exact .blockDeclare)
               | (simp only [Bool.not_eq_true] at hb; subst hb; exact .blockDeclare))
-         | exact .bubble (Ki := .nullCheck)
-         | exact .bubble (Ki := .as _)
-         | exact .bubble (Ki := .is _)
-         | exact .bubble (Ki := .cond _ _ _)
-         | exact .bubble (Ki := .propertyGet _ _)
-         | exact .bubble (Ki := .seq _)
-         | exact .bubble (Ki := .variableSetAt _ _))
+         | exact .bubbleException (Ki := .nullCheck)
+         | exact .bubbleException (Ki := .as _)
+         | exact .bubbleException (Ki := .is _)
+         | exact .bubbleException (Ki := .cond _ _ _)
+         | exact .bubbleException (Ki := .propertyGet _ _)
+         | exact .bubbleException (Ki := .seq _)
+         | exact .bubbleException (Ki := .variableSetAt _ _))
     | (obtain ⟨hc, hr⟩ := promotionCheck_eq_next h
        obtain ⟨rfl, rfl⟩ := StepResult.next.inj hr
        first

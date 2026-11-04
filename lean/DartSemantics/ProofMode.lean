@@ -210,13 +210,13 @@ macro_rules
     | (refine DartSemantics.HeadStep.nullCheck ?_; intro h; cases h)
     | exact DartSemantics.HeadStep.condTrue
     | exact DartSemantics.HeadStep.condFalse
-    | exact DartSemantics.HeadStep.bubble (Ki := .nullCheck)
-    | exact DartSemantics.HeadStep.bubble (Ki := .as _)
-    | exact DartSemantics.HeadStep.bubble (Ki := .is _)
-    | exact DartSemantics.HeadStep.bubble (Ki := .cond _ _ _)
-    | exact DartSemantics.HeadStep.bubble (Ki := .propertyGet _ _)
-    | exact DartSemantics.HeadStep.bubble (Ki := .seq _)
-    | exact DartSemantics.HeadStep.bubble (Ki := .variableSetAt _ _))
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .nullCheck)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .as _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .is _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .cond _ _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .propertyGet _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .seq _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .variableSetAt _ _))
 
 /-- Tidy the goal after a step: reduce `Outcome.toExpr` and beta-reduce postconditions. -/
 syntax "dart_wp_tidy" : tactic

@@ -490,10 +490,10 @@ public theorem wp_cond_false {m₂ m₃ : LoweredExpr} {T : τ} :
 An exception `v` propagates out of an evaluation context item `Ki`: `Ki.fill (.throwing v)`
 satisfies a postcondition `Φ` that holds, one step later, of throwing `v` (`▷ Φ (.throwing v)`).
 -/
-public theorem wp_bubble (Ki : EctxItem) (v : Value) :
+public theorem wp_bubble_exception (Ki : EctxItem) (v : Value) :
     ▷ Φ (.throwing v) ⊢ WP (Ki.fill (.throwing v)) @ s; E {{ Φ }} := by
   refine wp_pure_step_throwing (EctxItem.toOutcome?_fill _ _) fun _ => ?_
-  exact .bubble
+  exact .bubbleException
 
 /--
 A cast `v as T` whose check answers yes evaluates to its operand: if the dynamic type of `v` is `S`
