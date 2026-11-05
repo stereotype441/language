@@ -169,6 +169,33 @@ public inductive LoweredExpr where
   booleans and integers can be compared; comparing anything else gets stuck.
   -/
   | checkEq (m₁ m₂ : LoweredExpr)
+  /--
+  A loop that runs `m` over and over, forever, until `m` completes abruptly (typically by a
+  `break` out of an enclosing labeled statement, `labeled`). Its static type is `Null`, as for any
+  statement.
+
+  Dart's loops are expressed with `loop`, `labeled` and `brk`, where `L` is the loop's break label
+  and `C` its continue label:
+  - `while (c) b` is `labeled L (loop (cond c (labeled C b) (brk L)))`;
+  - `do b while (c)` is `labeled L (loop (seq (labeled C b) (cond c null (brk L))))`; and
+  - `for (init; c; upd) b` is `block [init…, labeled L (loop (cond c (seq (labeled C b) upd…)
+    (brk L)))]`.
+
+  So `break` is `brk L`, and `continue` is `brk C`: it ends the current iteration's body, as Kernel
+  expresses it too. Declarations in the body are inside the body's block, so each iteration gets
+  fresh cells for them. A `for` loop's own variables are declared once, outside the loop, whereas
+  Dart gives each iteration its own copies of them; the difference can only be observed by a
+  closure that captures one, and closures aren't modeled yet.
+  -/
+  | loop (m : LoweredExpr)
+  /--
+  A labeled statement, `l: m`: runs `m`, and completes normally (with the null object, as a
+  statement) when `m` completes normally, or when a `break l` inside `m` breaks out of it. Labels
+  are unique within a function.
+  -/
+  | labeled (l : String) (m : LoweredExpr)
+  /-- A break statement, `break l;`, which breaks out of the enclosing labeled statement `l`. -/
+  | brk (l : String)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -182,6 +209,11 @@ public inductive LoweredExpr where
   the function that is returning (`frame`).
   -/
   | returning (v : Value)
+  /--
+  An expression that has broken out of labeled statement `l` (by a break statement), propagating
+  outward to that labeled statement (`labeled l`).
+  -/
+  | breaking (l : String)
   /--
   The body `m` of a running call of a function, whose result has static type `T`. It turns a
   return of `v` into completing normally with `v`, and it turns completing normally (falling off
@@ -234,6 +266,8 @@ public inductive EctxItem where
   | checkEqL (m₂ : LoweredExpr)
   /-- `checkEq(v₁, □)`, where the first operand has evaluated to `v₁` -/
   | checkEqR (v₁ : Value)
+  /-- `l: □`: the body of a labeled statement -/
+  | labeled (l : String)
   /-- `frame(□)` (of type `T`): the body of a running call -/
   | frame (T : τ)
 
@@ -313,9 +347,13 @@ public def LoweredExpr.typeOf :
   | ret _ => Γ.ObjectQ
   | check _ _ => Γ.Null
   | checkEq _ _ => Γ.Null
+  | loop _ => Γ.Null
+  | labeled _ _ => Γ.Null
+  | brk _ => Γ.Null
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
+  | breaking _ => Γ.Null
   | frame _ T => T
   | varAt _ T _ => T
   | seq _ m₂ => m₂.typeOf
@@ -337,11 +375,13 @@ local notation "EctxItem" => EctxItem (τ := τ)
 /--
 How an expression's evaluation (or a statement's execution) *completes*, in the sense of the
 language specification's "Statement Completion" section: normally, evaluating to an object, by
-throwing an exception object, or by returning an object. Stack traces aren't modeled.
+throwing an exception object, by returning an object, or by breaking out of a labeled statement.
+Stack traces aren't modeled.
 
-The specification has two more kinds of completion: breaking and continuing (each with or without
-a label). Variants for them will be added here when the semantics supports `break` and `continue`
-statements.
+The specification has one more kind of completion: continuing (with or without a label). A
+`continue` in a loop is expressed as a break out of a labeled statement around the loop's body
+(see `LoweredExpr.loop`), so it needs no completion of its own; continuing to a `switch` case isn't
+modeled yet.
 -/
 public inductive Outcome where
   /-- Completes normally, evaluating to `v`. -/
@@ -350,6 +390,8 @@ public inductive Outcome where
   | throwing (v : Value)
   /-- Returns `v` (by a return statement), from the function whose body is running. -/
   | returning (v : Value)
+  /-- Breaks out of the labeled statement `l` (by a break statement). -/
+  | breaking (l : String)
   deriving Repr, BEq
 
 local notation "Outcome" => Outcome (τ := τ)
@@ -360,6 +402,7 @@ public def Outcome.toExpr : Outcome → LoweredExpr
   | .normal v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
+  | .breaking l => .breaking l
 
 /-- How `m` completed, if it has. -/
 @[expose]
@@ -367,6 +410,7 @@ public def LoweredExpr.toOutcome? : LoweredExpr → Option Outcome
   | .val v => some (.normal v)
   | .throwing v => some (.throwing v)
   | .returning v => some (.returning v)
+  | .breaking l => some (.breaking l)
   | _ => none
 
 omit Γ in
@@ -395,6 +439,7 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .check kind, m => .check kind m
   | .checkEqL m₂, m => .checkEq m m₂
   | .checkEqR v₁, m => .checkEq (.val v₁) m
+  | .labeled l, m => .labeled l m
   | .frame T, m => .frame m T
 
 /--
@@ -404,6 +449,16 @@ outward: only the body of a running call (`frame`) does.
 @[expose]
 public def EctxItem.handlesReturn : EctxItem → Bool
   | .frame _ => true
+  | _ => false
+
+omit Γ in
+/--
+Whether context item `Ki` handles a break out of labeled statement `l` (`breaking l`) in its hole,
+rather than propagating it outward: only the body of the labeled statement `l` (`labeled l`) does.
+-/
+@[expose]
+public def EctxItem.handlesBreak (l : String) : EctxItem → Bool
+  | .labeled l' => l' == l
   | _ => false
 
 omit Γ in

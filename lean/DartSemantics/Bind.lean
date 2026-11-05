@@ -114,9 +114,13 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
   | .ret m => by simp only [resolve, resolve_comm hne m]
   | .check _ m => by simp only [resolve, resolve_comm hne m]
   | .checkEq m₁ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
+  | .loop m => by simp only [resolve, resolve_comm hne m]
+  | .labeled _ m => by simp only [resolve, resolve_comm hne m]
+  | .brk _ => rfl
   | .val _ => rfl
   | .throwing _ => rfl
   | .returning _ => rfl
+  | .breaking _ => rfl
   | .frame m _ => by simp only [resolve, resolve_comm hne m]
   | .varAt _ _ _ => rfl
   | .seq m₁ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]

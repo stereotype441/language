@@ -15,15 +15,14 @@ expression `e` takes one step (a head step inside some evaluation context) to `e
 `σ'`, making the observations `obs` (see `Obs`) and forking the threads `efs`. The semantics makes
 no observations and forks no threads, so both lists are always empty.
 
-iris-lean's *values* are `Outcome`s: an expression that has thrown an exception, or is returning,
-counts as a value, as well as one that has completed normally. This is what makes propagating
-exceptions and returns by head steps lawful. iris-lean requires that if `Ki.fill e` takes a head
-step, then `e` is a value (`base_ctx_step_val`), and propagating an exception
-(`HeadStep.bubbleException`) is a head step of `Ki.fill (throwing v)`. A return
-(`HeadStep.bubbleReturn`) propagates outward in the same way, one evaluation context item at a
-time, until it reaches the body of the running call (`frame`), which handles it. Once the semantics
-has `break` and `continue` statements, they will complete abruptly in the same way, with new kinds
-of `Outcome`.
+iris-lean's *values* are `Outcome`s: an expression that has thrown an exception, is returning, or
+is breaking out of a labeled statement, counts as a value, as well as one that has completed
+normally. This is what makes propagating exceptions, returns and breaks by head steps lawful.
+iris-lean requires that if `Ki.fill e` takes a head step, then `e` is a value (`base_ctx_step_val`),
+and propagating an exception (`HeadStep.bubbleException`) is a head step of `Ki.fill (throwing v)`.
+A return (`HeadStep.bubbleReturn`) propagates outward in the same way, one evaluation context item
+at a time, until it reaches the body of the running call (`frame`), which handles it; and a break
+(`HeadStep.bubbleBreak`) propagates until it reaches the labeled statement it breaks out of.
 -/
 
 namespace DartSemantics
@@ -88,7 +87,7 @@ public theorem HeadStep.toOutcome?_eq_none {e e' : LoweredExpr} {σ σ' : State}
 /--
 If `Ki.fill e` takes a head step (`h`), then `e` has completed (`e.toOutcome?.isSome`): each head
 step of an expression with a hole either uses the completed value in the hole, or propagates the
-exception thrown or the return in progress there.
+exception thrown, the return or the break in progress there.
 -/
 public theorem HeadStep.isSome_toOutcome?_of_fill {Ki : EctxItem} {e e' : LoweredExpr}
     {σ σ' : State} (h : HeadStep (Ki.fill e) σ e' σ') : e.toOutcome?.isSome := by
@@ -104,6 +103,10 @@ public theorem HeadStep.isSome_toOutcome?_of_fill {Ki : EctxItem} {e e' : Lowere
     rfl
   | bubbleReturn =>
     rename_i Ki' _ _
+    obtain ⟨-, rfl⟩ := EctxItem.fill_inj hv' (by simp) hE
+    rfl
+  | bubbleBreak =>
+    rename_i Ki' _ _ _
     obtain ⟨-, rfl⟩ := EctxItem.fill_inj hv' (by simp) hE
     rfl
   | call =>
@@ -152,7 +155,8 @@ public instance instEctxItemLanguage : EctxItemLanguage LoweredExpr EctxItem Sta
   -- If plugging `e` into an item gives a completed expression (a value, for iris-lean), then `e`
   -- has completed. This holds trivially, because plugging an expression into an item never gives a
   -- completed expression: the result is a null check, a cast, and so on, which still has a step to
-  -- take, whatever `e` is. (Only `val`, `throwing` and `returning` expressions are completed.)
+  -- take, whatever `e` is. (Only `val`, `throwing`, `returning` and `breaking` expressions are
+  -- completed.)
   fillItem_val e Ki h := by
     simp [EctxItem.toOutcome?_fill] at h
   -- An expression can be split into an item and a subexpression that hasn't completed in at most

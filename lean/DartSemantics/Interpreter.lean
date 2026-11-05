@@ -99,8 +99,8 @@ public def promotionCheck (fuel : Nat) (σ : State) (v : Value) (T : τ) (redex 
 
 /--
 The head step of the call `e`, which is `.call f args T`, in state `σ` (see `HeadStep.call`): once
-every argument is a value, the call itself; if an argument has thrown or returned, propagating it
-out of the call. If there is none, the result is stuck at `e`.
+every argument is a value, the call itself; if an argument has thrown, returned or broken out of a
+labeled statement, propagating it out of the call. If there is none, the result is stuck at `e`.
 -/
 @[expose]
 public def headStepCall (e : LoweredExpr) (f : String) (args : List LoweredExpr) (T : τ)
@@ -116,6 +116,7 @@ public def headStepCall (e : LoweredExpr) (f : String) (args : List LoweredExpr)
     | none => .stuck e
   | (_, .throwing v :: _) => .next (.throwing v) σ
   | (_, .returning v :: _) => .next (.returning v) σ
+  | (_, .breaking l :: _) => .next (.breaking l) σ
   | _ => .stuck e
 
 /--
@@ -183,6 +184,10 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     | some true => .next (.val .null) σ
     | some false => .next (.throwing (.error .expectFailed)) σ
     | none => .stuck e
+  | .loop m => .next (.seq m (.loop m)) σ
+  | .labeled _ (.val _) => .next (.val .null) σ
+  | .labeled l (.breaking l') => if l' = l then .next (.val .null) σ else .next (.breaking l') σ
+  | .brk l => .next (.breaking l) σ
   | .nullCheck (.throwing v) => .next (.throwing v) σ
   | .as (.throwing v) _ => .next (.throwing v) σ
   | .is (.throwing v) _ => .next (.throwing v) σ
@@ -195,6 +200,7 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .check _ (.throwing v) => .next (.throwing v) σ
   | .checkEq (.throwing v) _ => .next (.throwing v) σ
   | .checkEq (.val _) (.throwing v) => .next (.throwing v) σ
+  | .labeled _ (.throwing v) => .next (.throwing v) σ
   | .nullCheck (.returning v) => .next (.returning v) σ
   | .as (.returning v) _ => .next (.returning v) σ
   | .is (.returning v) _ => .next (.returning v) σ
@@ -206,6 +212,18 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .check _ (.returning v) => .next (.returning v) σ
   | .checkEq (.returning v) _ => .next (.returning v) σ
   | .checkEq (.val _) (.returning v) => .next (.returning v) σ
+  | .labeled _ (.returning v) => .next (.returning v) σ
+  | .nullCheck (.breaking l) => .next (.breaking l) σ
+  | .as (.breaking l) _ => .next (.breaking l) σ
+  | .is (.breaking l) _ => .next (.breaking l) σ
+  | .cond (.breaking l) _ _ _ => .next (.breaking l) σ
+  | .propertyGet (.breaking l) _ _ => .next (.breaking l) σ
+  | .seq (.breaking l) _ => .next (.breaking l) σ
+  | .variableSetAt _ _ (.breaking l) => .next (.breaking l) σ
+  | .ret (.breaking l) => .next (.breaking l) σ
+  | .check _ (.breaking l) => .next (.breaking l) σ
+  | .checkEq (.breaking l) _ => .next (.breaking l) σ
+  | .checkEq (.val _) (.breaking l) => .next (.breaking l) σ
   | _ => .stuck e
 
 /-
@@ -255,6 +273,8 @@ public def primStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
         else stepIn (.checkEqR v₁) (primStep fuel m₂ σ)
       | _ => headStep fuel e σ
     else stepIn (.checkEqL m₂) (primStep fuel m₁ σ)
+  | .labeled l m =>
+    if m.toOutcome?.isSome then headStep fuel e σ else stepIn (.labeled l) (primStep fuel m σ)
   | _ => headStep fuel e σ
 termination_by structural e
 
@@ -445,7 +465,7 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
       (e' = e ∧ σ' = σ ∧ ∀ fuel, headStep fuel e σ = .outOfFuel) := by
   cases h with
   | null | bool | int | declare | blockNil | blockDeclare | seq | nullCheckNull | condTrue
-  | condFalse | ret | frameReturning | frameVal =>
+  | condFalse | ret | frameReturning | frameVal | loop | labeledVal | brk =>
     exact .inl (Converges.of_eq fun _ => rfl)
   | call hf hlen =>
     exact .inl (Converges.of_eq fun _ => by simp [headStep, headStepCall, hf, hlen])
@@ -496,6 +516,18 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
           LoweredExpr.splitVals_map_val_append vs (ms := .returning v :: ms) (by simp)])
     case frame T => simp [EctxItem.handlesReturn] at hKi
     all_goals exact .inl (Converges.of_eq fun _ => rfl)
+  | @bubbleBreak Ki l σ hKi hret =>
+    cases Ki
+    case call f vs ms T =>
+      exact .inl (Converges.of_eq fun _ => by
+        simp [EctxItem.fill, headStep, headStepCall,
+          LoweredExpr.splitVals_map_val_append vs (ms := .breaking l :: ms) (by simp)])
+    case frame T => simp [EctxItem.handlesReturn] at hret
+    case labeled l' =>
+      have hne : l ≠ l' := fun h => by subst h; simp [EctxItem.handlesBreak] at hKi
+      exact .inl (Converges.of_eq fun _ => by simp [EctxItem.fill, headStep, hne])
+    all_goals exact .inl (Converges.of_eq fun _ => rfl)
+  | labeledBreak => exact .inl (Converges.of_eq fun _ => by simp [headStep])
 
 omit [RtSubChecker τ] in
 /--
@@ -530,6 +562,11 @@ theorem headStepCall_sound {f : String} {args : List LoweredExpr} {T : τ} {e' :
     subst hargs
     obtain ⟨rfl, rfl⟩ := StepResult.next.inj h
     exact .bubbleReturn (Ki := .call f vs ms T) rfl
+  · next vs l ms heq =>
+    rw [heq] at hargs
+    subst hargs
+    obtain ⟨rfl, rfl⟩ := StepResult.next.inj h
+    exact .bubbleBreak (Ki := .call f vs ms T) rfl rfl
   · cases h
 
 omit [RtSubChecker τ] in
@@ -576,6 +613,7 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleException (Ki := .check _)
          | exact .bubbleException (Ki := .checkEqL _)
          | exact .bubbleException (Ki := .checkEqR _)
+         | exact .bubbleException (Ki := .labeled _)
          | exact .bubbleReturn (Ki := .nullCheck) rfl
          | exact .bubbleReturn (Ki := .as _) rfl
          | exact .bubbleReturn (Ki := .is _) rfl
@@ -586,7 +624,24 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleReturn (Ki := .ret) rfl
          | exact .bubbleReturn (Ki := .check _) rfl
          | exact .bubbleReturn (Ki := .checkEqL _) rfl
-         | exact .bubbleReturn (Ki := .checkEqR _) rfl)
+         | exact .bubbleReturn (Ki := .checkEqR _) rfl
+         | exact .bubbleReturn (Ki := .labeled _) rfl
+         | exact .bubbleBreak (Ki := .nullCheck) rfl rfl
+         | exact .bubbleBreak (Ki := .as _) rfl rfl
+         | exact .bubbleBreak (Ki := .is _) rfl rfl
+         | exact .bubbleBreak (Ki := .cond _ _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .propertyGet _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .seq _) rfl rfl
+         | exact .bubbleBreak (Ki := .variableSetAt _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .ret) rfl rfl
+         | exact .bubbleBreak (Ki := .check _) rfl rfl
+         | exact .bubbleBreak (Ki := .checkEqL _) rfl rfl
+         | exact .bubbleBreak (Ki := .checkEqR _) rfl rfl
+         | (subst_vars; exact .labeledBreak)
+         | (rename_i hne
+            exact .bubbleBreak (Ki := .labeled _)
+              (by simp only [EctxItem.handlesBreak, beq_eq_false_iff_ne, ne_eq]
+                  exact fun h => hne h.symm) rfl))
     | exact headStepCall_sound h
     | (obtain ⟨hc, hr⟩ := promotionCheck_eq_next h
        obtain ⟨rfl, rfl⟩ := StepResult.next.inj hr
@@ -692,6 +747,7 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
       hin (.call f ws ms T) m (by rw [heq]; rfl)
   | ret m => simp [primStep, hin .ret m rfl]
   | frame m T => simp [primStep, hin (.frame T) m rfl]
+  | labeled l m => simp [primStep, hin (.labeled l) m rfl]
   | check kind m => simp [primStep, hin (.check kind) m rfl]
   | checkEq m₁ m₂ =>
     have h₁ := hin (.checkEqL m₂) m₁ rfl

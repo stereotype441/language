@@ -34,8 +34,9 @@ What the safety theorem says about an outcome of an expression of static type `T
 completes normally with is the null object only if `Null` is a subtype of `T`, a boolean only if
 `bool` is, an integer only if `int` is, and never an exception object (the model so far doesn't
 support catching exceptions) or a captured continuation. (Whether an object satisfies `T` depends
-on the final state, which adequacy doesn't describe.) Throwing, and returning (which only an
-expression with a return statement outside any call can do), are allowed.
+on the final state, which adequacy doesn't describe.) Throwing, returning (which only an
+expression with a return statement outside any call can do) and breaking (which only an
+expression with a break statement outside its labeled statement can do) are allowed.
 -/
 @[expose]
 public def OutcomeOk (T : τ) : DartLang.Outcome (τ := τ) → Prop
@@ -47,6 +48,7 @@ public def OutcomeOk (T : τ) : DartLang.Outcome (τ := τ) → Prop
   | .normal (.cont _) => False
   | .throwing _ => True
   | .returning _ => True
+  | .breaking _ => True
 
 /--
 `bindings` are suitable for running a program from state `σ`: each variable is bound at most once
@@ -407,7 +409,7 @@ public theorem safety [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ 
       simp only [interpOutcome]
       iintro ⟨%env', -, #Hv, -⟩
       iapply outcomeOk_of_interpVal $$ Hv
-    | throwing _ | returning _ =>
+    | throwing _ | returning _ | breaking _ =>
       iintro -
       ipureintro
       trivial

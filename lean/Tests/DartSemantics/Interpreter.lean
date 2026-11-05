@@ -10,8 +10,8 @@ meta import DartLang.SimpleTypes
 Runs programs on `SimpleType`. The programs include `LoweredExpr`s of the kind flow analysis
 produces (some run with their local variable `x` replaced by a parameter, so that it can hold
 something other than the null object), literals, calls of top-level functions (see `functions`),
-programs for each way a program can fail (throwing, and getting stuck), the redex at which a stuck
-program is reported to be stuck, and a program that runs out of fuel.
+loops and breaks, programs for each way a program can fail (throwing, and getting stuck), the
+redex at which a stuck program is reported to be stuck, and programs that run out of fuel.
 
 A block's value is the null object, so a program that is a block completes normally with the null
 object, unless it throws or gets stuck.
@@ -36,7 +36,13 @@ def getterImpl : Property → Value → State → Option Value
 def x : Variable := { name := "x", type := ObjectQ }
 def y : Variable := { name := "y", type := Object }
 def b : Variable := { name := "b", type := bool }
+def c : Variable := { name := "c", type := bool }
 def n : Variable := { name := "n", type := int }
+
+/-- `{ bool b = true; bool c = false; body; return c; }`, for the loop tests in `functions`. -/
+def withBC (body : LoweredExpr) : LoweredExpr :=
+  .block [.declare b bool false, .variableSet b (.bool true), .declare c bool false,
+    .variableSet c (.bool false), body, .ret (.var c bool)]
 
 /--
 The top-level functions of the programs tested here:
@@ -44,8 +50,14 @@ The top-level functions of the programs tested here:
 - `bool alwaysTrue(bool b) { if (b) return alwaysTrue(false); return true; }`, which is recursive;
 - `Null noReturn(int n) { n; }`, which falls off the end of its body;
 - `int nested() { { return 2; 3; } }`, which returns from inside a nested block;
-- `Null fail() { null!; }`, which throws; and
-- `int first(int n, bool b) { return n; }`, which has two parameters.
+- `Null fail() { null!; }`, which throws;
+- `int first(int n, bool b) { return n; }`, which has two parameters;
+- `bool whileOnce()`, `bool doOnce()` and `bool skip()`, which loop (see their definitions);
+- `int nestedBreak() { outer: { inner: { break outer; } return 1; } return 2; }`;
+- `bool innerBreak() { while (true) { while (true) { break; } break; } return true; }`;
+- `int returnFromLoop() { while (true) { return 3; } }`; and
+- `Null breakOut() { break L; }`, whose break has no labeled statement to break out of (which Dart
+  rejects).
 -/
 def functions : String → Option (FunctionDecl (τ := SimpleType))
   | "not" => some ⟨[b],
@@ -57,6 +69,33 @@ def functions : String → Option (FunctionDecl (τ := SimpleType))
   | "nested" => some ⟨[], .block [.block [.ret (.int 2), .int 3]]⟩
   | "fail" => some ⟨[], .block [.nullCheck .null]⟩
   | "first" => some ⟨[n, b], .ret (.var n int)⟩
+  -- `while (b) { b = false; c = true; }`: the body runs once.
+  | "whileOnce" => some ⟨[], withBC (.labeled "L" (.loop (.cond (.var b bool)
+      (.labeled "C" (.block [.variableSet b (.bool false), .variableSet c (.bool true)]))
+      (.brk "L") Null)))⟩
+  -- `b = false; do { c = true; } while (b);`: the body runs once, although `b` is `false`.
+  | "doOnce" => some ⟨[], withBC (.block [.variableSet b (.bool false),
+      .labeled "L" (.loop (.seq (.labeled "C" (.block [.variableSet c (.bool true)]))
+        (.cond (.var b bool) .null (.brk "L") Null)))])⟩
+  -- `while (b) { b = false; continue; c = true; }`: `continue` skips the rest of the body.
+  | "skip" => some ⟨[], withBC (.labeled "L" (.loop (.cond (.var b bool)
+      (.labeled "C" (.block [.variableSet b (.bool false), .brk "C", .variableSet c (.bool true)]))
+      (.brk "L") Null)))⟩
+  | "nestedBreak" => some ⟨[], .block [
+      .labeled "outer" (.block [.labeled "inner" (.block [.brk "outer"]), .ret (.int 1)]),
+      .ret (.int 2)]⟩
+  | "innerBreak" => some ⟨[], .block [
+      .labeled "L1" (.loop (.cond (.bool true)
+        (.labeled "C1" (.block [
+          .labeled "L2" (.loop (.cond (.bool true) (.labeled "C2" (.block [.brk "L2"])) (.brk "L2")
+            Null)),
+          .brk "L1"]))
+        (.brk "L1") Null)),
+      .ret (.bool true)]⟩
+  | "returnFromLoop" => some ⟨[], .block [
+      .labeled "L" (.loop (.cond (.bool true) (.labeled "C" (.block [.ret (.int 3)])) (.brk "L")
+        Null))]⟩
+  | "breakOut" => some ⟨[], .block [.brk "L"]⟩
   | _ => none
 
 /-- The semantics with promotion checks. -/
@@ -388,6 +427,56 @@ info: stuck at redex: DartLang.LoweredExpr.call "not" [] (DartLang.SimpleType.bo
 -/
 #guard_msgs in
 #eval stuckRedex (Interp.run (P := verify) 100 (.call "not" [] bool) State.empty)
+
+/-! ## Loops and breaks (see `functions`) -/
+
+-- A `while` loop whose body runs once.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.bool true) -/
+#guard_msgs in
+#eval runClosed verify (.call "whileOnce" [] bool)
+
+-- A `do` loop's body runs once even if its condition is `false`.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.bool true) -/
+#guard_msgs in
+#eval runClosed verify (.call "doOnce" [] bool)
+
+-- `continue` skips the rest of the loop's body.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.bool false) -/
+#guard_msgs in
+#eval runClosed verify (.call "skip" [] bool)
+
+-- A break out of an outer labeled statement skips the rest of it.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 2) -/
+#guard_msgs in
+#eval runClosed verify (.call "nestedBreak" [] int)
+
+-- A break out of an inner loop continues the outer loop's body, which then breaks out of it.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.bool true) -/
+#guard_msgs in
+#eval runClosed verify (.call "innerBreak" [] bool)
+
+-- A return propagates out of a loop.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 3) -/
+#guard_msgs in
+#eval runClosed verify (.call "returnFromLoop" [] int)
+
+-- A break with no labeled statement to break out of gets stuck at the body of the running call.
+/--
+info: stuck at redex: DartLang.LoweredExpr.frame
+  (DartLang.LoweredExpr.breaking "L")
+  (DartLang.SimpleType.Null)
+-/
+#guard_msgs (whitespace := lax) in
+#eval stuckRedex (Interp.run (P := verify) 100 (.call "breakOut" [] Null) State.empty)
+
+-- A loop that never breaks runs until the interpreter's fuel runs out.
+/--
+info: out of fuel at: DartLang.LoweredExpr.seq
+  (DartLang.LoweredExpr.null)
+  (DartLang.LoweredExpr.loop (DartLang.LoweredExpr.null))
+-/
+#guard_msgs in
+#eval runClosed verify (.loop .null)
 
 /-! ## Intrinsic checks for `Expect` assertions -/
 

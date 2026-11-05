@@ -303,10 +303,10 @@ public theorem tac_wp_call_spec {f : String} {args : List LoweredExpr} {T : τ} 
 /--
 The proof-mode form of `wp_frame`: to prove that the body `m` of a running call satisfies `Φ` from
 the hypotheses `Δ`, prove that `m` satisfies the postcondition that `Φ` holds, one step later, of
-the call's outcome (`H`; see `frameResult`).
+the call's outcome (`H`; see `framePost`).
 -/
 public theorem tac_wp_frame {m : LoweredExpr} {T : τ}
-    (H : Entails' Δ (WP m @ s; E {{ o, ▷ Φ (frameResult o) }})) :
+    (H : Entails' Δ (WP m @ s; E {{ o, framePost Φ o }})) :
     Entails' Δ (WP (LoweredExpr.frame m T) @ s; E {{ Φ }}) :=
   (show Δ ⊢ _ from H).trans wp_frame
 
@@ -362,7 +362,7 @@ macro_rules
     | exact DartSemantics.HeadStep.bubbleReturn_call rfl)
 
 /--
-Tidy the goal after a step: reduce `Outcome.toExpr`, `EctxItem.fill` and `frameResult`, the list
+Tidy the goal after a step: reduce `Outcome.toExpr`, `EctxItem.fill` and `framePost`, the list
 operations that plugging into a call's arguments leaves, and beta-reduce postconditions.
 -/
 syntax "dart_wp_tidy" : tactic
@@ -376,7 +376,7 @@ macro_rules
       DartSemantics.tidy_fill_seq, DartSemantics.tidy_fill_variableSetAt,
       DartSemantics.tidy_fill_call, DartSemantics.tidy_fill_ret, DartSemantics.tidy_fill_frame,
       DartSemantics.tidy_fill_check, DartSemantics.tidy_fill_checkEqL,
-      DartSemantics.tidy_fill_checkEqR, DartSemantics.frameResult, List.map_cons, List.map_nil,
+      DartSemantics.tidy_fill_checkEqR, DartSemantics.framePost, List.map_cons, List.map_nil,
       List.cons_append, List.nil_append])
 
 /--

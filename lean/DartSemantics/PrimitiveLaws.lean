@@ -524,6 +524,19 @@ public theorem wp_bubble_return {Ki : EctxItem} (hKi : Ki.handlesReturn = false)
   exact .bubbleReturn hKi
 
 /--
+A break out of labeled statement `l` propagates out of an evaluation context item `Ki` that
+doesn't handle it (`hKi`: anything but the labeled statement `l`), and isn't the body of a running
+call (`hret`): `Ki.fill (.breaking l)` satisfies a postcondition `Φ` that holds, one step later, of
+breaking out of `l` (`▷ Φ (.breaking l)`).
+-/
+public theorem wp_bubble_break {Ki : EctxItem} {l : String} (hKi : Ki.handlesBreak l = false)
+    (hret : Ki.handlesReturn = false) :
+    ▷ Φ (.breaking l) ⊢ WP (Ki.fill (.breaking l)) @ s; E {{ Φ }} := by
+  refine (later_mono (wp_value' (v := Outcome.breaking l))).trans
+    (wp_pure_step (EctxItem.toOutcome?_fill _ _) fun _ => ?_)
+  exact .bubbleBreak hKi hret
+
+/--
 A cast `v as T` whose check answers yes evaluates to its operand: if the dynamic type of `v` is `S`
 (`HasDynamicType v S`), and the run-time check of whether `S` is a subtype of `T` answers yes
 (`h`), the cast satisfies a postcondition `Φ` that holds, one step later, of completing normally
@@ -927,30 +940,35 @@ public theorem wp_frame_val {v : Value} {T : τ} :
   exact .frameVal
 
 /--
-The outcome of a call whose body completed with outcome `o`: a return of `v` becomes completing
-normally with `v`, completing normally (falling off the end of the body) becomes completing
-normally with the null object, and an exception propagates.
+What the body of a running call must guarantee about its outcome `o`, for the call to satisfy a
+postcondition `Φ`: that `Φ` holds, one step later, of the call's outcome. A return of `v` becomes
+completing normally with `v`, completing normally (falling off the end of the body) becomes
+completing normally with the null object, and an exception propagates. A break can't propagate out
+of a function's body (it gets stuck there), so the body must not complete with one (`False`).
 -/
 @[expose, simp]
-public def frameResult : DartLang.Outcome (τ := τ) → DartLang.Outcome (τ := τ)
-  | .normal _ => .normal .null
-  | .returning v => .normal v
-  | .throwing v => .throwing v
+public def framePost (Φ : DartLang.Outcome (τ := τ) → IProp GF) :
+    DartLang.Outcome (τ := τ) → IProp GF
+  | .normal _ => iprop(▷ Φ (.normal .null))
+  | .returning v => iprop(▷ Φ (.normal v))
+  | .throwing v => iprop(▷ Φ (.throwing v))
+  | .breaking _ => iprop(False)
 
 /--
 The body `m` of a running call: `.frame m T` satisfies a postcondition `Φ` if `m` satisfies the
 postcondition that `Φ` holds, one step later, of the call's outcome for each outcome `o` of the
-body (`WP m {{ o, ▷ Φ (frameResult o) }}`). This turns a return into completing normally (see
-`frameResult`), so a specification of a function's body can describe its returns with
+body (`WP m {{ o, framePost Φ o }}`). This turns a return into completing normally (see
+`framePost`), so a specification of a function's body can describe its returns with
 postconditions on `Outcome.returning`.
 -/
 public theorem wp_frame {m : LoweredExpr} {T : τ} :
-    WP m @ s; E {{ o, ▷ Φ (frameResult o) }} ⊢ WP (LoweredExpr.frame m T) @ s; E {{ Φ }} := by
+    WP m @ s; E {{ o, framePost Φ o }} ⊢ WP (LoweredExpr.frame m T) @ s; E {{ Φ }} := by
   refine (wp_mono fun o => ?_).trans (wp_bind_item (.frame T))
   cases o with
   | normal v => exact wp_frame_val
   | returning v => exact wp_frame_returning
   | throwing v => exact wp_bubble_exception (.frame T) v
+  | breaking l => exact false_elim
 
 /--
 A call of a top-level function `f`, whose arguments have evaluated to `vs`, allocates a cell for

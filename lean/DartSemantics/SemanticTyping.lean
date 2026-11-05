@@ -432,8 +432,9 @@ public instance interpCtx_persistent (bindings : List (Variable × Loc)) (env : 
 What an expression of static type `T` promises when it completes with outcome `o`: if it completes
 normally with value `v`, then `v` satisfies `T`, and for some environment `env'` (what the
 variables' cells hold afterwards), the cells are owned, and the facts `Δa v` hold. If it throws,
-nothing. If it returns, nothing either: there are no typing rules for calls or return statements
-yet, and a return can only complete an expression that contains a return statement.
+nothing. If it returns, or breaks out of a labeled statement, nothing either: there are no typing
+rules for calls, return statements or loops yet, and a return or a break can only complete an
+expression that contains a return or break statement.
 -/
 @[expose]
 public def interpOutcome (bindings : List (Variable × Loc)) (T : τ) (Δa : Value → Ctx) :
@@ -442,6 +443,7 @@ public def interpOutcome (bindings : List (Variable × Loc)) (T : τ) (Δa : Val
       interpCtx bindings env' (Δa v))
   | .throwing _ => iprop(True)
   | .returning _ => iprop(True)
+  | .breaking _ => iprop(True)
 
 variable [SemanticParams τ]
 
@@ -846,7 +848,7 @@ public theorem SemTyped.weaken {Δb Δb' : Ctx} {m : LoweredExpr} {T T' : τ}
     isplitr
     · iapply interpVal_mono hT $$ Hv
     · iapply interpCtx_mono (hout v) $$ H
-  | throwing _ | returning _ => exact .rfl
+  | throwing _ | returning _ | breaking _ => exact .rfl
 
 /--
 Weakening up to implication between facts: like `SemTyped.weaken`, but each fact that the new
@@ -874,7 +876,7 @@ public theorem SemTyped.weaken' {Δb Δb' : Ctx} {m : LoweredExpr} {T T' : τ}
     isplitr
     · iapply interpVal_mono hT $$ Hv
     · iapply interpCtx_mono' (hout v) $$ H
-  | throwing _ | returning _ => exact .rfl
+  | throwing _ | returning _ | breaking _ => exact .rfl
 
 /--
 Running an evaluation context item `Ki` around an expression `e` satisfies a postcondition `Ψ`
@@ -885,9 +887,10 @@ Running an evaluation context item `Ki` around an expression `e` satisfies a pos
   given the ownership of the cells (`interpEnv bindings env'`), the fact that `v` satisfies `T`
   (`interpVal T v`), and the guaranteed facts (`interpCtx bindings env' (Δa v)`) (`Hn`); and
 - `Ψ` holds of throwing any exception (`Ht`): an exception thrown by `e` propagates out of `Ki`;
-  and
 - `Ki` doesn't handle returns (`hKi`), and `Ψ` holds of returning any value (`Hr`): a return in
-  `e` propagates out of `Ki`.
+  `e` propagates out of `Ki`; and
+- `Ki` doesn't handle breaks out of any labeled statement (`hKib`), and `Ψ` holds of breaking out
+  of any labeled statement (`Hb`): a break in `e` propagates out of `Ki`.
 -/
 public theorem wp_fill_typed {P : IProp GF} {Ki : EctxItem (τ := τ)} {e : LoweredExpr}
     {bindings : List (Variable × Loc)} {T : τ} {Δa : Value → Ctx}
@@ -896,7 +899,8 @@ public theorem wp_fill_typed {P : IProp GF} {Ki : EctxItem (τ := τ)} {e : Lowe
     (Hn : ∀ v env', interpEnv bindings env' ∗ interpVal T v ∗ interpCtx bindings env' (Δa v) ⊢
       WP (Ki.fill (.val v)) {{ Ψ }})
     (Ht : ∀ v, ⊢ Ψ (.throwing v)) (hKi : Ki.handlesReturn = false)
-    (Hr : ∀ v, ⊢ Ψ (.returning v)) : P ⊢ WP (Ki.fill e) {{ Ψ }} := by
+    (Hr : ∀ v, ⊢ Ψ (.returning v)) (hKib : ∀ l, Ki.handlesBreak l = false)
+    (Hb : ∀ l, ⊢ Ψ (.breaking l)) : P ⊢ WP (Ki.fill e) {{ Ψ }} := by
   refine H.trans ((wp_mono fun o => ?_).trans (wp_bind_item Ki))
   cases o with
   | normal v =>
@@ -913,6 +917,11 @@ public theorem wp_fill_typed {P : IProp GF} {Ki : EctxItem (τ := τ)} {e : Lowe
     iintro -
     inext
     iapply Hr
+  | breaking l =>
+    refine .trans ?_ (wp_bubble_break (hKib l) hKi)
+    iintro -
+    inext
+    iapply Hb
 
 end Interp
 

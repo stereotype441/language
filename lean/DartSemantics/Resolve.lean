@@ -30,8 +30,8 @@ Resolve each reference to variable `x` in `m` to the cell at `ℓ`: replace each
 isn't shadowed for with `varAt x T ℓ`, and each assignment `variableSet x m'` with
 `variableSetAt x ℓ m'`.
 
-Values (in `val`, `throwing` and `returning`) are left alone, since they contain no variable
-references.
+Values (in `val`, `throwing` and `returning`) and labels are left alone, since they contain no
+variable references.
 -/
 @[expose]
 public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → LoweredExpr
@@ -54,9 +54,13 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .ret m => .ret (m.resolve x ℓ)
   | .check kind m => .check kind (m.resolve x ℓ)
   | .checkEq m₁ m₂ => .checkEq (m₁.resolve x ℓ) (m₂.resolve x ℓ)
+  | .loop m => .loop (m.resolve x ℓ)
+  | .labeled l m => .labeled l (m.resolve x ℓ)
+  | .brk l => .brk l
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
+  | .breaking l => .breaking l
   | .frame m T => .frame (m.resolve x ℓ) T
   | .varAt v T ℓ' => .varAt v T ℓ'
   | .seq m₁ m₂ => .seq (m₁.resolve x ℓ) (m₂.resolve x ℓ)

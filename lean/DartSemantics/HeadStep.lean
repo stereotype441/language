@@ -314,6 +314,24 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | checkEqFail {v₁ v₂ : Value} {σ : State} (h : Value.primEq? v₁ v₂ = some false) :
       HeadStep (.checkEq (.val v₁) (.val v₂)) σ (.throwing (.error .expectFailed)) σ
   /--
+  A loop runs its body once, and then the loop again. (So each iteration takes at least one step,
+  which is what lets the program logic reason about a loop by induction.)
+  -/
+  | loop {m : LoweredExpr} {σ : State} : HeadStep (.loop m) σ (.seq m (.loop m)) σ
+  /--
+  A labeled statement whose body completes normally completes normally too, with the null object.
+  -/
+  | labeledVal {l : String} {v : Value} {σ : State} :
+      HeadStep (.labeled l (.val v)) σ (.val .null) σ
+  /--
+  A labeled statement `l` whose body breaks out of it (`breaking l`) completes normally, with the
+  null object. (A break out of any other labeled statement propagates by `bubbleBreak`.)
+  -/
+  | labeledBreak {l : String} {σ : State} :
+      HeadStep (.labeled l (.breaking l)) σ (.val .null) σ
+  /-- A break statement `break l` starts breaking out of the labeled statement `l`. -/
+  | brk {l : String} {σ : State} : HeadStep (.brk l) σ (.breaking l) σ
+  /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.
 
@@ -331,6 +349,18 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   -/
   | bubbleReturn {Ki : EctxItem} {v : Value} {σ : State} (hKi : Ki.handlesReturn = false) :
       HeadStep (Ki.fill (.returning v)) σ (.returning v) σ
+  /--
+  A break out of labeled statement `l` propagates outward in the same way, through every
+  evaluation context item that doesn't handle it (`hKi`): that is, up to the labeled statement `l`.
+
+  A break doesn't propagate out of the body of a running call (`frame`, the only item that handles
+  returns; `hret`): labels are local to a function, so a break can't target a labeled statement in
+  a caller. A break that reaches the body of a running call gets stuck, which can't happen in a
+  program that Dart accepts.
+  -/
+  | bubbleBreak {Ki : EctxItem} {l : String} {σ : State} (hKi : Ki.handlesBreak l = false)
+      (hret : Ki.handlesReturn = false) :
+      HeadStep (Ki.fill (.breaking l)) σ (.breaking l) σ
 
 /--
 The semantics is deterministic: an expression takes at most one head step. If `e`, in state `σ`,
@@ -344,7 +374,7 @@ public theorem HeadStep.deterministic {e e₁ e₂ : LoweredExpr} {σ σ₁ σ�
   all_goals
     (try cases ‹EctxItem›) <;> (try cases ‹EctxItem›) <;>
       (try simp only [EctxItem.fill, reduceCtorEq] at hE)
-  all_goals (try simp_all [EctxItem.handlesReturn])
+  all_goals (try simp_all [EctxItem.handlesReturn, EctxItem.handlesBreak])
   all_goals first
     | grind [rtSub_unique]
     | (cases ‹Bool› <;> grind)
