@@ -273,6 +273,14 @@ public inductive LoweredExpr where
   `intBin`.
   -/
   | intNeg (mode : Option IntMode) (m : LoweredExpr)
+  /--
+  Equality, `m₁ == m₂`, of values that are each the null object, a boolean or an integer: evaluates
+  `m₁` and then `m₂`, and evaluates to whether they're the same value. Comparing anything else gets
+  stuck, since `==` on other objects runs user code (an `operator ==` method). The translator uses
+  it only when both operands' static types are `Null`, `bool` or `int`, or nullable versions of
+  them.
+  -/
+  | primEq (m₁ m₂ : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -351,6 +359,10 @@ public inductive EctxItem where
   | intBinR (op : IntBinOp) (mode : Option IntMode) (v₁ : Value)
   /-- `-□`, computed in mode `mode` -/
   | intNeg (mode : Option IntMode)
+  /-- `□ == m₂` -/
+  | primEqL (m₂ : LoweredExpr)
+  /-- `v₁ == □`, where the first operand has evaluated to `v₁` -/
+  | primEqR (v₁ : Value)
   /-- `frame(□)` (of type `T`): the body of a running call -/
   | frame (T : τ)
 
@@ -388,7 +400,8 @@ public def CheckKind.holds : CheckKind → Value → Bool
 
 omit Γ in
 /--
-Whether two values are equal, for the intrinsic check `LoweredExpr.checkEq`, if they can be
+Whether two values are equal, for the intrinsic check `LoweredExpr.checkEq` and for equality
+`LoweredExpr.primEq`, if they can be
 compared: two values that are each the null object, a boolean or an integer are equal if they're
 the same value. Any other value can't be compared yet (`none`): `==` on objects runs user code,
 which the semantics doesn't support yet.
@@ -451,6 +464,7 @@ public def LoweredExpr.typeOf :
   | brk _ => Γ.Null
   | intBin op _ _ _ => if op.isComparison then Γ.bool else Γ.int
   | intNeg _ _ => Γ.int
+  | primEq _ _ => Γ.bool
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -495,6 +509,7 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .brk l => .brk l
   | .intBin op _ m₁ m₂ => .intBin op (some mode) (m₁.withIntMode mode) (m₂.withIntMode mode)
   | .intNeg _ m => .intNeg (some mode) (m.withIntMode mode)
+  | .primEq m₁ m₂ => .primEq (m₁.withIntMode mode) (m₂.withIntMode mode)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -597,6 +612,8 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .intBinL op mode m₂, m => .intBin op mode m m₂
   | .intBinR op mode v₁, m => .intBin op mode (.val v₁) m
   | .intNeg mode, m => .intNeg mode m
+  | .primEqL m₂, m => .primEq m m₂
+  | .primEqR v₁, m => .primEq (.val v₁) m
   | .frame T, m => .frame m T
 
 /--
@@ -783,6 +800,8 @@ public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredEx
   case intBinR.intBinL =>
     simp only [LoweredExpr.intBin.injEq] at h
     exact absurd h.2.2.1.symm (h₂ _)
+  case primEqL.primEqR => exact absurd (LoweredExpr.primEq.inj h).1 (h₁ _)
+  case primEqR.primEqL => exact absurd (LoweredExpr.primEq.inj h).1.symm (h₂ _)
   all_goals simp_all
 
 /--

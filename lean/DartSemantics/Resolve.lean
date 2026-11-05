@@ -59,6 +59,7 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .brk l => .brk l
   | .intBin op mode m₁ m₂ => .intBin op mode (m₁.resolve x ℓ) (m₂.resolve x ℓ)
   | .intNeg mode m => .intNeg mode (m.resolve x ℓ)
+  | .primEq m₁ m₂ => .primEq (m₁.resolve x ℓ) (m₂.resolve x ℓ)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v

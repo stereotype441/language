@@ -603,6 +603,38 @@ info: [done: DartLang.Outcome.normal (DartLang.Value.int 10),
 #eval [summary (Interp.run (P := verify) 1000 (.call "sumBelow" [.int 5] int) State.empty),
   summary (Interp.run (P := verify) 1000 (.call "sumSkipping" [.int 5] int) State.empty)]
 
+/-! ## Equality of the null object, booleans and integers -/
+
+-- `null == null`, `true == false`, `3 == 3`, `3 == 4` and `0 == null`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.bool true),
+  done: DartLang.Outcome.normal (DartLang.Value.bool false),
+  done: DartLang.Outcome.normal (DartLang.Value.bool true),
+  done: DartLang.Outcome.normal (DartLang.Value.bool false),
+  done: DartLang.Outcome.normal (DartLang.Value.bool false)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.primEq .null .null), runClosed verify (.primEq (.bool true) (.bool false)),
+  runClosed verify (.primEq (.int 3) (.int 3)), runClosed verify (.primEq (.int 3) (.int 4)),
+  runClosed verify (.primEq (.int 0) .null)]
+
+-- `null! == 1`: an exception thrown by an operand propagates.
+/--
+info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))
+-/
+#guard_msgs in
+#eval runClosed verify (.primEq (.nullCheck .null) (.int 1))
+
+-- `x == x`, where parameter `x` refers to an object (see `runWithX`), gets stuck: `==` on objects
+-- runs user code.
+/--
+info: stuck at: DartLang.LoweredExpr.primEq
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 }))
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 }))
+-/
+#guard_msgs (whitespace := lax) in
+#eval runWithX verify (.primEq (.var x ObjectQ) (.var x ObjectQ))
+
 /-! ## Intrinsic checks for `Expect` assertions -/
 
 /--

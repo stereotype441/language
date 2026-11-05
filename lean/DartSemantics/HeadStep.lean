@@ -356,6 +356,12 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | intNeg {mode : IntMode} {n k : Int} {σ : State} (h : mode.arith (-n) = some k) :
       HeadStep (.intNeg (some mode) (.val (.int n))) σ (.val (.int k)) σ
   /--
+  Equality of values `v₁` and `v₂` that can be compared (the null object, booleans and integers)
+  evaluates to whether they're equal (`h`). Comparing any other values gets stuck.
+  -/
+  | primEq {v₁ v₂ : Value} {b : Bool} {σ : State} (h : Value.primEq? v₁ v₂ = some b) :
+      HeadStep (.primEq (.val v₁) (.val v₂)) σ (.val (.bool b)) σ
+  /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.
 
