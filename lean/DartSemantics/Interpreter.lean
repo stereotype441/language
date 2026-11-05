@@ -111,7 +111,8 @@ public def headStepCall (e : LoweredExpr) (f : String) (args : List LoweredExpr)
     | some d =>
       if d.params.length = vs.length then
         let r := σ.allocAll (vs.map Cell.val)
-        .next (.frame (d.body.bindVariables (d.params.zip r.1)) T) r.2
+        .next (.frame ((d.body.withIntMode (P.intModeOf f)).bindVariables (d.params.zip r.1)) T)
+          r.2
       else .stuck e
     | none => .stuck e
   | (_, .throwing v :: _) => .next (.throwing v) σ
@@ -188,6 +189,14 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .labeled _ (.val _) => .next (.val .null) σ
   | .labeled l (.breaking l') => if l' = l then .next (.val .null) σ else .next (.breaking l') σ
   | .brk l => .next (.breaking l) σ
+  | .intBin op (some mode) (.val (.int n₁)) (.val (.int n₂)) =>
+    match op.eval mode n₁ n₂ with
+    | some v => .next (.val v) σ
+    | none => .stuck e
+  | .intNeg (some mode) (.val (.int n)) =>
+    match mode.arith (-n) with
+    | some k => .next (.val (.int k)) σ
+    | none => .stuck e
   | .nullCheck (.throwing v) => .next (.throwing v) σ
   | .as (.throwing v) _ => .next (.throwing v) σ
   | .is (.throwing v) _ => .next (.throwing v) σ
@@ -201,6 +210,9 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .checkEq (.throwing v) _ => .next (.throwing v) σ
   | .checkEq (.val _) (.throwing v) => .next (.throwing v) σ
   | .labeled _ (.throwing v) => .next (.throwing v) σ
+  | .intBin _ _ (.throwing v) _ => .next (.throwing v) σ
+  | .intBin _ _ (.val _) (.throwing v) => .next (.throwing v) σ
+  | .intNeg _ (.throwing v) => .next (.throwing v) σ
   | .nullCheck (.returning v) => .next (.returning v) σ
   | .as (.returning v) _ => .next (.returning v) σ
   | .is (.returning v) _ => .next (.returning v) σ
@@ -213,6 +225,9 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .checkEq (.returning v) _ => .next (.returning v) σ
   | .checkEq (.val _) (.returning v) => .next (.returning v) σ
   | .labeled _ (.returning v) => .next (.returning v) σ
+  | .intBin _ _ (.returning v) _ => .next (.returning v) σ
+  | .intBin _ _ (.val _) (.returning v) => .next (.returning v) σ
+  | .intNeg _ (.returning v) => .next (.returning v) σ
   | .nullCheck (.breaking l) => .next (.breaking l) σ
   | .as (.breaking l) _ => .next (.breaking l) σ
   | .is (.breaking l) _ => .next (.breaking l) σ
@@ -224,6 +239,9 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .check _ (.breaking l) => .next (.breaking l) σ
   | .checkEq (.breaking l) _ => .next (.breaking l) σ
   | .checkEq (.val _) (.breaking l) => .next (.breaking l) σ
+  | .intBin _ _ (.breaking l) _ => .next (.breaking l) σ
+  | .intBin _ _ (.val _) (.breaking l) => .next (.breaking l) σ
+  | .intNeg _ (.breaking l) => .next (.breaking l) σ
   | _ => .stuck e
 
 /-
@@ -275,6 +293,16 @@ public def primStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     else stepIn (.checkEqL m₂) (primStep fuel m₁ σ)
   | .labeled l m =>
     if m.toOutcome?.isSome then headStep fuel e σ else stepIn (.labeled l) (primStep fuel m σ)
+  | .intBin op mode m₁ m₂ =>
+    if m₁.toOutcome?.isSome then
+      match m₁ with
+      | .val v₁ =>
+        if m₂.toOutcome?.isSome then headStep fuel e σ
+        else stepIn (.intBinR op mode v₁) (primStep fuel m₂ σ)
+      | _ => headStep fuel e σ
+    else stepIn (.intBinL op mode m₂) (primStep fuel m₁ σ)
+  | .intNeg mode m =>
+    if m.toOutcome?.isSome then headStep fuel e σ else stepIn (.intNeg mode) (primStep fuel m σ)
   | _ => headStep fuel e σ
 termination_by structural e
 
@@ -469,7 +497,7 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
     exact .inl (Converges.of_eq fun _ => rfl)
   | call hf hlen =>
     exact .inl (Converges.of_eq fun _ => by simp [headStep, headStepCall, hf, hlen])
-  | checkPass h | checkFail h | checkEqPass h | checkEqFail h =>
+  | checkPass h | checkFail h | checkEqPass h | checkEqFail h | intBin h | intNeg h =>
     exact .inl (Converges.of_eq fun _ => by simp [headStep, h])
   | @blockCons m ms σ h =>
     cases m
@@ -507,7 +535,10 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
       exact .inl (Converges.of_eq fun _ => by
         simp [EctxItem.fill, headStep, headStepCall,
           LoweredExpr.splitVals_map_val_append vs (ms := .throwing v :: ms) (by simp)])
-    all_goals exact .inl (Converges.of_eq fun _ => rfl)
+    all_goals exact .inl (Converges.of_eq fun _ => by
+      -- An integer operator's propagation case is only reached once `headStep` has seen that it
+      -- doesn't match the cases before it, which depend on its mode and first operand.
+      first | rfl | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl)))
   | @bubbleReturn Ki v σ hKi =>
     cases Ki
     case call f vs ms T =>
@@ -515,7 +546,10 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
         simp [EctxItem.fill, headStep, headStepCall,
           LoweredExpr.splitVals_map_val_append vs (ms := .returning v :: ms) (by simp)])
     case frame T => simp [EctxItem.handlesReturn] at hKi
-    all_goals exact .inl (Converges.of_eq fun _ => rfl)
+    all_goals exact .inl (Converges.of_eq fun _ => by
+      -- An integer operator's propagation case is only reached once `headStep` has seen that it
+      -- doesn't match the cases before it, which depend on its mode and first operand.
+      first | rfl | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl)))
   | @bubbleBreak Ki l σ hKi hret =>
     cases Ki
     case call f vs ms T =>
@@ -526,7 +560,10 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
     case labeled l' =>
       have hne : l ≠ l' := fun h => by subst h; simp [EctxItem.handlesBreak] at hKi
       exact .inl (Converges.of_eq fun _ => by simp [EctxItem.fill, headStep, hne])
-    all_goals exact .inl (Converges.of_eq fun _ => rfl)
+    all_goals exact .inl (Converges.of_eq fun _ => by
+      -- An integer operator's propagation case is only reached once `headStep` has seen that it
+      -- doesn't match the cases before it, which depend on its mode and first operand.
+      first | rfl | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl)))
   | labeledBreak => exact .inl (Converges.of_eq fun _ => by simp [headStep])
 
 omit [RtSubChecker τ] in
@@ -614,6 +651,9 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleException (Ki := .checkEqL _)
          | exact .bubbleException (Ki := .checkEqR _)
          | exact .bubbleException (Ki := .labeled _)
+         | exact .bubbleException (Ki := .intBinL _ _ _)
+         | exact .bubbleException (Ki := .intBinR _ _ _)
+         | exact .bubbleException (Ki := .intNeg _)
          | exact .bubbleReturn (Ki := .nullCheck) rfl
          | exact .bubbleReturn (Ki := .as _) rfl
          | exact .bubbleReturn (Ki := .is _) rfl
@@ -626,6 +666,12 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleReturn (Ki := .checkEqL _) rfl
          | exact .bubbleReturn (Ki := .checkEqR _) rfl
          | exact .bubbleReturn (Ki := .labeled _) rfl
+         | exact .bubbleReturn (Ki := .intBinL _ _ _) rfl
+         | exact .bubbleReturn (Ki := .intBinR _ _ _) rfl
+         | exact .bubbleReturn (Ki := .intNeg _) rfl
+         | exact .bubbleBreak (Ki := .intBinL _ _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .intBinR _ _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .intNeg _) rfl rfl
          | exact .bubbleBreak (Ki := .nullCheck) rfl rfl
          | exact .bubbleBreak (Ki := .as _) rfl rfl
          | exact .bubbleBreak (Ki := .is _) rfl rfl
@@ -688,6 +734,9 @@ theorem primStep_fill (fuel : Nat) {Ki : EctxItem} {e : LoweredExpr} (σ : State
   case checkEqR v₁ =>
     have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
     simp [EctxItem.fill, primStep, he, hv]
+  case intBinR op mode v₁ =>
+    have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
+    simp [EctxItem.fill, primStep, he, hv]
   all_goals simp [EctxItem.fill, primStep, he]
 
 /--
@@ -748,6 +797,14 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
   | ret m => simp [primStep, hin .ret m rfl]
   | frame m T => simp [primStep, hin (.frame T) m rfl]
   | labeled l m => simp [primStep, hin (.labeled l) m rfl]
+  | intNeg mode m => simp [primStep, hin (.intNeg mode) m rfl]
+  | intBin op mode m₁ m₂ =>
+    have h₁ := hin (.intBinL op mode m₂) m₁ rfl
+    cases m₁ with
+    | val v₁ =>
+      have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
+      simp [primStep, hin (.intBinR op mode v₁) m₂ rfl, hv]
+    | _ => simp_all [primStep, LoweredExpr.toOutcome?]
   | check kind m => simp [primStep, hin (.check kind) m rfl]
   | checkEq m₁ m₂ =>
     have h₁ := hin (.checkEqL m₂) m₁ rfl

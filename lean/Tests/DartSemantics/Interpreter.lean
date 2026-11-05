@@ -10,8 +10,9 @@ meta import DartLang.SimpleTypes
 Runs programs on `SimpleType`. The programs include `LoweredExpr`s of the kind flow analysis
 produces (some run with their local variable `x` replaced by a parameter, so that it can hold
 something other than the null object), literals, calls of top-level functions (see `functions`),
-loops and breaks, programs for each way a program can fail (throwing, and getting stuck), the
-redex at which a stuck program is reported to be stuck, and programs that run out of fuel.
+loops and breaks, integer arithmetic in each integer mode, programs for each way a program can fail
+(throwing, and getting stuck), the redex at which a stuck program is reported to be stuck, and
+programs that run out of fuel.
 
 A block's value is the null object, so a program that is a block completes normally with the null
 object, unless it throws or gets stuck.
@@ -38,6 +39,23 @@ def y : Variable := { name := "y", type := Object }
 def b : Variable := { name := "b", type := bool }
 def c : Variable := { name := "c", type := bool }
 def n : Variable := { name := "n", type := int }
+def i : Variable := { name := "i", type := int }
+def s : Variable := { name := "s", type := int }
+
+/--
+`int f(int n) { var s = 0; for (var i = 0; i < n; i = i + 1) { body } return s; }`, for the
+loop tests in `functions`.
+-/
+def sumLoop (body : List LoweredExpr) : FunctionDecl (τ := SimpleType) :=
+  ⟨[n], .block [.declare s int false, .variableSet s (.int 0), .declare i int false,
+    .variableSet i (.int 0),
+    .labeled "L" (.loop (.cond (.intBin .lt none (.var i int) (.var n int))
+      (.seq (.labeled "C" (.block body)) (.variableSet i (.intBin .add none (.var i int) (.int 1))))
+      (.brk "L") Null)),
+    .ret (.var s int)]⟩
+
+/-- `s = s + i;`, for `sumLoop`. -/
+def addI : LoweredExpr := .variableSet s (.intBin .add none (.var s int) (.var i int))
 
 /-- `{ bool b = true; bool c = false; body; return c; }`, for the loop tests in `functions`. -/
 def withBC (body : LoweredExpr) : LoweredExpr :=
@@ -55,9 +73,14 @@ The top-level functions of the programs tested here:
 - `bool whileOnce()`, `bool doOnce()` and `bool skip()`, which loop (see their definitions);
 - `int nestedBreak() { outer: { inner: { break outer; } return 1; } return 2; }`;
 - `bool innerBreak() { while (true) { while (true) { break; } break; } return true; }`;
-- `int returnFromLoop() { while (true) { return 3; } }`; and
+- `int returnFromLoop() { while (true) { return 3; } }`;
 - `Null breakOut() { break L; }`, whose break has no labeled statement to break out of (which Dart
-  rejects).
+  rejects);
+- `int wrapAdd(int n) { return n + 1; }`, and `checkedAdd` and `unboundedAdd`, the same in other
+  integer modes (see `intModeOf`); and
+- `int sumBelow(int n)`, which sums the integers from `0` to `n - 1` with a `for` loop, and
+  `int sumSkipping(int n)`, which does the same, but skips `0` and `1` with a `continue` (see
+  `sumLoop`).
 -/
 def functions : String → Option (FunctionDecl (τ := SimpleType))
   | "not" => some ⟨[b],
@@ -96,15 +119,26 @@ def functions : String → Option (FunctionDecl (τ := SimpleType))
       .labeled "L" (.loop (.cond (.bool true) (.labeled "C" (.block [.ret (.int 3)])) (.brk "L")
         Null))]⟩
   | "breakOut" => some ⟨[], .block [.brk "L"]⟩
+  | "wrapAdd" | "checkedAdd" | "unboundedAdd" =>
+    some ⟨[n], .ret (.intBin .add none (.var n int) (.int 1))⟩
+  | "sumBelow" => some (sumLoop [addI])
+  | "sumSkipping" =>
+    some (sumLoop [.cond (.intBin .lt none (.var i int) (.int 2)) (.brk "C") .null Null, addI])
   | _ => none
+
+/-- The integer mode of each function in `functions`: `checked`, except as their names say. -/
+def intModeOf : String → IntMode
+  | "wrapAdd" => .wrap64
+  | "unboundedAdd" => .unbounded
+  | _ => .checked
 
 /-- The semantics with promotion checks. -/
 @[instance_reducible]
-def verify : SemanticParams SimpleType := ⟨.verify, getterImpl, functions⟩
+def verify : SemanticParams SimpleType := ⟨.verify, getterImpl, functions, intModeOf⟩
 
 /-- The semantics without promotion checks. -/
 @[instance_reducible]
-def trust : SemanticParams SimpleType := ⟨.trust, getterImpl, functions⟩
+def trust : SemanticParams SimpleType := ⟨.trust, getterImpl, functions, intModeOf⟩
 
 /-- A promotable property, backed by an instance variable of the object in `σx`. -/
 def f : Property := ⟨"_f", ObjectQ, true⟩
@@ -477,6 +511,97 @@ info: out of fuel at: DartLang.LoweredExpr.seq
 -/
 #guard_msgs in
 #eval runClosed verify (.loop .null)
+
+/-! ## Integer arithmetic and comparisons -/
+
+/-- The largest 64-bit integer, `2⁶³ - 1`. -/
+def maxInt : Int := 2 ^ 63 - 1
+
+/-- Whether running `m` from the empty state gets stuck (`stuck`), or else the run's summary. -/
+def stuckOrSummary (m : LoweredExpr) : Std.Format :=
+  match Interp.run (P := verify) 100 m State.empty with
+  | .stuck _ _ _ => "stuck"
+  | r => summary r
+
+-- `maxInt + 1` wraps around in `wrap64` mode, gets stuck in `checked` mode, and is exact in
+-- `unbounded` mode.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int (-9223372036854775808)), stuck,
+  done: DartLang.Outcome.normal (DartLang.Value.int 9223372036854775808)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [stuckOrSummary (.intBin .add (some .wrap64) (.int maxInt) (.int 1)),
+  stuckOrSummary (.intBin .add (some .checked) (.int maxInt) (.int 1)),
+  stuckOrSummary (.intBin .add (some .unbounded) (.int maxInt) (.int 1))]
+
+-- Arithmetic that stays in range is the same in every mode.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int (-6)),
+  done: DartLang.Outcome.normal (DartLang.Value.int (-6)),
+  done: DartLang.Outcome.normal (DartLang.Value.int (-6))]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [stuckOrSummary (.intBin .mul (some .wrap64) (.int 2) (.intBin .sub (some .wrap64) (.int 2)
+    (.int 5))),
+  stuckOrSummary (.intBin .mul (some .checked) (.int 2) (.intBin .sub (some .checked) (.int 2)
+    (.int 5))),
+  stuckOrSummary (.intBin .mul (some .unbounded) (.int 2) (.intBin .sub (some .unbounded) (.int 2)
+    (.int 5)))]
+
+-- `2⁶² * 4` wraps around to `0` in `wrap64` mode.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 0) -/
+#guard_msgs in
+#eval stuckOrSummary (.intBin .mul (some .wrap64) (.int (2 ^ 62)) (.int 4))
+
+-- `-(-2⁶³)` wraps around to `-2⁶³` in `wrap64` mode, and gets stuck in `checked` mode.
+/-- info: [done: DartLang.Outcome.normal (DartLang.Value.int (-9223372036854775808)), stuck] -/
+#guard_msgs in
+#eval [stuckOrSummary (.intNeg (some .wrap64) (.int (-2 ^ 63))),
+  stuckOrSummary (.intNeg (some .checked) (.int (-2 ^ 63)))]
+
+-- Comparisons: `1 < 2`, `2 <= 2`, `1 > 2` and `1 >= 2`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.bool true),
+  done: DartLang.Outcome.normal (DartLang.Value.bool true),
+  done: DartLang.Outcome.normal (DartLang.Value.bool false),
+  done: DartLang.Outcome.normal (DartLang.Value.bool false)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [stuckOrSummary (.intBin .lt (some .checked) (.int 1) (.int 2)),
+  stuckOrSummary (.intBin .le (some .checked) (.int 2) (.int 2)),
+  stuckOrSummary (.intBin .gt (some .checked) (.int 1) (.int 2)),
+  stuckOrSummary (.intBin .ge (some .checked) (.int 1) (.int 2))]
+
+-- An operator whose integer mode hasn't been filled in (outside any call) gets stuck.
+/--
+info: stuck at redex: DartLang.LoweredExpr.intBin
+  (DartLang.IntBinOp.add)
+  none
+  (DartLang.LoweredExpr.val (DartLang.Value.int 1))
+  (DartLang.LoweredExpr.val (DartLang.Value.int 2))
+-/
+#guard_msgs (whitespace := lax) in
+#eval stuckRedex (Interp.run (P := verify) 100 (.intBin .add none (.int 1) (.int 2)) State.empty)
+
+-- A call fills in the integer mode of its function: `maxInt + 1` in `wrapAdd`, `checkedAdd` and
+-- `unboundedAdd`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int (-9223372036854775808)), stuck,
+  done: DartLang.Outcome.normal (DartLang.Value.int 9223372036854775808)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [stuckOrSummary (.call "wrapAdd" [.int maxInt] int),
+  stuckOrSummary (.call "checkedAdd" [.int maxInt] int),
+  stuckOrSummary (.call "unboundedAdd" [.int maxInt] int)]
+
+-- `for` loops: `sumBelow(5)` is `0 + 1 + 2 + 3 + 4`, and `sumSkipping(5)` skips `0` and `1`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 10),
+  done: DartLang.Outcome.normal (DartLang.Value.int 9)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [summary (Interp.run (P := verify) 1000 (.call "sumBelow" [.int 5] int) State.empty),
+  summary (Interp.run (P := verify) 1000 (.call "sumSkipping" [.int 5] int) State.empty)]
 
 /-! ## Intrinsic checks for `Expect` assertions -/
 

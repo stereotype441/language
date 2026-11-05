@@ -47,6 +47,66 @@ public inductive CheckKind where
   | isNotNull
   deriving Repr, BEq, DecidableEq
 
+/--
+An *integer mode*: how the arithmetic of a function treats results that don't fit in 64 bits.
+
+Every Dart `int` is represented by its mathematical value, a Lean `Int` (`Value.int`). On the
+native platforms, Dart's integers are 64-bit two's complement numbers, and arithmetic wraps
+around; on the web, they're JavaScript numbers. A proof about code that is only correct because of
+wrapping (such as a hash function) needs to know that it wraps, but most code never overflows, and
+a proof about it shouldn't depend on how overflow behaves. So each function's arithmetic runs in
+one of three modes, chosen per function (`SemanticParams.intModeOf`):
+- `wrap64`: results wrap around into 64-bit two's complement, as the VM does;
+- `checked`: a result that doesn't fit in 64 bits gets stuck. A program that runs safely in this
+  mode never overflows, so it behaves the same in `wrap64` mode; and
+- `unbounded`: results are exact mathematical integers. A proof in this mode shows that the code
+  would be correct if integers were unbounded.
+
+Integer literals are always in 64-bit range, whatever the mode.
+-/
+public inductive IntMode where
+  /-- Results wrap around into 64-bit two's complement. -/
+  | wrap64
+  /-- A result that doesn't fit in 64 bits gets stuck. -/
+  | checked
+  /-- Results are exact mathematical integers. -/
+  | unbounded
+  deriving Repr, BEq, DecidableEq
+
+/--
+The result of an arithmetic operation whose exact result is `n`, in integer mode `mode` (see
+`IntMode`): `none` if the operation gets stuck.
+-/
+@[expose]
+public def IntMode.arith : IntMode → Int → Option Int
+  | .wrap64, n => some (n.bmod (2 ^ 64))
+  | .checked, n => if -2 ^ 63 ≤ n ∧ n < 2 ^ 63 then some n else none
+  | .unbounded, n => some n
+
+/-- The binary operators on integers: arithmetic (`+`, `-`, `*`) and comparisons. -/
+public inductive IntBinOp where
+  /-- `+` -/
+  | add
+  /-- `-` -/
+  | sub
+  /-- `*` -/
+  | mul
+  /-- `<` -/
+  | lt
+  /-- `<=` -/
+  | le
+  /-- `>` -/
+  | gt
+  /-- `>=` -/
+  | ge
+  deriving Repr, BEq, DecidableEq
+
+/-- Whether binary operator `op` is a comparison (producing a `bool`, not an `int`). -/
+@[expose]
+public def IntBinOp.isComparison : IntBinOp → Bool
+  | .lt | .le | .gt | .ge => true
+  | .add | .sub | .mul => false
+
 /-
 `Value`, `LoweredExpr` and `EctxItem` are mutually inductive: a value may hold a captured
 continuation (a list of evaluation context items), and evaluation context items hold the
@@ -66,8 +126,9 @@ public inductive Value where
   | bool (b : Bool)
   /--
   An integer: an instance of `int`. Every Dart `int` is represented by its mathematical value, a
-  Lean `Int` (which is unbounded). Integer literals are always in 64-bit range; how arithmetic
-  stays in range will be decided per member when the semantics has arithmetic.
+  Lean `Int` (which is unbounded). Integer literals are always in 64-bit range; what arithmetic
+  does with a result outside that range depends on the integer mode of the function it's in (see
+  `IntMode`).
   -/
   | int (n : Int)
   /-- A reference to the object stored at location `ℓ`. -/
@@ -196,6 +257,22 @@ public inductive LoweredExpr where
   | labeled (l : String) (m : LoweredExpr)
   /-- A break statement, `break l;`, which breaks out of the enclosing labeled statement `l`. -/
   | brk (l : String)
+  /--
+  A binary operator on integers, `m₁ op m₂`, which evaluates `m₁` and then `m₂`. An arithmetic
+  operator computes its result in integer mode `mode` (see `IntMode`). Its static type is `int` for
+  an arithmetic operator, and `bool` for a comparison.
+
+  The mode is the mode of the function that the operator is in. Since a step can't see which
+  function it's running in, the mode is recorded here: the translator leaves it `none`, and calling
+  the function fills it in (`LoweredExpr.withIntMode`). An operator whose mode is `none` gets stuck,
+  so a program's entry point (`main`) has to be run as a call.
+  -/
+  | intBin (op : IntBinOp) (mode : Option IntMode) (m₁ m₂ : LoweredExpr)
+  /--
+  Unary minus on an integer, `-m`, computed in integer mode `mode`, which is filled in as for
+  `intBin`.
+  -/
+  | intNeg (mode : Option IntMode) (m : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -268,6 +345,12 @@ public inductive EctxItem where
   | checkEqR (v₁ : Value)
   /-- `l: □`: the body of a labeled statement -/
   | labeled (l : String)
+  /-- `□ op m₂`, computed in mode `mode` -/
+  | intBinL (op : IntBinOp) (mode : Option IntMode) (m₂ : LoweredExpr)
+  /-- `v₁ op □`, computed in mode `mode`, where the first operand has evaluated to `v₁` -/
+  | intBinR (op : IntBinOp) (mode : Option IntMode) (v₁ : Value)
+  /-- `-□`, computed in mode `mode` -/
+  | intNeg (mode : Option IntMode)
   /-- `frame(□)` (of type `T`): the body of a running call -/
   | frame (T : τ)
 
@@ -319,6 +402,22 @@ public def Value.primEq? : Value → Value → Option Bool
   | .int _, .bool _ => some false
   | _, _ => none
 
+omit Γ in
+/--
+The result of binary operator `op` on integers `n₁` and `n₂`, with arithmetic in integer mode
+`mode` (see `IntMode.arith`): `none` if the operation gets stuck. A comparison doesn't depend on
+the mode.
+-/
+@[expose]
+public def IntBinOp.eval : IntBinOp → IntMode → Int → Int → Option Value
+  | .add, mode, n₁, n₂ => (mode.arith (n₁ + n₂)).map .int
+  | .sub, mode, n₁, n₂ => (mode.arith (n₁ - n₂)).map .int
+  | .mul, mode, n₁, n₂ => (mode.arith (n₁ * n₂)).map .int
+  | .lt, _, n₁, n₂ => some (.bool (decide (n₁ < n₂)))
+  | .le, _, n₁, n₂ => some (.bool (decide (n₁ ≤ n₂)))
+  | .gt, _, n₁, n₂ => some (.bool (decide (n₁ > n₂)))
+  | .ge, _, n₁, n₂ => some (.bool (decide (n₁ ≥ n₂)))
+
 /--
 The static type of an expression.
 
@@ -350,6 +449,8 @@ public def LoweredExpr.typeOf :
   | loop _ => Γ.Null
   | labeled _ _ => Γ.Null
   | brk _ => Γ.Null
+  | intBin op _ _ _ => if op.isComparison then Γ.bool else Γ.int
+  | intNeg _ _ => Γ.int
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -358,6 +459,59 @@ public def LoweredExpr.typeOf :
   | varAt _ T _ => T
   | seq _ m₂ => m₂.typeOf
   | variableSetAt _ _ m => m.typeOf
+
+mutual
+
+/--
+Set the integer mode of every integer operator in `m` (`intBin` and `intNeg`) to `mode`. Calling a
+function runs its body with every operator's mode set to the function's mode, since the function
+an operator is in can't be seen from the operator (see `LoweredExpr.intBin`).
+
+A call in `m` is left alone, apart from its arguments: the callee's body is in the function table,
+and gets its own mode when it's called. Values (in `val`, `throwing` and `returning`) are left
+alone too.
+-/
+@[expose]
+public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExpr
+  | .var v T => .var v T
+  | .nullCheck m => .nullCheck (m.withIntMode mode)
+  | .as m T => .as (m.withIntMode mode) T
+  | .is m T => .is (m.withIntMode mode) T
+  | .null => .null
+  | .bool b => .bool b
+  | .int n => .int n
+  | .declare v T startsNull => .declare v T startsNull
+  | .cond m₁ m₂ m₃ T => .cond (m₁.withIntMode mode) (m₂.withIntMode mode) (m₃.withIntMode mode) T
+  | .block ms => .block (LoweredExpr.withIntModeList mode ms)
+  | .propertyGet m p T => .propertyGet (m.withIntMode mode) p T
+  | .variableSet v m => .variableSet v (m.withIntMode mode)
+  | .unsupported kind T => .unsupported kind T
+  | .call f args T => .call f (LoweredExpr.withIntModeList mode args) T
+  | .ret m => .ret (m.withIntMode mode)
+  | .check kind m => .check kind (m.withIntMode mode)
+  | .checkEq m₁ m₂ => .checkEq (m₁.withIntMode mode) (m₂.withIntMode mode)
+  | .loop m => .loop (m.withIntMode mode)
+  | .labeled l m => .labeled l (m.withIntMode mode)
+  | .brk l => .brk l
+  | .intBin op _ m₁ m₂ => .intBin op (some mode) (m₁.withIntMode mode) (m₂.withIntMode mode)
+  | .intNeg _ m => .intNeg (some mode) (m.withIntMode mode)
+  | .val v => .val v
+  | .throwing v => .throwing v
+  | .returning v => .returning v
+  | .breaking l => .breaking l
+  | .frame m T => .frame (m.withIntMode mode) T
+  | .varAt v T ℓ => .varAt v T ℓ
+  | .seq m₁ m₂ => .seq (m₁.withIntMode mode) (m₂.withIntMode mode)
+  | .variableSetAt v ℓ m => .variableSetAt v ℓ (m.withIntMode mode)
+
+/-- Set the integer mode of every integer operator in each of `ms`, as `withIntMode` does. -/
+@[expose]
+public def LoweredExpr.withIntModeList (mode : IntMode) :
+    List LoweredExpr → List LoweredExpr
+  | [] => []
+  | m :: ms => m.withIntMode mode :: withIntModeList mode ms
+
+end
 
 /--
 The declaration of a top-level function: its formal parameters `params`, in order, and its body
@@ -440,6 +594,9 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .checkEqL m₂, m => .checkEq m m₂
   | .checkEqR v₁, m => .checkEq (.val v₁) m
   | .labeled l, m => .labeled l m
+  | .intBinL op mode m₂, m => .intBin op mode m m₂
+  | .intBinR op mode v₁, m => .intBin op mode (.val v₁) m
+  | .intNeg mode, m => .intNeg mode m
   | .frame T, m => .frame m T
 
 /--
@@ -601,6 +758,32 @@ omit Γ in
 public theorem LoweredExpr.splitVals_map_val (vs : List Value) :
     splitVals (vs.map .val) = (vs, []) := by
   simpa using splitVals_map_val_append vs (ms := []) (by simp)
+
+omit Γ in
+/--
+An expression splits into an evaluation context item and an expression in its hole that isn't a
+value in at most one way: if `Ki₁.fill e₁ = Ki₂.fill e₂` (`h`), where neither `e₁` (`h₁`) nor `e₂`
+(`h₂`) is a value, then `Ki₁ = Ki₂` and `e₁ = e₂`. (The only item for which this isn't immediate
+is a call's, whose hole can be at any argument after the ones that are values.)
+-/
+public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredExpr}
+    (h₁ : ∀ v, e₁ ≠ .val v) (h₂ : ∀ v, e₂ ≠ .val v) (h : Ki₁.fill e₁ = Ki₂.fill e₂) :
+    Ki₁ = Ki₂ ∧ e₁ = e₂ := by
+  cases Ki₁ <;> cases Ki₂ <;> simp only [EctxItem.fill, reduceCtorEq] at h
+  case call.call f vs ms T f' vs' ms' T' =>
+    simp only [LoweredExpr.call.injEq] at h
+    obtain ⟨rfl, hl, rfl⟩ := h
+    obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ hl
+    exact ⟨rfl, rfl⟩
+  case checkEqL.checkEqR => exact absurd (LoweredExpr.checkEq.inj h).1 (h₁ _)
+  case checkEqR.checkEqL => exact absurd (LoweredExpr.checkEq.inj h).1.symm (h₂ _)
+  case intBinL.intBinR =>
+    simp only [LoweredExpr.intBin.injEq] at h
+    exact absurd h.2.2.1 (h₁ _)
+  case intBinR.intBinL =>
+    simp only [LoweredExpr.intBin.injEq] at h
+    exact absurd h.2.2.1.symm (h₂ _)
+  all_goals simp_all
 
 /--
 Plug `m` into the hole of the evaluation context `k`, a list of context items, innermost first.

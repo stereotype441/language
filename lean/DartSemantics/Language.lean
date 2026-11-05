@@ -54,26 +54,6 @@ omit Γ in
 @[simp]
 public theorem ofVal_eq (o : Outcome) : ToVal.ofVal (Expr := LoweredExpr) o = o.toExpr := rfl
 
-omit Γ in
-/--
-An expression splits into an evaluation context item and an expression in its hole that isn't a
-value in at most one way: if `Ki₁.fill e₁ = Ki₂.fill e₂` (`h`), where neither `e₁` (`h₁`) nor `e₂`
-(`h₂`) is a value, then `Ki₁ = Ki₂` and `e₁ = e₂`. (The only item for which this isn't immediate
-is a call's, whose hole can be at any argument after the ones that are values.)
--/
-public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredExpr}
-    (h₁ : ∀ v, e₁ ≠ .val v) (h₂ : ∀ v, e₂ ≠ .val v) (h : Ki₁.fill e₁ = Ki₂.fill e₂) :
-    Ki₁ = Ki₂ ∧ e₁ = e₂ := by
-  cases Ki₁ <;> cases Ki₂ <;> simp only [EctxItem.fill, reduceCtorEq] at h
-  case call.call f vs ms T f' vs' ms' T' =>
-    simp only [LoweredExpr.call.injEq] at h
-    obtain ⟨rfl, hl, rfl⟩ := h
-    obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ hl
-    exact ⟨rfl, rfl⟩
-  case checkEqL.checkEqR => exact absurd (LoweredExpr.checkEq.inj h).1 (h₁ _)
-  case checkEqR.checkEqL => exact absurd (LoweredExpr.checkEq.inj h).1.symm (h₂ _)
-  all_goals simp_all
-
 variable [P : SemanticParams τ]
 
 /--

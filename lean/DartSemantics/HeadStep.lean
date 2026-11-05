@@ -108,6 +108,12 @@ public class SemanticParams where
   programs. Functions may call each other, and themselves, in any way.
   -/
   functions : String → Option (FunctionDecl (τ := τ))
+  /--
+  The integer mode of each top-level function, by key (as for `functions`): how the integer
+  arithmetic in its body treats results that don't fit in 64 bits (see `IntMode`). A theorem can
+  choose a mode for each function, or quantify over modes.
+  -/
+  intModeOf : String → IntMode
 
 variable [P : SemanticParams τ]
 
@@ -273,6 +279,7 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   Once every argument of a call has been evaluated (to `vs`), the call looks up the function in the
   function table (`hf`), and checks that it has one formal parameter per argument (`hlen`). It
   allocates one cell per formal parameter, holding its argument, and runs the function's body, with
+  every integer operator's mode set to the function's integer mode (`SemanticParams.intModeOf`), and
   the formal parameters bound to their cells, as the body of a running call (`frame`).
 
   So far, every formal parameter is a required positional parameter, and every call is a static
@@ -286,7 +293,8 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | call {f : String} {d : FunctionDecl (τ := τ)} {vs : List Value} {T : τ} {σ : State}
       (hf : P.functions f = some d) (hlen : d.params.length = vs.length) :
       HeadStep (.call f (vs.map .val) T) σ
-        (.frame (d.body.bindVariables (d.params.zip (σ.allocAll (vs.map Cell.val)).1)) T)
+        (.frame ((d.body.withIntMode (P.intModeOf f)).bindVariables
+          (d.params.zip (σ.allocAll (vs.map Cell.val)).1)) T)
         (σ.allocAll (vs.map Cell.val)).2
   /-- A return statement, once its operand has evaluated to `v`, starts returning `v`. -/
   | ret {v : Value} {σ : State} : HeadStep (.ret (.val v)) σ (.returning v) σ
@@ -332,6 +340,22 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   /-- A break statement `break l` starts breaking out of the labeled statement `l`. -/
   | brk {l : String} {σ : State} : HeadStep (.brk l) σ (.breaking l) σ
   /--
+  A binary operator on integers whose operands have evaluated to `n₁` and `n₂`, and whose integer
+  mode has been filled in (`mode`), evaluates to its result `v` (`h`). An arithmetic operator whose
+  result doesn't fit in 64 bits, in mode `checked`, has no result, so it gets stuck; so does an
+  operator whose mode hasn't been filled in, or whose operands aren't integers (which can't happen
+  in a program that Dart accepts).
+  -/
+  | intBin {op : IntBinOp} {mode : IntMode} {n₁ n₂ : Int} {v : Value} {σ : State}
+      (h : op.eval mode n₁ n₂ = some v) :
+      HeadStep (.intBin op (some mode) (.val (.int n₁)) (.val (.int n₂))) σ (.val v) σ
+  /--
+  Unary minus on an integer `n`, whose integer mode has been filled in (`mode`), evaluates to `k`,
+  the result of `-n` in that mode (`h`).
+  -/
+  | intNeg {mode : IntMode} {n k : Int} {σ : State} (h : mode.arith (-n) = some k) :
+      HeadStep (.intNeg (some mode) (.val (.int n))) σ (.val (.int k)) σ
+  /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.
 
@@ -371,9 +395,17 @@ public theorem HeadStep.deterministic {e e₁ e₂ : LoweredExpr} {σ σ₁ σ�
     (h₁ : HeadStep e σ e₁ σ₁) (h₂ : HeadStep e σ e₂ σ₂) : e₁ = e₂ ∧ σ₁ = σ₂ := by
   generalize hE : e = E at h₂
   cases h₁ <;> cases h₂
+  -- When both steps propagate an abrupt completion out of a context item, `EctxItem.fill_inj`
+  -- shows that the items and the completions are the same, without a case split on both items.
+  case bubbleException.bubbleException | bubbleException.bubbleReturn
+      | bubbleException.bubbleBreak | bubbleReturn.bubbleException | bubbleReturn.bubbleReturn
+      | bubbleReturn.bubbleBreak | bubbleBreak.bubbleException | bubbleBreak.bubbleReturn
+      | bubbleBreak.bubbleBreak =>
+    obtain ⟨-, he⟩ := EctxItem.fill_inj (by simp) (by simp) hE
+    simp_all
+  -- Otherwise at most one of the steps is a propagation, so one case split on its item suffices.
   all_goals
-    (try cases ‹EctxItem›) <;> (try cases ‹EctxItem›) <;>
-      (try simp only [EctxItem.fill, reduceCtorEq] at hE)
+    (try cases ‹EctxItem›) <;> (try simp only [EctxItem.fill, reduceCtorEq] at hE)
   all_goals (try simp_all [EctxItem.handlesReturn, EctxItem.handlesBreak])
   all_goals first
     | grind [rtSub_unique]

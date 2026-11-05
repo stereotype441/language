@@ -278,7 +278,8 @@ public theorem tac_wp_call {f : String} {args : List LoweredExpr} {T : τ} {vs :
     {d : FunctionDecl (τ := τ)} (hsplit : LoweredExpr.splitVals args = (vs, []))
     (hf : P.functions f = some d) (hlen : d.params.length = vs.length)
     (H : Entails' Δ iprop(▷ (∀ ℓs, PointsToVals ℓs vs -∗
-        WP (LoweredExpr.frame (d.body.bindVariables (d.params.zip ℓs)) T) @ s; E {{ Φ }}))) :
+        WP (LoweredExpr.frame ((d.body.withIntMode (P.intModeOf f)).bindVariables
+          (d.params.zip ℓs)) T) @ s; E {{ Φ }}))) :
     Entails' Δ (WP (LoweredExpr.call f args T) @ s; E {{ Φ }}) := by
   have h := LoweredExpr.splitVals_append args
   rw [hsplit, List.append_nil] at h
@@ -561,7 +562,8 @@ macro_rules
 /--
 Bind the formal parameters of a function's body to their cells, after `wp_call` or in a proof of
 `FunSpec.intro`'s premise, once the list of locations is concrete: compute
-`body.bindVariables (params.zip ℓs)`, resolving each parameter in the body to its cell.
+`(body.withIntMode mode).bindVariables (params.zip ℓs)`, setting the mode of each integer operator
+in the body and resolving each parameter in the body to its cell.
 -/
 syntax "dart_bind_params" : tactic
 
@@ -569,5 +571,6 @@ macro_rules
   | `(tactic| dart_bind_params) => `(tactic|
     simp (config := { decide := true }) only [List.zip_cons_cons, List.zip_nil_left,
       List.zip_nil_right, DartLang.LoweredExpr.bindVariables, List.foldl_cons, List.foldl_nil,
+      DartLang.LoweredExpr.withIntMode, DartLang.LoweredExpr.withIntModeList,
       DartLang.LoweredExpr.resolve, DartLang.LoweredExpr.resolveBlock,
       DartLang.LoweredExpr.resolveList, ite_true, ite_false, Bool.false_eq_true, ↓reduceIte])

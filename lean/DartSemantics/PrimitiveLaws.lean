@@ -976,9 +976,10 @@ each formal parameter, holding its argument, and runs the body. It satisfies a p
 - the function table declares `f` as `d` (`hf`), with one formal parameter per argument (`hlen`);
   and
 - one step later (`▷`), for all locations `ℓs`, given the ownership of cells at `ℓs` holding the
-  arguments (`PointsToVals ℓs vs`), the body, with the formal parameters bound to those cells,
-  run as the body of a running call, satisfies `Φ`
-  (`WP (.frame (d.body.bindVariables (d.params.zip ℓs)) T) {{ Φ }}`).
+  arguments (`PointsToVals ℓs vs`), the body, with every integer operator's mode set to `f`'s
+  integer mode and the formal parameters bound to those cells, run as the body of a running call,
+  satisfies `Φ`
+  (`WP (.frame ((d.body.withIntMode (P.intModeOf f)).bindVariables (d.params.zip ℓs)) T) {{ Φ }}`).
 
 The `▷` is what makes recursive functions provable: a proof of a specification of `f` may assume
 the specification under a `▷` (by Löb induction), and this law removes the `▷` before the body
@@ -987,7 +988,8 @@ runs, so the body's own calls of `f` can use it. `FunSpec.intro` packages this.
 public theorem wp_call {f : String} {d : FunctionDecl (τ := τ)} {vs : List Value} {T : τ}
     (hf : P.functions f = some d) (hlen : d.params.length = vs.length) :
     ▷ (∀ ℓs, PointsToVals ℓs vs -∗
-        WP (LoweredExpr.frame (d.body.bindVariables (d.params.zip ℓs)) T) @ s; E {{ Φ }}) ⊢
+        WP (LoweredExpr.frame ((d.body.withIntMode (P.intModeOf f)).bindVariables
+          (d.params.zip ℓs)) T) @ s; E {{ Φ }}) ⊢
       WP (LoweredExpr.call f (vs.map .val) T) @ s; E {{ Φ }} := by
   iintro H
   iapply wp_lift_base_step rfl
@@ -1116,12 +1118,13 @@ Proving a specification of a top-level function `f`, by Löb induction: `f` meet
 specification `FunSpec f Pre Post` if:
 - the function table declares `f` as `d` (`hf`);
 - the precondition implies that there's one argument per formal parameter (`hlen`); and
-- for all argument values `vs`, static types `T` and locations `ℓs`, the body, with the formal
-  parameters bound to cells at `ℓs`, run as the body of a running call, satisfies the
-  postcondition (`WP (.frame (d.body.bindVariables (d.params.zip ℓs)) T) {{ o, Post vs o }}`),
-  given the precondition (`Pre vs`), the ownership of the cells, holding the arguments
-  (`PointsToVals ℓs vs`), and the specification itself (`FunSpec f Pre Post`), for the body's own
-  calls of `f` (`H`).
+- for all argument values `vs`, static types `T` and locations `ℓs`, the body, with every integer
+  operator's mode set to `f`'s integer mode and the formal parameters bound to cells at `ℓs`, run
+  as the body of a running call, satisfies the postcondition
+  (`WP (.frame ((d.body.withIntMode (P.intModeOf f)).bindVariables (d.params.zip ℓs)) T)
+  {{ o, Post vs o }}`), given the precondition (`Pre vs`), the ownership of the cells, holding the
+  arguments (`PointsToVals ℓs vs`), and the specification itself (`FunSpec f Pre Post`), for the
+  body's own calls of `f` (`H`).
 
 Assuming the specification for the body's calls isn't circular: each call takes a step before its
 body runs, which is what Löb induction requires (see `wp_call`). For a function that doesn't call
@@ -1131,7 +1134,8 @@ public theorem FunSpec.intro {f : String} {d : FunctionDecl (τ := τ)}
     {Pre : List Value → IProp GF} {Post : List Value → DartLang.Outcome (τ := τ) → IProp GF}
     (hf : P.functions f = some d) (hlen : ∀ vs, Pre vs ⊢ ⌜d.params.length = vs.length⌝)
     (H : ∀ vs T ℓs, FunSpec f Pre Post ∗ Pre vs ∗ PointsToVals ℓs vs ⊢
-      WP (LoweredExpr.frame (d.body.bindVariables (d.params.zip ℓs)) T) {{ o, Post vs o }}) :
+      WP (LoweredExpr.frame ((d.body.withIntMode (P.intModeOf f)).bindVariables
+        (d.params.zip ℓs)) T) {{ o, Post vs o }}) :
     ⊢ FunSpec f Pre Post := by
   iloeb as IH
   unfold FunSpec

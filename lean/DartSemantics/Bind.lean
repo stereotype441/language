@@ -117,6 +117,8 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
   | .loop m => by simp only [resolve, resolve_comm hne m]
   | .labeled _ m => by simp only [resolve, resolve_comm hne m]
   | .brk _ => rfl
+  | .intBin _ _ m₁ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
+  | .intNeg _ m => by simp only [resolve, resolve_comm hne m]
   | .val _ => rfl
   | .throwing _ => rfl
   | .returning _ => rfl
