@@ -224,6 +224,11 @@ info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicErr
 #guard_msgs in
 #eval runClosed verify (.as (.int 7) bool)
 
+-- `(7 as void) as int`: every value satisfies `void`, and the cast doesn't change the value.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 7) -/
+#guard_msgs in
+#eval runClosed verify (.as (.as (.int 7) void) int)
+
 /-! ## Assignments -/
 
 -- `x = null` evaluates to the value assigned.

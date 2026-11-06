@@ -2,8 +2,6 @@ module
 import DartSemantics
 import Tests.DartSemantics.Corollaries
 import DartLang.SimpleTypes
--- `SimpleType.NonNull` isn't exposed, so its definition is only visible with `import all`.
-import all DartLang.SimpleTypes
 
 /-!
 # Tests of semantic typing

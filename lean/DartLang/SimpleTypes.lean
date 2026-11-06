@@ -13,41 +13,45 @@ public inductive SimpleType where
   | Object : SimpleType
   | ObjectQ : SimpleType
   | dynamic : SimpleType
+  /--
+  The type `void`. Like `Object?` and `dynamic`, it's a top type: every type is a subtype of it,
+  and it's a subtype of exactly the top types. It differs from them only statically (for example,
+  the value of an expression of type `void` can't be used); at run time, every subtype check gives
+  the same answer for `void` as for `Object?`.
+  -/
+  | void : SimpleType
   | Null : SimpleType
   | Never : SimpleType
   | int : SimpleType
   | bool : SimpleType
   | List (elementType : SimpleType) : SimpleType
   | Map (key value : SimpleType) : SimpleType
-  deriving Repr, BEq, DecidableEq, Repr
+  deriving Repr, DecidableEq, Repr
 
 namespace SimpleType
 
+/--
+`==` on `SimpleType` is structural equality, decided by the derived `DecidableEq`. (A derived
+`BEq` would do the same, but with this many constructors, its equation lemmas make `simp` loop in
+the proofs below.)
+-/
+public instance instBEqSimpleType : BEq SimpleType := instBEqOfDecidableEq
+
 /-- `==` on `SimpleType` is reflexive (`(T == T) = true`). -/
-public theorem instLawfulBEq_rfl {T : SimpleType} : (T == T) = true := by
-  cases T <;> simp [BEq.beq, instBEqSimpleType.beq]
-  case List T' => apply instLawfulBEq_rfl
-  case Map K V =>
-    constructor
-    · apply instLawfulBEq_rfl
-    · apply instLawfulBEq_rfl
+public theorem instLawfulBEq_rfl {T : SimpleType} : (T == T) = true :=
+  decide_eq_true rfl
 
 /-- Types that `==` says are equal (`h`) are equal (`T₁ = T₂`). -/
 public theorem instLawfulBEq_eq_of_beq {T₁ T₂ : SimpleType}
-    (h : instBEqSimpleType.beq T₁ T₂ = true) : T₁ = T₂ := by
-  -- `cases` needs the hypothesis back in the goal, so that it's specialized to each case.
-  revert h
-  cases T₁ <;> cases T₂ <;> simp [instBEqSimpleType.beq]
-  case List.List T₁' T₂' => apply instLawfulBEq_eq_of_beq
-  case Map.Map K₁ V₁ K₂ V₂ =>
-    intro hK hV
-    simp [instLawfulBEq_eq_of_beq hK, instLawfulBEq_eq_of_beq hV]
+    (h : instBEqSimpleType.beq T₁ T₂ = true) : T₁ = T₂ :=
+  of_decide_eq_true h
 
 @[expose]
 public def isSubtype : SimpleType -> SimpleType -> Bool
   | Never,     _         => true
   | _,         ObjectQ   => true
   | _,         dynamic   => true
+  | _,         void      => true
   | Object,    Object    => true
   | Null,      Null      => true
   | int,       int       => true
@@ -82,10 +86,12 @@ public theorem isSubtype_trans (T U V : SimpleType) (hTU : T.isSubtype U = true)
     · apply isSubtype_trans K₁ K₂ K₃ (by assumption) (by assumption)
     · apply isSubtype_trans V₁ V₂ V₃ (by assumption) (by assumption)
 
+@[expose]
 public def NonNull : SimpleType -> SimpleType
   | ObjectQ => Object
   | Object  => Object
   | dynamic => dynamic
+  | void    => void
   | Null    => Never
   | Never   => Never
   | int     => int
