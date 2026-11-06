@@ -14,7 +14,8 @@ for every choice of `SemanticParams`. For calls, there are also specifications o
 and one for proving one by Löb induction (`FunSpec.intro`), which works for recursive functions. A
 function's body runs as the body of a running call (`frame`), and a weakest precondition's
 postcondition, a predicate on outcomes, says what holds if the body returns
-(`Outcome.returning`); `wp_frame` turns that into the call's outcome.
+(`Outcome.returning`); `wp_frame` turns that into the call's outcome. A loop is reasoned about
+with an invariant (`wp_loop_inv`), which packages the Löb induction that a loop needs.
 
 Run-time subtype checks and promotion checks need the dynamic type of a value. For the null object
 and booleans it's fixed; for an object it's recorded in the object's own cell, which never changes.
@@ -1054,6 +1055,195 @@ public theorem wp_checkEq_fail {v₁ v₂ : Value} (h : Value.primEq? v₁ v₂ 
       WP (LoweredExpr.checkEq (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
   refine wp_pure_step_throwing (by rfl) fun _ => ?_
   exact .checkEqFail h
+
+/-! ### Loops, breaks and integer arithmetic -/
+
+/--
+A loop runs its body, and then the loop again: it satisfies a postcondition `Φ` if the sequence of
+the two does, one step later (`▷ WP (LoweredExpr.seq m (.loop m)) {{ Φ }}`). (`wp_loop_inv` is
+usually more convenient.)
+-/
+public theorem wp_loop {m : LoweredExpr} :
+    ▷ WP (LoweredExpr.seq m (.loop m)) @ s; E {{ Φ }} ⊢ WP (LoweredExpr.loop m) @ s; E {{ Φ }} := by
+  refine wp_pure_step (by rfl) fun _ => ?_
+  exact .loop
+
+/--
+A labeled statement whose body has completed normally completes normally too, with the null
+object: it satisfies a postcondition `Φ` that holds, one step later, of completing normally with
+the null object (`▷ Φ (.normal .null)`).
+-/
+public theorem wp_labeled_val {l : String} {v : Value} :
+    ▷ Φ (.normal .null) ⊢ WP (LoweredExpr.labeled l (.val v)) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .labeledVal
+
+/--
+A labeled statement `l` whose body has broken out of it completes normally, with the null object:
+it satisfies a postcondition `Φ` that holds, one step later, of completing normally with the null
+object (`▷ Φ (.normal .null)`).
+-/
+public theorem wp_labeled_breaking {l : String} :
+    ▷ Φ (.normal .null) ⊢ WP (LoweredExpr.labeled (τ := τ) l (.breaking l)) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .labeledBreak
+
+/--
+A break statement `break l` starts breaking out of the labeled statement `l`: it satisfies a
+postcondition `Φ` that holds, one step later, of breaking out of `l` (`▷ Φ (.breaking l)`).
+-/
+public theorem wp_brk {l : String} :
+    ▷ Φ (.breaking l) ⊢ WP (LoweredExpr.brk (τ := τ) l) @ s; E {{ Φ }} := by
+  refine (later_mono (wp_value' (v := Outcome.breaking l))).trans
+    (wp_pure_step (by rfl) fun _ => ?_)
+  exact .brk
+
+/--
+What the body of a labeled statement `l` must guarantee about its outcome `o`, for the labeled
+statement to satisfy a postcondition `Φ`: that `Φ` holds, one step later, of the labeled
+statement's outcome. Completing normally, or breaking out of `l`, becomes completing normally with
+the null object; any other outcome (including a break out of another labeled statement)
+propagates.
+-/
+@[expose, simp]
+public def labeledPost (l : String) (Φ : DartLang.Outcome (τ := τ) → IProp GF) :
+    DartLang.Outcome (τ := τ) → IProp GF
+  | .normal _ => iprop(▷ Φ (.normal .null))
+  | .throwing v => iprop(▷ Φ (.throwing v))
+  | .returning v => iprop(▷ Φ (.returning v))
+  | .breaking l' => if l' = l then iprop(▷ Φ (.normal .null)) else iprop(▷ Φ (.breaking l'))
+
+/--
+The body `m` of a labeled statement `l`: `.labeled l m` satisfies a postcondition `Φ` if `m`
+satisfies the postcondition that `Φ` holds, one step later, of the labeled statement's outcome for
+each outcome `o` of the body (`WP m {{ o, labeledPost l Φ o }}`; see `labeledPost`).
+-/
+public theorem wp_labeled {l : String} {m : LoweredExpr} :
+    WP m @ s; E {{ o, labeledPost l Φ o }} ⊢ WP (LoweredExpr.labeled l m) @ s; E {{ Φ }} := by
+  refine (wp_mono fun o => ?_).trans (wp_bind_item (.labeled l))
+  cases o with
+  | normal v => exact wp_labeled_val
+  | throwing v => exact wp_bubble_exception (.labeled l) v
+  | returning v => exact wp_bubble_return rfl v
+  | breaking l' =>
+    simp only [labeledPost]
+    split
+    · next h =>
+      subst h
+      exact wp_labeled_breaking
+    · next h =>
+      refine wp_bubble_break ?_ rfl
+      simpa [EctxItem.handlesBreak] using Ne.symm h
+
+/--
+The postcondition that a loop's body must satisfy, for the loop invariant rule (`wp_loop_inv`):
+if the body completes normally, the invariant `I` holds again, one step later (`▷ I`), ready for
+the next iteration; if it completes in any other way (by breaking out of a labeled statement, for
+example), which ends the loop, the loop's postcondition `Φ` holds of that outcome.
+-/
+@[expose, simp]
+public def loopInvPost (I : IProp GF) (Φ : DartLang.Outcome (τ := τ) → IProp GF) :
+    DartLang.Outcome (τ := τ) → IProp GF
+  | .normal _ => iprop(▷ I)
+  | .throwing v => Φ (.throwing v)
+  | .returning v => Φ (.returning v)
+  | .breaking l => Φ (.breaking l)
+
+/--
+Bind, for the first part of a sequence: `LoweredExpr.seq m₁ m₂` satisfies a postcondition `Φ` if
+`m₁` satisfies the postcondition that the sequence of its outcome `o` and `m₂` satisfies `Φ`
+(`WP (LoweredExpr.seq o.toExpr m₂) {{ Φ }}`). This is `wp_bind_item` for `EctxItem.seq`, with
+`EctxItem.fill` unfolded, so that `iapply` can use it.
+-/
+public theorem wp_bind_seq {m₁ m₂ : LoweredExpr} :
+    WP m₁ @ s; E {{ o, WP (LoweredExpr.seq o.toExpr m₂) @ s; E {{ Φ }} }} ⊢
+      WP (LoweredExpr.seq m₁ m₂) @ s; E {{ Φ }} :=
+  wp_bind_item (.seq m₂)
+
+/--
+**The loop invariant rule.** A loop with body `m` satisfies a postcondition `Φ`, given an
+invariant `I`, if, given `I`, the body satisfies the postcondition that gives `I` back when it
+completes normally, and `Φ` when it completes in any other way (`H`; see `loopInvPost`).
+
+A loop only ends by completing abruptly, so `Φ` only needs to hold of abrupt outcomes. The proof
+is by Löb induction, which this rule packages so that a proof about a loop needs none of its own:
+each iteration takes a step (`wp_loop`), so the invariant only has to hold again one step later.
+-/
+public theorem wp_loop_inv {m : LoweredExpr} (I : IProp GF)
+    (H : I ⊢ WP m @ s; E {{ o, loopInvPost I Φ o }}) :
+    I ⊢ WP (LoweredExpr.loop m) @ s; E {{ Φ }} := by
+  iintro HI
+  iloeb as IH
+  iapply wp_loop
+  inext
+  iapply wp_bind_seq
+  ihave Hm := H $$ HI
+  iapply wp_wand $$ Hm
+  iintro %o Ho
+  cases o with
+  | normal v =>
+    simp only [loopInvPost, DartLang.Outcome.toExpr]
+    iapply wp_seq
+    inext
+    iapply IH $$ Ho
+  -- An abrupt completion of the body propagates out of the sequence, and so out of the loop.
+  -- (`rw` restates the sequence as `EctxItem.fill`, which `iapply` doesn't unfold.)
+  | throwing v =>
+    rw [show LoweredExpr.seq (Outcome.throwing v).toExpr (.loop m) =
+      (EctxItem.seq (.loop m)).fill (.throwing v) from rfl]
+    iapply wp_bubble_exception
+    inext
+    simp only [loopInvPost]
+    iexact Ho
+  | returning v =>
+    rw [show LoweredExpr.seq (Outcome.returning v).toExpr (.loop m) =
+      (EctxItem.seq (.loop m)).fill (.returning v) from rfl]
+    iapply wp_bubble_return rfl
+    inext
+    simp only [loopInvPost]
+    iexact Ho
+  | breaking l =>
+    rw [show LoweredExpr.seq (Outcome.breaking l).toExpr (.loop m) =
+      (EctxItem.seq (.loop m)).fill (.breaking l) from rfl]
+    iapply wp_bubble_break rfl rfl
+    inext
+    simp only [loopInvPost]
+    iexact Ho
+
+/--
+A binary operator on integers `n₁` and `n₂`, whose integer mode is `mode`, evaluates to its result
+`v` (`h`; see `IntBinOp.eval`): it satisfies a postcondition `Φ` that holds, one step later, of
+completing normally with `v` (`▷ Φ (.normal v)`). In mode `checked`, `h` says in particular that
+the result is in 64-bit range.
+-/
+public theorem wp_intBin {op : IntBinOp} {mode : IntMode} {n₁ n₂ : Int} {v : Value}
+    (h : op.eval mode n₁ n₂ = some v) :
+    ▷ Φ (.normal v) ⊢
+      WP (LoweredExpr.intBin (τ := τ) op (some mode) (.val (.int n₁)) (.val (.int n₂))) @ s; E
+        {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .intBin h
+
+/--
+Unary minus on an integer `n`, whose integer mode is `mode`, evaluates to `k` (`h`; see
+`IntMode.arith`): it satisfies a postcondition `Φ` that holds, one step later, of completing
+normally with `k` (`▷ Φ (.normal (.int k))`).
+-/
+public theorem wp_intNeg {mode : IntMode} {n k : Int} (h : mode.arith (-n) = some k) :
+    ▷ Φ (.normal (.int k)) ⊢
+      WP (LoweredExpr.intNeg (τ := τ) (some mode) (.val (.int n))) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .intNeg h
+
+/--
+Equality of values `v₁` and `v₂` that can be compared evaluates to whether they're equal (`h`; see
+`Value.primEq?`): it satisfies a postcondition `Φ` that holds, one step later, of completing
+normally with that boolean (`▷ Φ (.normal (.bool b))`).
+-/
+public theorem wp_primEq {v₁ v₂ : Value} {b : Bool} (h : Value.primEq? v₁ v₂ = some b) :
+    ▷ Φ (.normal (.bool b)) ⊢ WP (LoweredExpr.primEq (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .primEq h
 
 end Laws
 

@@ -38,10 +38,18 @@ program's execution:
   parameters in the body, once their cells' locations are concrete.
 - `wp_call_spec H`: take a call of a top-level function whose arguments are all values, using its
   specification `H` (a `FunSpec`).
+- `wp_int_checked`: take the step of an arithmetic operator in integer mode `checked` whose result
+  can't be computed by `rfl` (because its operands aren't concrete numbers), leaving the side
+  condition that the result is in 64-bit range as a goal.
+- `wp_loop_step`: unroll one iteration of a loop. Usually the loop invariant rule is more
+  convenient: apply `tac_wp_loop_inv`.
 
-`wp_pures` also takes the steps of literals, returns (and their propagation), the body of a
-running call (`frame`) once it has completed, and intrinsic checks whose answer `rfl` can compute.
-To reason about a function's body separately from the call's outcome, apply `tac_wp_frame`.
+`wp_pures` also takes the steps of literals, returns, labeled statements and breaks (and the
+propagation of returns and breaks), the body of a running call (`frame`) once it has completed,
+and intrinsic checks, arithmetic, comparisons and equality whose answer `rfl` can compute. It
+doesn't run a loop, which it would unroll forever. To reason about a function's body separately
+from the call's outcome, apply `tac_wp_frame`, and similarly `tac_wp_labeled` for a labeled
+statement.
 
 Steps that involve a run-time subtype check (cast expressions and is-expressions) or a getter that
 is user code are taken by applying the laws in `PrimitiveLaws.lean` directly.
@@ -100,6 +108,20 @@ public theorem tidy_fill_checkEqL (m₂ m : LoweredExpr) :
     (EctxItem.checkEqL m₂).fill m = .checkEq m m₂ := rfl
 public theorem tidy_fill_checkEqR (v₁ : Value) (m : LoweredExpr) :
     (EctxItem.checkEqR v₁).fill m = .checkEq (.val v₁) m := rfl
+public theorem tidy_toExpr_breaking (l : String) :
+    (DartLang.Outcome.breaking (τ := τ) l).toExpr = LoweredExpr.breaking l := rfl
+public theorem tidy_fill_labeled (l : String) (m : LoweredExpr) :
+    (EctxItem.labeled (τ := τ) l).fill m = .labeled l m := rfl
+public theorem tidy_fill_intBinL (op : IntBinOp) (mode : Option IntMode) (m₂ m : LoweredExpr) :
+    (EctxItem.intBinL op mode m₂).fill m = .intBin op mode m m₂ := rfl
+public theorem tidy_fill_intBinR (op : IntBinOp) (mode : Option IntMode) (v₁ : Value)
+    (m : LoweredExpr) : (EctxItem.intBinR op mode v₁).fill m = .intBin op mode (.val v₁) m := rfl
+public theorem tidy_fill_intNeg (mode : Option IntMode) (m : LoweredExpr) :
+    (EctxItem.intNeg (τ := τ) mode).fill m = .intNeg mode m := rfl
+public theorem tidy_fill_primEqL (m₂ m : LoweredExpr) :
+    (EctxItem.primEqL m₂).fill m = .primEq m m₂ := rfl
+public theorem tidy_fill_primEqR (v₁ : Value) (m : LoweredExpr) :
+    (EctxItem.primEqR v₁).fill m = .primEq (.val v₁) m := rfl
 
 variable [Γ : DartRuntimeTypeRepr τ]
 
@@ -130,6 +152,19 @@ public theorem HeadStep.bubbleReturn_call [SemanticParams τ] {f : String}
   rw [hsplit] at h
   subst h
   exact .bubbleReturn (Ki := .call f vs ms T) rfl
+
+/--
+A break in an argument of a call propagates out of the call: if the arguments split into values,
+then breaking out of `l`, then the rest (`hsplit`), the call steps to breaking out of `l`.
+-/
+public theorem HeadStep.bubbleBreak_call [SemanticParams τ] {f : String}
+    {args : List LoweredExpr} {T : τ} {vs : List Value} {l : String} {ms : List LoweredExpr}
+    {σ : State (τ := τ)} (hsplit : LoweredExpr.splitVals args = (vs, .breaking l :: ms)) :
+    HeadStep (.call f args T) σ (.breaking l) σ := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit] at h
+  subst h
+  exact .bubbleBreak (Ki := .call f vs ms T) rfl rfl
 variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF] [P : SemanticParams τ]
 -- (The type of `Φ` is spelled out because a local notation doesn't work in a `variable` binder; see
 -- the same binder in `PrimitiveLaws.lean`.)
@@ -311,9 +346,65 @@ public theorem tac_wp_frame {m : LoweredExpr} {T : τ}
     Entails' Δ (WP (LoweredExpr.frame m T) @ s; E {{ Φ }}) :=
   (show Δ ⊢ _ from H).trans wp_frame
 
+/--
+The proof-mode form of `wp_value` for an expression that is breaking out of labeled statement `l`:
+to prove that `.breaking l` satisfies `Φ` from the hypotheses `Δ`, prove `Φ (.breaking l)` (`H`).
+-/
+public theorem tac_wp_breaking {l : String} (H : Entails' Δ (Φ (.breaking l))) :
+    Entails' Δ (WP (LoweredExpr.breaking (τ := τ) l) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans (wp_value' (v := DartLang.Outcome.breaking l))
+
+/--
+The proof-mode form of `wp_labeled`: to prove that the labeled statement `l` with body `m`
+satisfies `Φ` from the hypotheses `Δ`, prove that `m` satisfies the postcondition that `Φ` holds,
+one step later, of the labeled statement's outcome (`H`; see `labeledPost`).
+-/
+public theorem tac_wp_labeled {l : String} {m : LoweredExpr}
+    (H : Entails' Δ (WP m @ s; E {{ o, labeledPost l Φ o }})) :
+    Entails' Δ (WP (LoweredExpr.labeled l m) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans wp_labeled
+
+/--
+The proof-mode form of `wp_loop_inv`: to prove that a loop with body `m` satisfies `Φ` from the
+hypotheses `Δ`, given an invariant `I`, prove that `Δ` gives `I` (`HI`), and that `I` makes the
+body satisfy the postcondition that gives `I` back when it completes normally, and `Φ` otherwise
+(`H`; see `loopInvPost`).
+-/
+public theorem tac_wp_loop_inv {m : LoweredExpr} (I : IProp GF) (HI : Entails' Δ I)
+    (H : I ⊢ WP m @ s; E {{ o, loopInvPost I Φ o }}) :
+    Entails' Δ (WP (LoweredExpr.loop m) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from HI).trans (wp_loop_inv I H)
+
+/--
+The proof-mode form of `wp_intBin`: to prove that a binary operator on integers `n₁` and `n₂`, in
+integer mode `mode`, satisfies `Φ` from the hypotheses `Δ`, where its result is `v` (`h`), prove
+that `Φ` holds of `v` one step later (`H`).
+-/
+public theorem tac_wp_intBin {op : IntBinOp} {mode : IntMode} {n₁ n₂ : Int} {v : Value}
+    (h : op.eval mode n₁ n₂ = some v) (H : Entails' Δ iprop(▷ Φ (.normal v))) :
+    Entails' Δ (WP (LoweredExpr.intBin (τ := τ) op (some mode) (.val (.int n₁)) (.val (.int n₂))) @
+      s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans (wp_intBin h)
+
+/--
+`tac_wp_intBin` for an arithmetic operator in mode `checked`: to prove that it satisfies `Φ` from
+the hypotheses `Δ`, where its exact result is `n` (`hn`, its result in mode `unbounded`), prove
+that `n` is in 64-bit range (`hr`), and that `Φ` holds of `n` one step later (`H`).
+-/
+public theorem tac_wp_intBin_checked {op : IntBinOp} {n₁ n₂ n : Int}
+    (hn : op.eval (τ := τ) .unbounded n₁ n₂ = some (.int n)) (hr : -2 ^ 63 ≤ n ∧ n < 2 ^ 63)
+    (H : Entails' Δ iprop(▷ Φ (.normal (.int n)))) :
+    Entails' Δ (WP (LoweredExpr.intBin (τ := τ) op (some .checked) (.val (.int n₁))
+      (.val (.int n₂))) @ s; E {{ Φ }}) :=
+  tac_wp_intBin (IntBinOp.eval_checked_of_range hn hr) H
+
 end DartSemantics
 
-/-- Take a head step that doesn't depend on, or change, the state (for `wp_pure`). -/
+/--
+Take a head step that doesn't depend on, or change, the state (for `wp_pure`). Running a loop
+(`HeadStep.loop`) isn't one of them: `wp_pures` would unroll it forever. Use the loop invariant rule
+(`tac_wp_loop_inv`), or `wp_loop_step` to unroll one iteration.
+-/
 syntax "dart_pure_head_step" : tactic
 
 macro_rules
@@ -360,24 +451,66 @@ macro_rules
     | exact DartSemantics.HeadStep.bubbleReturn (Ki := .check _) rfl
     | exact DartSemantics.HeadStep.bubbleReturn (Ki := .checkEqL _) rfl
     | exact DartSemantics.HeadStep.bubbleReturn (Ki := .checkEqR _) rfl
-    | exact DartSemantics.HeadStep.bubbleReturn_call rfl)
+    | exact DartSemantics.HeadStep.bubbleReturn_call rfl
+    | exact DartSemantics.HeadStep.labeledVal
+    | exact DartSemantics.HeadStep.labeledBreak
+    | exact DartSemantics.HeadStep.brk
+    | exact DartSemantics.HeadStep.intBin rfl
+    | exact DartSemantics.HeadStep.intNeg rfl
+    | exact DartSemantics.HeadStep.primEq rfl
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .labeled _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .intBinL _ _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .intBinR _ _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .intNeg _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .primEqL _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .primEqR _)
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .labeled _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .intBinL _ _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .intBinR _ _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .intNeg _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .primEqL _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .primEqR _) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .nullCheck) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .as _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .is _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .cond _ _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .propertyGet _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .seq _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .variableSetAt _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .ret) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .check _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .checkEqL _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .checkEqR _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .labeled _) (by decide) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .intBinL _ _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .intBinR _ _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .intNeg _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .primEqL _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .primEqR _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak_call rfl)
 
 /--
-Tidy the goal after a step: reduce `Outcome.toExpr`, `EctxItem.fill` and `framePost`, the list
-operations that plugging into a call's arguments leaves, and beta-reduce postconditions.
+Tidy the goal after a step: reduce `Outcome.toExpr`, `EctxItem.fill`, `framePost`, `labeledPost`
+and `loopInvPost`, the list operations that plugging into a call's arguments leaves, and
+beta-reduce postconditions.
 -/
 syntax "dart_wp_tidy" : tactic
 
 macro_rules
   | `(tactic| dart_wp_tidy) =>
-    `(tactic| try simp only [DartSemantics.tidy_toExpr_normal, DartSemantics.tidy_toExpr_throwing,
-      DartSemantics.tidy_toExpr_returning,
+    `(tactic| try simp only [DartSemantics.tidy_toExpr_normal,
+      DartSemantics.tidy_toExpr_throwing, DartSemantics.tidy_toExpr_returning,
+      DartSemantics.tidy_toExpr_breaking,
       DartSemantics.tidy_fill_nullCheck, DartSemantics.tidy_fill_as, DartSemantics.tidy_fill_is,
       DartSemantics.tidy_fill_cond, DartSemantics.tidy_fill_propertyGet,
       DartSemantics.tidy_fill_seq, DartSemantics.tidy_fill_variableSetAt,
       DartSemantics.tidy_fill_call, DartSemantics.tidy_fill_ret, DartSemantics.tidy_fill_frame,
       DartSemantics.tidy_fill_check, DartSemantics.tidy_fill_checkEqL,
-      DartSemantics.tidy_fill_checkEqR, DartSemantics.framePost, List.map_cons, List.map_nil,
+      DartSemantics.tidy_fill_checkEqR, DartSemantics.tidy_fill_labeled,
+      DartSemantics.tidy_fill_intBinL, DartSemantics.tidy_fill_intBinR,
+      DartSemantics.tidy_fill_intNeg, DartSemantics.tidy_fill_primEqL,
+      DartSemantics.tidy_fill_primEqR, DartSemantics.framePost, DartSemantics.labeledPost,
+      DartSemantics.loopInvPost, ite_true, ite_false, ↓reduceIte, List.map_cons, List.map_nil,
       List.cons_append, List.nil_append])
 
 /--
@@ -391,7 +524,8 @@ macro_rules
     ((first
       | refine DartSemantics.tac_wp_val ?_
       | refine DartSemantics.tac_wp_throwing ?_
-      | refine DartSemantics.tac_wp_returning ?_); dart_wp_tidy))
+      | refine DartSemantics.tac_wp_returning ?_
+      | refine DartSemantics.tac_wp_breaking ?_); dart_wp_tidy))
 
 /-- Take one head step that doesn't depend on, or change, the state. -/
 syntax "wp_pure" : tactic
@@ -423,6 +557,12 @@ macro_rules
       | refine DartSemantics.tac_wp_bind (.check _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.checkEqL _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.checkEqR _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.labeled _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.intBinL _ _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.intBinR _ _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.intNeg _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.primEqL _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.primEqR _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind_call (by rfl) (by rfl) ?_); dart_wp_tidy))
 
 /--
@@ -558,6 +698,33 @@ macro_rules
     (apply DartSemantics.tac_wp_call_spec (by rfl)
      isplitr
      · iexact $h:ident))
+
+/--
+`wp_loop_step` takes the step of a loop that runs its body once, and then the loop again (which
+`wp_pures` doesn't take; see `dart_pure_head_step`).
+-/
+syntax "wp_loop_step" : tactic
+
+macro_rules
+  | `(tactic| wp_loop_step) => `(tactic|
+    (refine DartSemantics.tac_wp_pure rfl (fun _ => DartSemantics.HeadStep.loop) ?_
+     inext))
+
+/--
+`wp_int_checked` takes the step of an arithmetic operator on integers in mode `checked` whose
+result `rfl` can't compute (because its operands aren't concrete numbers, say): it leaves the goal
+that the exact result is in 64-bit range, and then the main goal, with the result.
+-/
+syntax "wp_int_checked" : tactic
+
+macro_rules
+  | `(tactic| wp_int_checked) => `(tactic|
+    (apply DartSemantics.tac_wp_intBin_checked
+     · rfl
+     rotate_left
+     inext
+     dart_wp_tidy
+     rotate_right))
 
 /--
 Bind the formal parameters of a function's body to their cells, after `wp_call` or in a proof of

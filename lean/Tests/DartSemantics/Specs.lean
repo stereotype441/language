@@ -94,6 +94,72 @@ example
     iexfalso
     iexact Hls
 
+/-- `L: { break L; 1; }` completes normally: the break skips the rest of the labeled statement. -/
+example : ⊢@{IProp GF} WP (LoweredExpr.labeled (τ := SimpleType) "L" (.block [.brk "L", .int 1]))
+    {{ o, ⌜o = DartLang.Outcome.normal .null⌝ }} := by
+  iintro
+  wp_pures
+  ipureintro
+  trivial
+
+/-- `-(2 * 3) < 1 + 2` evaluates to `true`, in any integer mode, here `checked`. -/
+example : ⊢@{IProp GF} WP (LoweredExpr.intBin (τ := SimpleType) .lt (some .checked)
+    (.intNeg (some .checked) (.intBin .mul (some .checked) (.int 2) (.int 3)))
+    (.intBin .add (some .checked) (.int 1) (.int 2)))
+    {{ o, ⌜o = DartLang.Outcome.normal (.bool true)⌝ }} := by
+  iintro
+  wp_pures
+  ipureintro
+  trivial
+
+/--
+`n + 1`, in mode `checked`, evaluates to `n + 1` if `n` is small enough (`h`). `wp_int_checked`
+leaves the side condition that the result is in 64-bit range.
+-/
+example (n : Int) (h : 0 ≤ n ∧ n < 100) :
+    ⊢@{IProp GF} WP (LoweredExpr.intBin (τ := SimpleType) .add (some .checked) (.int n) (.int 1))
+      {{ o, ⌜o = DartLang.Outcome.normal (.int (n + 1))⌝ }} := by
+  iintro
+  wp_pures
+  wp_int_checked
+  · omega
+  · ipureintro
+    trivial
+
+/-- A local variable of type `bool`. -/
+def b : Variable := { name := "b", type := bool }
+
+/--
+`{ bool b = true; while (b) { b = false; } }` completes normally. The loop is proved with the loop
+invariant rule (`tac_wp_loop_inv`): the invariant is that `b` holds some boolean.
+-/
+example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
+    [.declare b bool false, .variableSet b (.bool true),
+      .labeled "L" (.loop (.cond (.var b bool) (.variableSet b (.bool false)) (.brk "L") Null))])
+    {{ o, ⌜o = DartLang.Outcome.normal .null⌝ }} := by
+  iintro
+  wp_alloc ℓ Hl
+  wp_pures
+  wp_store Hl
+  wp_pures
+  refine DartSemantics.tac_wp_loop_inv iprop(∃ v, ℓ ↦ (.val (.bool v) : Cell)) ?_ ?_
+  · iexists true
+    iexact Hl
+  · iintro ⟨%v, Hl⟩
+    wp_pures
+    wp_load Hl
+    cases v
+    · -- `b` is `false`: the loop breaks out of `L`, and the program completes.
+      wp_pures
+      ipureintro
+      trivial
+    · -- `b` is `true`: the body sets it to `false`, and the invariant holds again.
+      wp_pures
+      wp_store Hl
+      inext
+      iexists false
+      iexact Hl
+
 def x : Variable := { name := "x", type := ObjectQ }
 
 /-- `{ Object? x; x! }` throws: a declared nullable variable starts out null. -/

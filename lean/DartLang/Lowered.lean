@@ -431,6 +431,16 @@ public def IntBinOp.eval : IntBinOp → IntMode → Int → Int → Option Value
   | .gt, _, n₁, n₂ => some (.bool (decide (n₁ > n₂)))
   | .ge, _, n₁, n₂ => some (.bool (decide (n₁ ≥ n₂)))
 
+omit Γ in
+/--
+In mode `checked`, an arithmetic operator `op` gives its exact result `n` (the result in mode
+`unbounded`; `hn`), if `n` is in 64-bit range (`hr`): `op.eval .checked n₁ n₂ = some (.int n)`.
+-/
+public theorem IntBinOp.eval_checked_of_range {op : IntBinOp} {n₁ n₂ n : Int}
+    (hn : op.eval (τ := τ) .unbounded n₁ n₂ = some (.int n)) (hr : -2 ^ 63 ≤ n ∧ n < 2 ^ 63) :
+    op.eval (τ := τ) .checked n₁ n₂ = some (.int n) := by
+  cases op <;> simp only [IntBinOp.eval, IntMode.arith, Option.map_some] at hn ⊢ <;> simp_all
+
 /--
 The static type of an expression.
 
