@@ -26,6 +26,16 @@ public inductive SimpleType where
   | bool : SimpleType
   | List (elementType : SimpleType) : SimpleType
   | Map (key value : SimpleType) : SimpleType
+  /--
+  The (non-generic) class type with key `name`. `supers` lists the class's proper supertypes,
+  other than `Object` and the top types, by key (as a class hierarchy computes them: its
+  superclass, the superclass's superclass, and so on, plus implemented interfaces). `Class n s`
+  is a subtype of `Class m t` when they're the same class type (`n = m` and `s = t`), or when `m`
+  is one of `s` and `t ⊆ s` (every supertype of `m` is also a supertype of `n`). The second
+  condition makes subtyping transitive for every value, with no well-formedness condition on
+  `supers`.
+  -/
+  | Class (name : String) (supers : List String) : SimpleType
   deriving Repr, DecidableEq, Repr
 
 namespace SimpleType
@@ -62,6 +72,8 @@ public def isSubtype : SimpleType -> SimpleType -> Bool
   | List T,    List U    => isSubtype T U
   | Map _ _,   Object    => true
   | Map K₁ V₁, Map K₂ V₂ => isSubtype K₁ K₂ && isSubtype V₁ V₂
+  | Class _ _, Object    => true
+  | Class n s, Class m t => (n == m && s == t) || (s.contains m && t.all s.contains)
   | _,         _         => false
 
 /-- `isSubtype` is reflexive (`T.isSubtype T = true`). -/
@@ -85,6 +97,13 @@ public theorem isSubtype_trans (T U V : SimpleType) (hTU : T.isSubtype U = true)
     constructor
     · apply isSubtype_trans K₁ K₂ K₃ (by assumption) (by assumption)
     · apply isSubtype_trans V₁ V₂ V₃ (by assumption) (by assumption)
+  case Class.Class.Class n s m t o u =>
+    -- Either way, the middle class's supertypes are among the first's.
+    rintro (⟨rfl, rfl⟩ | ⟨hm, hts⟩) (⟨rfl, rfl⟩ | ⟨ho, hut⟩)
+    · exact Or.inl ⟨rfl, rfl⟩
+    · exact Or.inr ⟨ho, hut⟩
+    · exact Or.inr ⟨hm, hts⟩
+    · exact Or.inr ⟨hts o ho, fun x hx => hts x (hut x hx)⟩
 
 @[expose]
 public def NonNull : SimpleType -> SimpleType
@@ -98,6 +117,7 @@ public def NonNull : SimpleType -> SimpleType
   | bool    => bool
   | List T' => List T'
   | Map K V => Map K V
+  | Class n s => Class n s
 
 public instance instSimpleTypeRepr : DartTypeRepr SimpleType where
   rfl := instLawfulBEq_rfl
