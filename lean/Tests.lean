@@ -1,4 +1,5 @@
 module
+import Tests.DartLang.KernelTypes
 import Tests.DartLang.RuntimeTypes
 import Tests.DartSemantics.CallSpecs
 import Tests.DartSemantics.Corollaries

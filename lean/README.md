@@ -198,8 +198,8 @@ reference](https://github.com/leanprover-community/iris-lean/blob/master/docs/ta
 ## Layout
 
 - `DartLang/` (`DartLang.lean`): the syntax and type representations shared by flow analysis and
-  the semantics (`Types`, `SimpleTypes`, `RuntimeTypes`, `Elements`, `Loc`, `Lowered`). This library
-  doesn't depend on iris-lean.
+  the semantics (`Types`, `SimpleTypes`, `KernelTypes`, `RuntimeTypes`, `Elements`, `Loc`,
+  `Lowered`). This library doesn't depend on iris-lean.
 - `FlowAnalysis/` (`FlowAnalysis.lean`): the Lean model of flow analysis.
 - `DartSemantics/` (`DartSemantics.lean`): the run-time semantics of `LoweredExpr`, the interpreter,
   and the program logic.
@@ -224,7 +224,8 @@ What exists so far:
 
 - `DartLang` has the type representation, the run-time subtype check (`RuntimeTypes`), and the
   initial `LoweredExpr`, with run-time values (`Value`), evaluation contexts (`EctxItem`) and
-  outcomes (`Outcome`).
+  outcomes (`Outcome`). Besides `SimpleType`, it has a concrete type representation for programs
+  translated from Kernel (`KernelTypes`), indexed by the program's class hierarchy.
 - `FlowAnalysis` has the model of promotion chains. The rest of the model of flow analysis, which
   produces `LoweredExpr`s from surface Dart, is being developed separately and isn't here yet.
 - `DartSemantics` has the run-time semantics of `LoweredExpr`: the run-time state (`State`), how
@@ -264,7 +265,8 @@ What exists so far:
   proved with the program logic, a program with calls proved safe and correct (`CallSpecs`), a
   loop proved correct (`LoopSpecs`), a program with an object and one with an overriding method
   proved correct (`ObjectSpecs`), small programs proved safe with the typing rules
-  (`Corollaries`), and a check that `SimpleType` obeys the laws that the typing rules assume.
+  (`Corollaries`), and checks that `SimpleType` and `KernelType` obey the laws that the typing
+  rules assume.
 - The Kernel translator hasn't been started.
 
 ## Documentation conventions
