@@ -240,7 +240,7 @@ example (ℓ ℓo ℓf : Loc) (hd : P.dispatch "C" "_f" = some (.field "_f")) :
   iintro Hl
   wp_pures
   -- Read `x._f`, of static type `Object?`.
-  iapply DartSemantics.wp_propertyGetField (fs := [("_f", ℓf)]) (w := .bool true)
+  iapply DartSemantics.wp_propertyGet_field (fs := [("_f", ℓf)]) (w := .bool true)
     (S := SimpleType.bool) hd rfl (by decide)
   isplitr
   · iexact Ho
@@ -263,7 +263,7 @@ example (ℓ ℓo ℓf : Loc) (hd : P.dispatch "C" "_f" = some (.field "_f")) :
   iintro Hl
   wp_pures
   -- Read `x._f`, promoted to `Object`.
-  iapply DartSemantics.wp_propertyGetField (fs := [("_f", ℓf)]) (w := .bool true)
+  iapply DartSemantics.wp_propertyGet_field (fs := [("_f", ℓf)]) (w := .bool true)
     (S := SimpleType.bool) hd rfl (by decide)
   isplitr
   · iexact Ho

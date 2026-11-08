@@ -219,7 +219,7 @@ public theorem SemTypedPath.propertyGet {Δ : Ctx} {m : LoweredExpr} {x : Variab
   icases Huw with ⟨%ℓo, %k, %C, %fs, %iv, %ℓf, %w', ⟨%hu, %hfs, %hd⟩, #Ho, #Hlf, %hw'⟩
   subst hu hw'
   icases Hw with ⟨%S, #Hty, %hS, %hok⟩
-  iapply wp_propertyGetField (fs := fs) (w := w') hd hfs (le_trans hS hW)
+  iapply wp_propertyGet_field (fs := fs) (w := w') hd hfs (le_trans hS hW)
   isplitr
   · iexact Ho
   isplitr

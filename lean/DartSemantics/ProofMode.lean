@@ -43,16 +43,26 @@ program's execution:
   condition that the result is in 64-bit range as a goal.
 - `wp_loop_step`: unroll one iteration of a loop. Usually the loop invariant rule is more
   convenient: apply `tac_wp_loop_inv`.
+- `wp_new hk hc`: take the step of an instance creation whose arguments are all values, given the
+  tables' declarations of the constructor (`hk`) and its class (`hc`), introducing the new object.
+  `wp_ctor_run hk` then takes the step of running the constructor.
+- `wp_method hd hm`: take the step of a method call on an object whose arguments are all values,
+  given its class's dispatch of the method's name (`hd`) and the member table's declaration of the
+  member (`hm`). The object's header must be in the context.
+- `wp_method_spec H hd hm`: take such a method call using the member's specification `H` (a
+  `MemberSpec`).
 
 `wp_pures` also takes the steps of literals, returns, labeled statements and breaks (and the
-propagation of returns and breaks), the body of a running call (`frame`) once it has completed,
-and intrinsic checks, arithmetic, comparisons and equality whose answer `rfl` can compute. It
-doesn't run a loop, which it would unroll forever. To reason about a function's body separately
-from the call's outcome, apply `tac_wp_frame`, and similarly `tac_wp_labeled` for a labeled
-statement.
+propagation of returns and breaks), the body of a running call (`frame`) or constructor
+(`ctorFrame`) once it has completed, `super(args)` and `this(args)` calls in initializer lists,
+and intrinsic checks, arithmetic, comparisons, equality and `identical` whose answer `rfl` can
+compute. It doesn't run a loop, which it would unroll forever. To reason about a function's body
+separately from the call's outcome, apply `tac_wp_frame` (or `tac_wp_ctorFrame` for a
+constructor's), and similarly `tac_wp_labeled` for a labeled statement.
 
-Steps that involve a run-time subtype check (cast expressions and is-expressions) or a getter that
-is user code are taken by applying the laws in `PrimitiveLaws.lean` directly.
+Steps that involve a run-time subtype check (cast expressions and is-expressions), or the state in
+other ways (such as assignments to instance variables, getters and setters, and `super` accesses),
+are taken by applying the laws in `PrimitiveLaws.lean` directly.
 
 Each tactic works by applying a lemma whose conclusion is a proof-mode goal `Δ ⊢ WP e {{ Φ }}`
 (where `Δ` is the proof mode's context of Iris hypotheses) for a particular shape of `e`, so that
@@ -122,6 +132,52 @@ public theorem tidy_fill_primEqL (m₂ m : LoweredExpr) :
     (EctxItem.primEqL m₂).fill m = .primEq m m₂ := rfl
 public theorem tidy_fill_primEqR (v₁ : Value) (m : LoweredExpr) :
     (EctxItem.primEqR v₁).fill m = .primEq (.val v₁) m := rfl
+public theorem tidy_fill_new (k : String) (vs : List Value) (ms : List LoweredExpr) (T : τ)
+    (m : LoweredExpr) : (EctxItem.new k vs ms T).fill m = .new k (vs.map .val ++ m :: ms) T :=
+  rfl
+public theorem tidy_fill_initCtorRecv (k : String) (args : List LoweredExpr) (m : LoweredExpr) :
+    (EctxItem.initCtorRecv k args).fill m = .initCtor m k args := rfl
+public theorem tidy_fill_initCtorArgs (v : Value) (k : String) (vs : List Value)
+    (ms : List LoweredExpr) (m : LoweredExpr) :
+    (EctxItem.initCtorArgs v k vs ms).fill m = .initCtor (.val v) k (vs.map .val ++ m :: ms) := rfl
+public theorem tidy_fill_initFieldL (name : String) (m₂ m : LoweredExpr) :
+    (EctxItem.initFieldL name m₂).fill m = .initField m name m₂ := rfl
+public theorem tidy_fill_initFieldR (v₁ : Value) (name : String) (m : LoweredExpr) :
+    (EctxItem.initFieldR v₁ name).fill m = .initField (.val v₁) name m := rfl
+public theorem tidy_fill_propertySetL (name : String) (m₂ m : LoweredExpr) :
+    (EctxItem.propertySetL name m₂).fill m = .propertySet m name m₂ := rfl
+public theorem tidy_fill_propertySetR (v₁ : Value) (name : String) (m : LoweredExpr) :
+    (EctxItem.propertySetR v₁ name).fill m = .propertySet (.val v₁) name m := rfl
+public theorem tidy_fill_ctorFrame (m : LoweredExpr) :
+    (EctxItem.ctorFrame (τ := τ)).fill m = .ctorFrame m := rfl
+public theorem tidy_fill_methodCallRecv (name : String) (args : List LoweredExpr) (T : τ)
+    (m : LoweredExpr) : (EctxItem.methodCallRecv name args T).fill m = .methodCall m name args T :=
+  rfl
+public theorem tidy_fill_methodCallArgs (v : Value) (name : String) (vs : List Value)
+    (ms : List LoweredExpr) (T : τ) (m : LoweredExpr) :
+    (EctxItem.methodCallArgs v name vs ms T).fill m =
+      .methodCall (.val v) name (vs.map .val ++ m :: ms) T := rfl
+public theorem tidy_fill_superCallRecv (name : String) (slot : Option String)
+    (args : List LoweredExpr) (T : τ) (m : LoweredExpr) :
+    (EctxItem.superCallRecv name slot args T).fill m = .superCall m name slot args T := rfl
+public theorem tidy_fill_superCallArgs (v : Value) (name : String) (slot : Option String)
+    (vs : List Value) (ms : List LoweredExpr) (T : τ) (m : LoweredExpr) :
+    (EctxItem.superCallArgs v name slot vs ms T).fill m =
+      .superCall (.val v) name slot (vs.map .val ++ m :: ms) T := rfl
+public theorem tidy_fill_superGet (name : String) (slot : Option String) (T : τ)
+    (m : LoweredExpr) : (EctxItem.superGet name slot T).fill m = .superGet m name slot T := rfl
+public theorem tidy_fill_superSetL (name : String) (slot : Option String) (m₂ m : LoweredExpr) :
+    (EctxItem.superSetL name slot m₂).fill m = .superSet m name slot m₂ := rfl
+public theorem tidy_fill_superSetR (v₁ : Value) (name : String) (slot : Option String)
+    (m : LoweredExpr) :
+    (EctxItem.superSetR v₁ name slot).fill m = .superSet (.val v₁) name slot m :=
+  rfl
+public theorem tidy_fill_checkPromotion (T : τ) (m : LoweredExpr) :
+    (EctxItem.checkPromotion T).fill m = .checkPromotion T m := rfl
+public theorem tidy_fill_identicalL (m₂ m : LoweredExpr) :
+    (EctxItem.identicalL m₂).fill m = .identical m m₂ := rfl
+public theorem tidy_fill_identicalR (v₁ : Value) (m : LoweredExpr) :
+    (EctxItem.identicalR v₁).fill m = .identical (.val v₁) m := rfl
 
 variable [Γ : DartRuntimeTypeRepr τ]
 
@@ -165,6 +221,56 @@ public theorem HeadStep.bubbleBreak_call [SemanticParams τ] {f : String}
   rw [hsplit] at h
   subst h
   exact .bubbleBreak (Ki := .call f vs ms T) rfl rfl
+
+/--
+An exception thrown by an operand of an expression `F args` with a list of operands (an instance
+creation, or the arguments of a call of a constructor or member) propagates out of it: if the
+operands split into values, then throwing `v`, then the rest (`hsplit`), and `mk vs ms` is the
+context item for that operand (`hmk`), then `F args` steps to throwing `v`.
+-/
+public theorem HeadStep.bubbleException_args [SemanticParams τ]
+    {F : List LoweredExpr → LoweredExpr} {mk : List Value → List LoweredExpr → EctxItem (τ := τ)}
+    (hmk : ∀ vs m ms, (mk vs ms).fill m = F (vs.map .val ++ m :: ms)) {args : List LoweredExpr}
+    {vs : List Value} {v : Value} {ms : List LoweredExpr} {σ : State (τ := τ)}
+    (hsplit : LoweredExpr.splitVals args = (vs, .throwing v :: ms)) :
+    HeadStep (F args) σ (.throwing v) σ := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit] at h
+  rw [← h, ← hmk]
+  exact .bubbleException
+
+/--
+A return in an operand of an expression with a list of operands propagates out of it, as in
+`bubbleException_args`, if the context item doesn't handle returns (`hret`).
+-/
+public theorem HeadStep.bubbleReturn_args [SemanticParams τ]
+    {F : List LoweredExpr → LoweredExpr} {mk : List Value → List LoweredExpr → EctxItem (τ := τ)}
+    (hmk : ∀ vs m ms, (mk vs ms).fill m = F (vs.map .val ++ m :: ms))
+    (hret : ∀ vs ms, (mk vs ms).handlesReturn = false) {args : List LoweredExpr}
+    {vs : List Value} {v : Value} {ms : List LoweredExpr} {σ : State (τ := τ)}
+    (hsplit : LoweredExpr.splitVals args = (vs, .returning v :: ms)) :
+    HeadStep (F args) σ (.returning v) σ := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit] at h
+  rw [← h, ← hmk]
+  exact .bubbleReturn (hret _ _)
+
+/--
+A break in an operand of an expression with a list of operands propagates out of it, as in
+`bubbleException_args`, if the context item doesn't handle breaks (`hbrk`) or returns (`hret`).
+-/
+public theorem HeadStep.bubbleBreak_args [SemanticParams τ]
+    {F : List LoweredExpr → LoweredExpr} {mk : List Value → List LoweredExpr → EctxItem (τ := τ)}
+    (hmk : ∀ vs m ms, (mk vs ms).fill m = F (vs.map .val ++ m :: ms))
+    (hbrk : ∀ l vs ms, (mk vs ms).handlesBreak l = false)
+    (hret : ∀ vs ms, (mk vs ms).handlesReturn = false) {args : List LoweredExpr}
+    {vs : List Value} {l : String} {ms : List LoweredExpr} {σ : State (τ := τ)}
+    (hsplit : LoweredExpr.splitVals args = (vs, .breaking l :: ms)) :
+    HeadStep (F args) σ (.breaking l) σ := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit] at h
+  rw [← h, ← hmk]
+  exact .bubbleBreak (hbrk _ _ _) (hret _ _)
 variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF] [P : SemanticParams τ]
 -- (The type of `Φ` is spelled out because a local notation doesn't work in a `variable` binder; see
 -- the same binder in `PrimitiveLaws.lean`.)
@@ -244,10 +350,10 @@ public theorem tac_wp_load {x : Variable} {T S : τ} {ℓ : Loc} {dq : DFrac} {v
   · iexact HΦ
 
 /--
-The proof-mode form of `wp_propertyGetField`, with its pure facts as premises
+The proof-mode form of `wp_propertyGet_field`, with its pure facts as premises
 (`⌜P.dispatch k p.name = some (.field iv)⌝` and `⌜fs.lookup iv = some ℓf⌝`, after the object's own
 cell, and `⌜S ≤ T⌝`, after the dynamic type): to prove that reading property `p` of the object at
-`ℓ` satisfies `Φ` from the hypotheses `Δ`, prove `wp_propertyGetField`'s premises (`H`).
+`ℓ` satisfies `Φ` from the hypotheses `Δ`, prove `wp_propertyGet_field`'s premises (`H`).
 -/
 public theorem tac_wp_load_field {ℓ ℓf : Loc} {p : Property} {k iv : String} {T C S : τ}
     {fs : List (String × Loc)} {dq : DFrac} {w : Value}
@@ -258,7 +364,7 @@ public theorem tac_wp_load_field {ℓ ℓf : Loc} {p : Property} {k iv : String}
     Entails' Δ (WP (LoweredExpr.propertyGet (.val (.obj ℓ)) p T) @ s; E {{ Φ }}) := by
   refine (show Δ ⊢ _ from H).trans ?_
   iintro ⟨#Hobj, %hd, %hf, #Hty, %hST, Hl, HΦ⟩
-  iapply wp_propertyGetField hd hf hST
+  iapply wp_propertyGet_field hd hf hST
   isplitr
   · iexact Hobj
   isplitr
@@ -399,6 +505,115 @@ public theorem tac_wp_intBin_checked {op : IntBinOp} {n₁ n₂ n : Int}
       (.val (.int n₂))) @ s; E {{ Φ }}) :=
   tac_wp_intBin (IntBinOp.eval_checked_of_range hn hr) H
 
+/--
+The proof-mode form of `wp_bind_item` for an operand in evaluation position of an expression
+`F args` with a list of operands (an instance creation, or the arguments of a call of a constructor
+or member): if the operands split into values `vs`, then an operand `m` that hasn't completed, then
+the rest `ms` (`hsplit` and `_hm`), and `mk vs ms` is the context item for `m` (`hmk`), then to
+prove that `F args` satisfies `Φ` from the hypotheses `Δ`, prove that `m` satisfies the
+postcondition that plugging its outcome `o` back into the item satisfies `Φ` (`H`).
+-/
+public theorem tac_wp_bind_args {F : List LoweredExpr → LoweredExpr}
+    {mk : List Value → List LoweredExpr → EctxItem (τ := τ)}
+    (hmk : ∀ vs m ms, (mk vs ms).fill m = F (vs.map .val ++ m :: ms)) {args : List LoweredExpr}
+    {vs : List Value} {m : LoweredExpr} {ms : List LoweredExpr}
+    (hsplit : LoweredExpr.splitVals args = (vs, m :: ms)) (_hm : m.toOutcome? = none)
+    (H : Entails' Δ (WP m @ s; E {{ o, WP ((mk vs ms).fill o.toExpr) @ s; E {{ Φ }} }})) :
+    Entails' Δ (WP (F args) @ s; E {{ Φ }}) := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit] at h
+  rw [← h, ← hmk]
+  exact (show Δ ⊢ _ from H).trans (wp_bind_item (mk vs ms))
+
+/--
+The proof-mode form of `wp_new`, for an instance creation whose arguments are all values `vs`
+(`hsplit`): to prove that it satisfies `Φ` from the hypotheses `Δ`, where the constructor table
+declares `k` as `d` (`hk`) and the class table declares its class as `c` (`hc`), prove `wp_new`'s
+premise (`H`).
+-/
+public theorem tac_wp_new {k : String} {args : List LoweredExpr} {T : τ} {vs : List Value}
+    {d : ConstructorDecl (τ := τ)} {c : ClassDecl (τ := τ)}
+    (hsplit : LoweredExpr.splitVals args = (vs, [])) (hk : P.constructors k = some d)
+    (hc : P.classes d.cls = some c)
+    (H : Entails' Δ iprop(▷ (∀ ℓ ℓs, ⌜ℓs.length = c.instanceVariables.length⌝ -∗
+        ℓ ↦{.discard} (.object d.cls c.type (c.instanceVariables.zip ℓs) : Cell) -∗
+        PointsToUninit (τ := τ) ℓs -∗
+        WP (LoweredExpr.seq (.ctorRun ℓ k vs) (.val (.obj ℓ))) @ s; E {{ Φ }}))) :
+    Entails' Δ (WP (LoweredExpr.new k args T) @ s; E {{ Φ }}) := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit, List.append_nil] at h
+  subst h
+  exact (show Δ ⊢ _ from H).trans (wp_new hk hc)
+
+/--
+The proof-mode form of `wp_ctorRun`: to prove that running constructor `k` on the object at `ℓ`
+satisfies `Φ` from the hypotheses `Δ`, where the constructor table declares `k` as `d` (`hk`) with
+one formal parameter per argument (`hlen`), prove `wp_ctorRun`'s premise (`H`).
+-/
+public theorem tac_wp_ctorRun {ℓ : Loc} {k : String} {d : ConstructorDecl (τ := τ)}
+    {vs : List Value} (hk : P.constructors k = some d) (hlen : d.params.length = vs.length)
+    (H : Entails' Δ iprop(▷ (∀ ℓs, PointsToVals ℓs (.obj ℓ :: vs) -∗
+        WP (LoweredExpr.ctorFrame (P.memberBody k d.cls (d.this :: d.params)
+          (.block (d.initializers ++ [d.body])) ℓs)) @ s; E {{ Φ }}))) :
+    Entails' Δ (WP (LoweredExpr.ctorRun ℓ k vs) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans (wp_ctorRun hk hlen)
+
+/--
+The proof-mode form of `wp_ctorFrame`: to prove that the initializers and body `m` of a running
+constructor satisfy `Φ` from the hypotheses `Δ`, prove that `m` satisfies the postcondition that
+`Φ` holds, one step later, of the constructor's outcome (`H`; see `ctorFramePost`).
+-/
+public theorem tac_wp_ctorFrame {m : LoweredExpr}
+    (H : Entails' Δ (WP m @ s; E {{ o, ctorFramePost Φ o }})) :
+    Entails' Δ (WP (LoweredExpr.ctorFrame m) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans wp_ctorFrame
+
+/--
+The proof-mode form of `wp_methodCall`, for a method call on the object at `ℓ` whose arguments are
+all values `vs` (`hsplit`): to prove that it satisfies `Φ` from the hypotheses `Δ`, where the
+object's class `k` dispatches the method's name to member `key`, provided by `holder` (`hd`),
+declared as `d` (`hm`) with one formal parameter per argument (`hlen`), prove `wp_methodCall`'s
+premises (`H`).
+-/
+public theorem tac_wp_methodCall {ℓ : Loc} {name k key holder : String} {C : τ}
+    {fs : List (String × Loc)} {d : MemberDecl (τ := τ)} {args : List LoweredExpr}
+    {vs : List Value} {T : τ} (hsplit : LoweredExpr.splitVals args = (vs, []))
+    (hd : P.dispatch k name = some (.proc key holder)) (hm : P.members key = some d)
+    (hlen : d.params.length = vs.length)
+    (H : Entails' Δ iprop(ℓ ↦{.discard} (.object k C fs : Cell) ∗
+        ▷ (∀ ℓs, PointsToVals ℓs (.obj ℓ :: vs) -∗
+          WP (LoweredExpr.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T) @ s;
+            E {{ Φ }}))) :
+    Entails' Δ (WP (LoweredExpr.methodCall (.val (.obj ℓ)) name args T) @ s; E {{ Φ }}) := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit, List.append_nil] at h
+  subst h
+  exact (show Δ ⊢ _ from H).trans (wp_methodCall hd hm hlen)
+
+/--
+The proof-mode form of `MemberSpec.wp_methodCall`, for a method call on the object at `ℓ` whose
+arguments are all values `vs` (`hsplit`), where the object's class `k` dispatches the method's name
+to member `key`, provided by `holder` (`hd`), declared as `d` (`hm`) with one formal parameter per
+argument (`hlen`): to prove that it satisfies `Φ` from the hypotheses `Δ`, prove the object's
+header, a specification of `key` (one step later), its precondition, and that its postcondition
+implies `Φ` (`H`).
+-/
+public theorem tac_wp_method_spec {ℓ : Loc} {name k key holder : String} {C : τ}
+    {fs : List (String × Loc)} {d : MemberDecl (τ := τ)} {args : List LoweredExpr}
+    {vs : List Value} {T : τ} {Pre : List Value → IProp GF}
+    {Post : List Value → DartLang.Outcome (τ := τ) → IProp GF}
+    {Φ : DartLang.Outcome (τ := τ) → IProp GF} (hsplit : LoweredExpr.splitVals args = (vs, []))
+    (hd : P.dispatch k name = some (.proc key holder)) (hm : P.members key = some d)
+    (hlen : d.params.length = vs.length)
+    (H : Entails' Δ iprop(ℓ ↦{.discard} (.object k C fs : Cell) ∗
+        ▷ MemberSpec key holder Pre Post ∗ Pre (.obj ℓ :: vs) ∗
+        ▷ (∀ o, Post (.obj ℓ :: vs) o -∗ Φ o))) :
+    Entails' Δ (WP (LoweredExpr.methodCall (.val (.obj ℓ)) name args T) {{ Φ }}) := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit, List.append_nil] at h
+  subst h
+  exact (show Δ ⊢ _ from H).trans (MemberSpec.wp_methodCall hd hm hlen)
+
 end DartSemantics
 
 /--
@@ -488,7 +703,77 @@ macro_rules
     | exact DartSemantics.HeadStep.bubbleBreak (Ki := .intNeg _) rfl rfl
     | exact DartSemantics.HeadStep.bubbleBreak (Ki := .primEqL _) rfl rfl
     | exact DartSemantics.HeadStep.bubbleBreak (Ki := .primEqR _) rfl rfl
-    | exact DartSemantics.HeadStep.bubbleBreak_call rfl)
+    | exact DartSemantics.HeadStep.bubbleBreak_call rfl
+    | exact DartSemantics.HeadStep.initCtor
+    | exact DartSemantics.HeadStep.ctorFrameVal
+    | exact DartSemantics.HeadStep.ctorFrameReturning
+    | exact DartSemantics.HeadStep.identical rfl
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .initCtorRecv _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .initFieldL _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .initFieldR _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .propertySetL _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .propertySetR _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .ctorFrame)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .methodCallRecv _ _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .superCallRecv _ _ _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .superGet _ _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .superSetL _ _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .superSetR _ _ _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .checkPromotion _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .identicalL _)
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .identicalR _)
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .initCtorRecv _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .initFieldL _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .initFieldR _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .propertySetL _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .propertySetR _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .methodCallRecv _ _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .superCallRecv _ _ _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .superGet _ _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .superSetL _ _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .superSetR _ _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .checkPromotion _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .identicalL _) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .identicalR _) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .initCtorRecv _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .initFieldL _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .initFieldR _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .propertySetL _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .propertySetR _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .methodCallRecv _ _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .superCallRecv _ _ _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .superGet _ _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .superSetL _ _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .superSetR _ _ _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .checkPromotion _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .identicalL _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .identicalR _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleException_args (F := (.new _ · _)) (mk := (.new _ · · _))
+        (fun _ _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleException_args (F := (.initCtor (.val _) _ ·))
+        (mk := (.initCtorArgs _ _ · ·)) (fun _ _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleException_args (F := (.methodCall (.val _) _ · _))
+        (mk := (.methodCallArgs _ _ · · _)) (fun _ _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleException_args (F := (.superCall (.val _) _ _ · _))
+        (mk := (.superCallArgs _ _ _ · · _)) (fun _ _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn_args (F := (.new _ · _)) (mk := (.new _ · · _))
+        (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn_args (F := (.initCtor (.val _) _ ·))
+        (mk := (.initCtorArgs _ _ · ·)) (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn_args (F := (.methodCall (.val _) _ · _))
+        (mk := (.methodCallArgs _ _ · · _)) (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn_args (F := (.superCall (.val _) _ _ · _))
+        (mk := (.superCallArgs _ _ _ · · _)) (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak_args (F := (.new _ · _)) (mk := (.new _ · · _))
+        (fun _ _ _ => rfl) (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak_args (F := (.initCtor (.val _) _ ·))
+        (mk := (.initCtorArgs _ _ · ·)) (fun _ _ _ => rfl) (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak_args (F := (.methodCall (.val _) _ · _))
+        (mk := (.methodCallArgs _ _ · · _)) (fun _ _ _ => rfl) (fun _ _ _ => rfl)
+        (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak_args (F := (.superCall (.val _) _ _ · _))
+        (mk := (.superCallArgs _ _ _ · · _)) (fun _ _ _ => rfl) (fun _ _ _ => rfl)
+        (fun _ _ => rfl) rfl)
 
 /--
 Tidy the goal after a step: reduce `Outcome.toExpr`, `EctxItem.fill`, `framePost`, `labeledPost`
@@ -510,7 +795,17 @@ macro_rules
       DartSemantics.tidy_fill_checkEqR, DartSemantics.tidy_fill_labeled,
       DartSemantics.tidy_fill_intBinL, DartSemantics.tidy_fill_intBinR,
       DartSemantics.tidy_fill_intNeg, DartSemantics.tidy_fill_primEqL,
-      DartSemantics.tidy_fill_primEqR, DartSemantics.framePost, DartSemantics.labeledPost,
+      DartSemantics.tidy_fill_primEqR, DartSemantics.tidy_fill_new,
+      DartSemantics.tidy_fill_initCtorRecv, DartSemantics.tidy_fill_initCtorArgs,
+      DartSemantics.tidy_fill_initFieldL, DartSemantics.tidy_fill_initFieldR,
+      DartSemantics.tidy_fill_propertySetL, DartSemantics.tidy_fill_propertySetR,
+      DartSemantics.tidy_fill_ctorFrame, DartSemantics.tidy_fill_methodCallRecv,
+      DartSemantics.tidy_fill_methodCallArgs, DartSemantics.tidy_fill_superCallRecv,
+      DartSemantics.tidy_fill_superCallArgs, DartSemantics.tidy_fill_superGet,
+      DartSemantics.tidy_fill_superSetL, DartSemantics.tidy_fill_superSetR,
+      DartSemantics.tidy_fill_checkPromotion, DartSemantics.tidy_fill_identicalL,
+      DartSemantics.tidy_fill_identicalR, DartSemantics.ctorFramePost,
+      DartSemantics.framePost, DartSemantics.labeledPost,
       DartSemantics.loopInvPost, ite_true, ite_false, ↓reduceIte, List.map_cons, List.map_nil,
       List.cons_append, List.nil_append])
 
@@ -564,7 +859,30 @@ macro_rules
       | refine DartSemantics.tac_wp_bind (.intNeg _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.primEqL _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.primEqR _) (by rfl) ?_
-      | refine DartSemantics.tac_wp_bind_call (by rfl) (by rfl) ?_); dart_wp_tidy))
+      | refine DartSemantics.tac_wp_bind_call (by rfl) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.initCtorRecv _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.initFieldL _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.initFieldR _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.propertySetL _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.propertySetR _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind .ctorFrame (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.methodCallRecv _ _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.superCallRecv _ _ _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.superGet _ _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.superSetL _ _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.superSetR _ _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.checkPromotion _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.identicalL _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.identicalR _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind_args (F := (.new _ · _)) (mk := (.new _ · · _))
+          (fun _ _ _ => rfl) (by rfl) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind_args (F := (.initCtor (.val _) _ ·))
+          (mk := (.initCtorArgs _ _ · ·)) (fun _ _ _ => rfl) (by rfl) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind_args (F := (.methodCall (.val _) _ · _))
+          (mk := (.methodCallArgs _ _ · · _)) (fun _ _ _ => rfl) (by rfl) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind_args (F := (.superCall (.val _) _ _ · _))
+          (mk := (.superCallArgs _ _ _ · · _)) (fun _ _ _ => rfl) (by rfl) (by rfl) ?_);
+      dart_wp_tidy))
 
 /--
 Take every step that doesn't involve the state: repeat `wp_value`, `wp_pure` and `wp_bind` until
@@ -747,7 +1065,9 @@ macro_rules
 Bind the formal parameters of a function's body to their cells, after `wp_call` or in a proof of
 `FunSpec.intro`'s premise, once the list of locations is concrete: compute
 `(body.withIntMode mode).bindVariables (params.zip ℓs)`, setting the mode of each integer operator
-in the body and resolving each parameter in the body to its cell.
+in the body and resolving each parameter in the body to its cell. Likewise for the body of a member
+or constructor (`SemanticParams.memberBody`), which also binds `this`, and fills in the `super`
+slots.
 -/
 syntax "dart_bind_params" : tactic
 
@@ -756,5 +1076,73 @@ macro_rules
     simp (config := { decide := true }) only [List.zip_cons_cons, List.zip_nil_left,
       List.zip_nil_right, DartLang.LoweredExpr.bindVariables, List.foldl_cons, List.foldl_nil,
       DartLang.LoweredExpr.withIntMode, DartLang.LoweredExpr.withIntModeList,
+      DartSemantics.SemanticParams.memberBody, DartLang.LoweredExpr.withSuperclass,
+      DartLang.LoweredExpr.withSuperclassList,
       DartLang.LoweredExpr.resolve, DartLang.LoweredExpr.resolveBlock,
       DartLang.LoweredExpr.resolveList, ite_true, ite_false, Bool.false_eq_true, ↓reduceIte])
+
+/--
+`wp_new hk hc` takes the step of an instance creation by constructor `k` whose arguments are all
+values, using `hk : P.constructors k = some d` and `hc : P.classes d.cls = some c` (the tables'
+declarations of the constructor and its class). Afterwards, the goal is `wp_new`'s premise without
+its `▷`: for the new object's own cell at `ℓ` and its instance variables' cells at `ℓs`, given the
+object's header, the number of cells, and their ownership (all uninitialized), running the
+constructor and then evaluating to the object satisfies the postcondition.
+-/
+syntax "wp_new " term:max ppSpace term:max : tactic
+
+macro_rules
+  | `(tactic| wp_new $hk $hc) => `(tactic|
+    (refine DartSemantics.tac_wp_new (by rfl) $hk $hc ?_
+     inext))
+
+/--
+`wp_ctor_run hk` takes the step of running constructor `k` on an object, using
+`hk : P.constructors k = some d`. The number of arguments is checked by `rfl`. Afterwards, the goal
+is `wp_ctorRun`'s premise without its `▷`: for all locations `ℓs`, given the cells of `this` and the
+formal parameters (`PointsToVals ℓs (.obj ℓ :: vs)`), the initializers and body satisfy the
+postcondition.
+-/
+syntax "wp_ctor_run " term : tactic
+
+macro_rules
+  | `(tactic| wp_ctor_run $hk) => `(tactic|
+    (refine DartSemantics.tac_wp_ctorRun $hk (by rfl) ?_
+     inext))
+
+/--
+`wp_method hd hm` takes the step of a method call on an object whose arguments are all values, using
+`hd : P.dispatch k name = some (.proc key holder)` (the object's class's dispatch of the method's
+name) and `hm : P.members key = some d` (the member table's declaration of the member). The
+object's header must be in the context, and the number of arguments is checked by `rfl`.
+Afterwards, the goal is `wp_methodCall`'s premise without its `▷`: for all locations `ℓs`, given the
+cells of `this` and the formal parameters (`PointsToVals ℓs (.obj ℓ :: vs)`), the body satisfies the
+postcondition.
+-/
+syntax "wp_method " term:max ppSpace term:max : tactic
+
+macro_rules
+  | `(tactic| wp_method $hd $hm) => `(tactic|
+    (apply DartSemantics.tac_wp_methodCall (by rfl) $hd $hm (by rfl)
+     isplitr
+     · iassumption
+     inext))
+
+/--
+`wp_method_spec H hd hm` takes a method call on an object whose arguments are all values, using the
+specification `H : MemberSpec key holder Pre Post` in the context of the member that the object's
+class dispatches the method's name to (`hd : P.dispatch k name = some (.proc key holder)`, and
+`hm : P.members key = some d`). The object's header must be in the context, and the number of
+arguments is checked by `rfl`. Afterwards, the goal is the precondition, and that the postcondition
+implies the goal's postcondition one step later (`Pre (.obj ℓ :: vs) ∗ ▷ ∀ o, Post … o -∗ Φ o`).
+-/
+syntax "wp_method_spec " ident ppSpace term:max ppSpace term:max : tactic
+
+macro_rules
+  | `(tactic| wp_method_spec $h $hd $hm) => `(tactic|
+    (apply DartSemantics.tac_wp_method_spec (by rfl) $hd $hm (by rfl)
+     isplitr
+     · iassumption
+     isplitr
+     · inext
+       iexact $h:ident))

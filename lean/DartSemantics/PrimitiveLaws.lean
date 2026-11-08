@@ -17,6 +17,13 @@ postcondition, a predicate on outcomes, says what holds if the body returns
 (`Outcome.returning`); `wp_frame` turns that into the call's outcome. A loop is reasoned about
 with an invariant (`wp_loop_inv`), which packages the Löb induction that a loop needs.
 
+For objects, a law about an object usually needs its *header*: a persistent points-to for its own
+cell (`ℓ ↦{.discard} .object k C fs`), which records its class `k` (and so, through the program's
+class table, which member each name dispatches to) and where its instance variables are stored.
+Members have specifications too (`MemberSpec`, a Texan triple for every run of a member's body),
+with laws for using one in a method call or property read (`MemberSpec.wp_methodCall`,
+`MemberSpec.wp_propertyGet`) and one for proving one by Löb induction (`MemberSpec.intro`).
+
 Run-time subtype checks and promotion checks need the dynamic type of a value. For the null object
 and booleans it's fixed; for an object it's recorded in the object's own cell, which never changes.
 `HasDynamicType v S` is the persistent knowledge that `v`'s dynamic type is `S`.
@@ -207,6 +214,21 @@ public theorem ObjectHeaders.alloc {σ : State} {c : Cell} (hc : ∀ k C fs, c �
 
 omit Γ in
 /--
+Allocating an object's own cell `c` adds its header to the object headers: given the headers of
+`σ` (`ObjectHeaders σ`) and a persistent points-to for the new cell (`σ.fresh ↦{.discard} c`),
+the headers of `σ.alloc c` hold.
+-/
+public theorem ObjectHeaders.alloc_object {σ : State} {k : String} {C : τ}
+    {fs : List (String × Loc)} :
+    ObjectHeaders (GF := GF) σ ∗ σ.fresh ↦{.discard} (.object k C fs : Cell) ⊢
+      ObjectHeaders (σ.alloc (.object k C fs)) := by
+  simp only [ObjectHeaders, State.toMap_alloc]
+  refine .trans ?_ (BigSepM.bigSepM_insert (by rw [State.get?_toMap, State.lookup_fresh])).2
+  simp only [cellHeader]
+  exact sep_comm.1
+
+omit Γ in
+/--
 Updating the cell at `ℓ` leaves the object headers as they were
 (`ObjectHeaders σ ⊢ ObjectHeaders (σ.update ℓ c)`), if:
 - the cell holds `c₀` (`h`), which isn't an object's own cell (`hc₀`); and
@@ -232,6 +254,15 @@ public def PointsToVals : List Loc → List Value → IProp GF
   | [], [] => iprop(emp)
   | ℓ :: ℓs, v :: vs => iprop(ℓ ↦ (.val v : Cell) ∗ PointsToVals ℓs vs)
   | _, _ => iprop(False)
+
+/--
+Ownership of the cells at locations `ℓs`, all uninitialized. (An instance creation gives this for
+the cells of the new object's instance variables; see `wp_new`.)
+-/
+@[expose]
+public def PointsToUninit : List Loc → IProp GF
+  | [] => iprop(emp)
+  | ℓ :: ℓs => iprop(ℓ ↦ (.uninit : Cell) ∗ PointsToUninit ℓs)
 
 end
 
@@ -716,7 +747,7 @@ satisfies `T`, so that the promotion check passes. The read satisfies a postcond
 - one step later, `Φ` holds of completing normally with `w` (`Φ (.normal w)`), given the ownership
   back (`▷ (ℓf ↦{dq} (.val w) -∗ …)`).
 -/
-public theorem wp_propertyGetField {ℓ ℓf : Loc} {p : Property} {k iv : String} {T C S : τ}
+public theorem wp_propertyGet_field {ℓ ℓf : Loc} {p : Property} {k iv : String} {T C S : τ}
     {fs : List (String × Loc)} {dq : DFrac} {w : Value}
     (hd : P.dispatch k p.name = some (.field iv)) (hf : fs.lookup iv = some ℓf) (hST : S ≤ T) :
     ℓ ↦{.discard} (.object k C fs : Cell) ∗ HasDynamicType w S ∗ ▷ (ℓf ↦{dq} (.val w : Cell)) ∗
@@ -1136,6 +1167,605 @@ public theorem wp_primEq {v₁ v₂ : Value} {b : Bool} (h : Value.primEq? v₁ 
   refine wp_pure_step_val (by rfl) fun _ => ?_
   exact .primEq h
 
+/-! ### Objects -/
+
+omit Γ P in
+/--
+Allocating an uninitialized cell for each of `names` (`σ.allocAll (names.map fun _ => .uninit)`),
+as an instance creation does for the new object's instance variables, can be mirrored in the ghost
+state: given the state interpretation for `σ`, a basic update gives the state interpretation for
+the state afterwards, and the ownership of the new cells (`PointsToUninit …`).
+-/
+public theorem allocAll_uninit (σ : State) (names : List String) :
+    genHeapInterp σ.toMap ∗ ObjectHeaders (GF := GF) σ ⊢
+      |==> ((genHeapInterp (σ.allocAll (names.map fun _ => .uninit)).2.toMap ∗
+        ObjectHeaders (σ.allocAll (names.map fun _ => .uninit)).2) ∗
+        PointsToUninit (τ := τ) (σ.allocAll (names.map fun _ => .uninit)).1) := by
+  induction names generalizing σ with
+  | nil =>
+    simp only [List.map_nil, State.allocAll, PointsToUninit]
+    iintro ⟨Hh, Hhdr⟩
+    imodintro
+    isplitl
+    · isplitl [Hh]
+      · iexact Hh
+      · iexact Hhdr
+    · itrivial
+  | cons n names ih =>
+    have hfresh : get? σ.toMap σ.fresh = none := by rw [State.get?_toMap, State.lookup_fresh]
+    have ih' := ih (σ.alloc .uninit)
+    rw [State.toMap_alloc] at ih'
+    simp only [List.map_cons, State.allocAll, PointsToUninit]
+    iintro ⟨Hh, #Hhdr⟩
+    imod genHeap_alloc (v := (.uninit : Cell)) hfresh $$ Hh with ⟨Hh, Hl, -⟩
+    ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ) (c := .uninit)
+      (fun _ _ _ h => by cases h) $$ Hhdr
+    imod ih' $$ [$Hh $Hhdr'] with ⟨Hrest, Hls⟩
+    imodintro
+    isplitl [Hrest]
+    · iexact Hrest
+    · isplitl [Hl]
+      · iexact Hl
+      · iexact Hls
+
+omit Γ P in
+/--
+Allocating an object (`σ.allocObject cls T names`) can be mirrored in the ghost state: given the
+state interpretation for `σ`, a basic update gives the state interpretation for the state
+afterwards, a persistent points-to for the object's own cell, the ownership of the cells of its
+instance variables, all uninitialized (`PointsToUninit ℓs`), and that there's one such cell per
+instance variable (`ℓs.length = names.length`).
+-/
+public theorem allocObject_ghost (σ : State) (cls : String) (T : τ) (names : List String) :
+    genHeapInterp σ.toMap ∗ ObjectHeaders (GF := GF) σ ⊢
+      |==> ((genHeapInterp (σ.allocObject cls T names).2.toMap ∗
+        ObjectHeaders (σ.allocObject cls T names).2) ∗
+        ∃ ℓs, (σ.allocObject cls T names).1 ↦{.discard}
+          (.object cls T (names.zip ℓs) : Cell) ∗ PointsToUninit (τ := τ) ℓs ∗
+          ⌜ℓs.length = names.length⌝) := by
+  simp only [State.allocObject]
+  iintro Hσ
+  imod allocAll_uninit σ names $$ Hσ with ⟨⟨Hh, #Hhdr⟩, Hls⟩
+  have hfresh : get? (σ.allocAll (names.map fun _ => .uninit)).2.toMap
+      (σ.allocAll (names.map fun _ => .uninit)).2.fresh = none := by
+    rw [State.get?_toMap, State.lookup_fresh]
+  imod genHeap_alloc
+    (v := (.object cls T (names.zip (σ.allocAll (names.map fun _ => .uninit)).1) : Cell)) hfresh
+    $$ Hh with ⟨Hh, Hl, -⟩
+  imod pointsTo_persist $$ Hl with #Hl
+  ihave #Hhdr' := ObjectHeaders.alloc_object (GF := GF)
+    (σ := (σ.allocAll (names.map fun _ => .uninit)).2) (k := cls) (C := T)
+    (fs := names.zip (σ.allocAll (names.map fun _ => .uninit)).1) $$ [$Hhdr $Hl]
+  imodintro
+  isplitl [Hh]
+  · rw [State.toMap_alloc]
+    iframe Hh
+    iexact Hhdr'
+  · iexists (σ.allocAll (names.map fun _ => .uninit)).1
+    isplitr
+    · iexact Hl
+    isplitl
+    · iexact Hls
+    · ipureintro
+      simp
+
+/--
+`e` satisfies a postcondition `Φ` if, one step later, for all locations `ℓs`, given the ownership of
+cells at `ℓs` holding `vs` (`PointsToVals ℓs vs`), `e' ℓs` satisfies `Φ`, provided:
+- `e` hasn't completed (`hv`); and
+- in every state `σ`, `e` takes a head step that allocates a cell for each of `vs`, to `e' ℓs`,
+  where `ℓs` are the new cells' locations (`h`).
+
+(Calls of members take such steps, allocating cells for `this` and the formal parameters.)
+-/
+public theorem wp_step_alloc {e : LoweredExpr} {vs : List Value} {e' : List Loc → LoweredExpr}
+    (hv : e.toOutcome? = none)
+    (h : ∀ σ, HeadStep e σ (e' (σ.allocAll (vs.map Cell.val)).1) (σ.allocAll (vs.map Cell.val)).2) :
+    ▷ (∀ ℓs, PointsToVals ℓs vs -∗ WP (e' ℓs) @ s; E {{ Φ }}) ⊢ WP e @ s; E {{ Φ }} := by
+  iintro H
+  iapply wp_lift_base_step hv
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt Hσ
+  iapply fupd_mask_intro Std.LawfulSet.empty_subset
+  iintro Hclose
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], h σ₁, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs (h σ₁)
+  imod Hclose
+  imod allocAll_vals σ₁ vs $$ Hσ with ⟨Hσ, Hls⟩
+  imodintro
+  isplitl [Hσ]
+  · iexact Hσ
+  isplitl
+  · iapply H $$ Hls
+  · isimp
+    itrivial
+
+/--
+`wp_step_alloc` for a step that also depends on the object at `ℓ` (`ℓ ↦{.discard} .object k C fs`,
+its own cell, which never changes): `h` need only hold in states where the cell at `ℓ` is that.
+-/
+public theorem wp_step_alloc_of_header {e : LoweredExpr} {ℓ : Loc} {k : String} {C : τ}
+    {fs : List (String × Loc)} {vs : List Value} {e' : List Loc → LoweredExpr}
+    (hv : e.toOutcome? = none)
+    (h : ∀ σ, σ.lookup ℓ = some (.object k C fs) →
+      HeadStep e σ (e' (σ.allocAll (vs.map Cell.val)).1) (σ.allocAll (vs.map Cell.val)).2) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗
+        ▷ (∀ ℓs, PointsToVals ℓs vs -∗ WP (e' ℓs) @ s; E {{ Φ }}) ⊢
+      WP e @ s; E {{ Φ }} := by
+  iintro ⟨#Hobj, H⟩
+  iapply wp_lift_base_step hv
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, Hhdr⟩
+  ihave %Hobjl : ⌜σ₁.lookup ℓ = some (.object k C fs)⌝ $$ [Hh Hobj]
+  · ihave >%Hv := genHeap_valid $$ [$Hh $Hobj]
+    ipureintro
+    rwa [State.get?_toMap] at Hv
+  iapply fupd_mask_intro Std.LawfulSet.empty_subset
+  iintro Hclose
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], h σ₁ Hobjl, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs (h σ₁ Hobjl)
+  imod Hclose
+  imod allocAll_vals σ₁ vs $$ [$Hh $Hhdr] with ⟨Hσ, Hls⟩
+  imodintro
+  isplitl [Hσ]
+  · iexact Hσ
+  isplitl
+  · iapply H $$ Hls
+  · isimp
+    itrivial
+
+/--
+`e` satisfies a postcondition `Φ`, by a step that stores `w` in the cell at `ℓf`, if:
+- the cell at `ℓf` holds `c`, which isn't an object's own cell (`hc`), and is owned one step later
+  (`▷ ℓf ↦ c`);
+- one step later, given the ownership of the cell at `ℓf`, now holding `w`, `e'` satisfies `Φ`
+  (`▷ (ℓf ↦ .val w -∗ WP e' {{ Φ }})`);
+- `e` hasn't completed (`hv`); and
+- in every state in which the cell at `ℓ` is the object's own cell `.object k C fs`, of which the
+  logic has a persistent points-to (`ℓ ↦{.discard} .object k C fs`), and the cell at `ℓf` holds
+  `c`, `e` takes a head step to `e'` that stores `w` in the cell at `ℓf` (`h`).
+
+(Initializers of instance variables, and assignments through their implicit setters, take such
+steps.)
+-/
+public theorem wp_store_of_header {e e' : LoweredExpr} {ℓ ℓf : Loc} {k : String} {C : τ}
+    {fs : List (String × Loc)} {c : Cell} {w : Value} (hv : e.toOutcome? = none)
+    (hc : ∀ k C fs, c ≠ .object k C fs)
+    (h : ∀ σ, σ.lookup ℓ = some (.object k C fs) → σ.lookup ℓf = some c →
+      HeadStep e σ e' (σ.update ℓf (.val w))) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ (ℓf ↦ c) ∗
+        ▷ ((ℓf ↦ (.val w : Cell)) -∗ WP e' @ s; E {{ Φ }}) ⊢
+      WP e @ s; E {{ Φ }} := by
+  iintro ⟨#Hobj, >Hl, H⟩
+  iapply wp_lift_base_step hv
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  ihave %Hobjl : ⌜σ₁.lookup ℓ = some (.object k C fs)⌝ $$ [Hh Hobj]
+  · ihave >%Hv := genHeap_valid $$ [$Hh $Hobj]
+    ipureintro
+    rwa [State.get?_toMap] at Hv
+  ihave %Hlook : ⌜σ₁.lookup ℓf = some c⌝ $$ [Hh Hl]
+  · ihave >%Hv := genHeap_valid $$ [$Hh $Hl]
+    ipureintro
+    rwa [State.get?_toMap] at Hv
+  have hstep := h σ₁ Hobjl Hlook
+  iapply fupd_mask_intro Std.LawfulSet.empty_subset
+  iintro Hclose
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], hstep, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
+  imod Hclose
+  imod genHeap_update (σ := σ₁.toMap) (l := ℓf) (v₁ := c) (v₂ := (.val w : Cell)) $$ [$Hh $Hl]
+    with ⟨Hh, Hl⟩
+  ihave #Hhdr' := ObjectHeaders.update (c := (.val w : Cell)) Hlook hc
+    (fun _ _ _ h => by cases h) $$ Hhdr
+  imodintro
+  isplitl [Hh]
+  · rw [State.toMap_update Hlook]
+    iframe Hh
+    iexact Hhdr'
+  isplitl
+  · iapply H $$ Hl
+  · isimp
+    itrivial
+
+/--
+An instance creation by constructor `k`, whose arguments have evaluated to `vs`, allocates a new
+object and runs the constructor on it. It satisfies a postcondition `Φ` if:
+- the constructor table declares `k` as `d` (`hk`), and the class table declares its class as `c`
+  (`hc`); and
+- one step later (`▷`), for the new object's own cell at some `ℓ`, recording the class's instance
+  variables at some locations `ℓs` (`ℓ ↦{.discard} .object d.cls c.type (c.instanceVariables.zip
+  ℓs)`), one per instance variable (`⌜ℓs.length = c.instanceVariables.length⌝`), given the
+  ownership of their cells, all uninitialized (`PointsToUninit ℓs`), running the constructor on the
+  object and then evaluating to it satisfies `Φ`.
+-/
+public theorem wp_new {k : String} {d : ConstructorDecl (τ := τ)} {c : ClassDecl (τ := τ)}
+    {vs : List Value} {T : τ} (hk : P.constructors k = some d) (hc : P.classes d.cls = some c) :
+    ▷ (∀ ℓ ℓs, ⌜ℓs.length = c.instanceVariables.length⌝ -∗
+        ℓ ↦{.discard} (.object d.cls c.type (c.instanceVariables.zip ℓs) : Cell) -∗
+        PointsToUninit (τ := τ) ℓs -∗
+        WP (LoweredExpr.seq (.ctorRun ℓ k vs) (.val (.obj ℓ))) @ s; E {{ Φ }}) ⊢
+      WP (LoweredExpr.new k (vs.map .val) T) @ s; E {{ Φ }} := by
+  iintro H
+  iapply wp_lift_base_step rfl
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt Hσ
+  iapply fupd_mask_intro Std.LawfulSet.empty_subset
+  iintro Hclose
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], .new hk hc, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs (.new hk hc)
+  imod Hclose
+  imod allocObject_ghost σ₁ d.cls c.type c.instanceVariables $$ Hσ with
+    ⟨Hσ, %ℓs, #Ho, Hls, %hlen⟩
+  imodintro
+  isplitl [Hσ]
+  · iexact Hσ
+  isplitl
+  · iapply H $$ %_ %ℓs %hlen Ho Hls
+  · isimp
+    itrivial
+
+/--
+Running constructor `k` on the object at `ℓ`, with argument values `vs`, allocates a cell for `this`
+and for each formal parameter, and runs the initializers and the body. It satisfies a postcondition
+`Φ` if:
+- the constructor table declares `k` as `d` (`hk`), with one formal parameter per argument
+  (`hlen`); and
+- one step later (`▷`), for all locations `ℓs`, given the ownership of cells at `ℓs` holding the
+  object and the arguments (`PointsToVals ℓs (.obj ℓ :: vs)`), the initializers and body, with
+  `this` and the formal parameters bound to those cells (see `SemanticParams.memberBody`), run as
+  the body of a running constructor, satisfy `Φ`.
+-/
+public theorem wp_ctorRun {ℓ : Loc} {k : String} {d : ConstructorDecl (τ := τ)} {vs : List Value}
+    (hk : P.constructors k = some d) (hlen : d.params.length = vs.length) :
+    ▷ (∀ ℓs, PointsToVals ℓs (.obj ℓ :: vs) -∗
+        WP (LoweredExpr.ctorFrame (P.memberBody k d.cls (d.this :: d.params)
+          (.block (d.initializers ++ [d.body])) ℓs)) @ s; E {{ Φ }}) ⊢
+      WP (LoweredExpr.ctorRun ℓ k vs) @ s; E {{ Φ }} :=
+  wp_step_alloc (e' := fun ℓs => .ctorFrame (P.memberBody k d.cls (d.this :: d.params)
+    (.block (d.initializers ++ [d.body])) ℓs)) rfl fun _ => .ctorRun hk hlen
+
+/--
+A `super(args)` or `this(args)` call in an initializer list, whose receiver is the object at `ℓ` and
+whose arguments have evaluated to `vs`, runs constructor `k` on the object: it satisfies a
+postcondition `Φ` if running the constructor does, one step later
+(`▷ WP (.ctorRun ℓ k vs) {{ Φ }}`).
+-/
+public theorem wp_initCtor {ℓ : Loc} {k : String} {vs : List Value} :
+    ▷ WP (LoweredExpr.ctorRun ℓ k vs) @ s; E {{ Φ }} ⊢
+      WP (LoweredExpr.initCtor (.val (.obj ℓ)) k (vs.map .val)) @ s; E {{ Φ }} :=
+  wp_pure_step rfl fun _ => .initCtor
+
+/--
+What the initializers and body of a running constructor must guarantee about their outcome `o`,
+for the constructor to satisfy a postcondition `Φ`: that `Φ` holds, one step later, of the
+constructor's outcome. Completing normally, and a return, become completing normally with the null
+object, and an exception propagates. A break can't propagate out of a constructor's body (it gets
+stuck there), so the body must not complete with one (`False`).
+-/
+@[expose, simp]
+public def ctorFramePost (Φ : DartLang.Outcome (τ := τ) → IProp GF) :
+    DartLang.Outcome (τ := τ) → IProp GF
+  | .normal _ => iprop(▷ Φ (.normal .null))
+  | .returning _ => iprop(▷ Φ (.normal .null))
+  | .throwing v => iprop(▷ Φ (.throwing v))
+  | .breaking _ => iprop(False)
+
+/--
+The initializers and body `m` of a running constructor: `.ctorFrame m` satisfies a postcondition
+`Φ` if `m` satisfies the postcondition that `Φ` holds, one step later, of the constructor's
+outcome, for each outcome of `m` (`WP m {{ o, ctorFramePost Φ o }}`).
+-/
+public theorem wp_ctorFrame {m : LoweredExpr} :
+    WP m @ s; E {{ o, ctorFramePost Φ o }} ⊢ WP (LoweredExpr.ctorFrame m) @ s; E {{ Φ }} := by
+  refine (wp_mono fun o => ?_).trans (wp_bind_item .ctorFrame)
+  cases o with
+  | normal v => exact wp_pure_step_val (by rfl) fun _ => .ctorFrameVal
+  | returning v => exact wp_pure_step_val (by rfl) fun _ => .ctorFrameReturning
+  | throwing v => exact wp_bubble_exception .ctorFrame v
+  | breaking l => exact false_elim
+
+/--
+An initializer of the instance variable whose key is `name` of the object at `ℓ` stores `w` in its
+cell. It satisfies a postcondition `Φ` if:
+- the object's own cell records its instance variables `fs`
+  (`ℓ ↦{.discard} .object k C fs`), among them one with key `name` at `ℓf` (`hf`);
+- one step later, the cell at `ℓf` is owned (`▷ ℓf ↦ c`), and `c` isn't an object's own cell
+  (`hc`); and
+- one step later, `Φ` holds of completing normally with the null object, given the ownership of the
+  cell, now holding `w` (`▷ (ℓf ↦ .val w -∗ Φ (.normal .null))`).
+-/
+public theorem wp_initField {ℓ ℓf : Loc} {name k : String} {C : τ} {fs : List (String × Loc)}
+    {c : Cell} {w : Value} (hf : fs.lookup name = some ℓf) (hc : ∀ k C fs, c ≠ .object k C fs) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ (ℓf ↦ c) ∗
+        ▷ ((ℓf ↦ (.val w : Cell)) -∗ Φ (.normal .null)) ⊢
+      WP (LoweredExpr.initField (.val (.obj ℓ)) name (.val w)) @ s; E {{ Φ }} := by
+  iintro ⟨#Hobj, Hl, HΦ⟩
+  iapply wp_store_of_header (ℓ := ℓ) (k := k) (C := C) (fs := fs) (e' := .val .null) rfl hc
+    fun σ hσ hℓf =>
+    .initField (k := k) (fs := fs) (by simp [State.object?, hσ]) hf hℓf hc
+  isplitr
+  · iexact Hobj
+  isplitl [Hl]
+  · iexact Hl
+  · inext
+    iintro Hl
+    iapply wp_val
+    iapply HΦ $$ Hl
+
+/--
+An assignment of `w` to property `name` of the object at `ℓ`, whose class `k` dispatches the setter
+`name=` to the implicit setter of the instance variable whose key is `iv` (`hd`), stores `w` in that
+instance variable's cell (at `ℓf`; `hf`), and evaluates to `w`. It satisfies a postcondition `Φ`
+under the same conditions as `wp_initField`, with `Φ (.normal w)` in place of `Φ (.normal .null)`.
+-/
+public theorem wp_propertySet_field {ℓ ℓf : Loc} {name k iv : String} {C : τ}
+    {fs : List (String × Loc)} {c : Cell} {w : Value}
+    (hd : P.dispatch k (name ++ "=") = some (.field iv)) (hf : fs.lookup iv = some ℓf)
+    (hc : ∀ k C fs, c ≠ .object k C fs) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ (ℓf ↦ c) ∗
+        ▷ ((ℓf ↦ (.val w : Cell)) -∗ Φ (.normal w)) ⊢
+      WP (LoweredExpr.propertySet (.val (.obj ℓ)) name (.val w)) @ s; E {{ Φ }} := by
+  iintro ⟨#Hobj, Hl, HΦ⟩
+  iapply wp_store_of_header (ℓ := ℓ) (k := k) (C := C) (fs := fs) (e' := .val w) rfl hc
+    fun σ hσ hℓf =>
+    .propertySetField (k := k) (fs := fs) (by simp [State.object?, hσ]) hd hf hℓf hc
+  isplitr
+  · iexact Hobj
+  isplitl [Hl]
+  · iexact Hl
+  · inext
+    iintro Hl
+    iapply wp_val
+    iapply HΦ $$ Hl
+
+/--
+An assignment of `w` to property `name` of the object at `ℓ`, whose class `k` dispatches the setter
+`name=` to a setter that is user code (`hd`, `hm`, with one formal parameter: `hlen`), runs the
+setter, and then evaluates to `w`. It satisfies a postcondition `Φ` if:
+- the object's own cell records its class `k` (`ℓ ↦{.discard} .object k C fs`); and
+- one step later (`▷`), for all locations `ℓs`, given the ownership of cells at `ℓs` holding the
+  object and `w` (`PointsToVals ℓs [.obj ℓ, w]`), running the setter's body (see
+  `SemanticParams.memberBody`), and then evaluating to `w`, satisfies `Φ`.
+-/
+public theorem wp_propertySet_setter {ℓ : Loc} {name k key holder : String} {C : τ}
+    {fs : List (String × Loc)} {d : MemberDecl (τ := τ)} {w : Value}
+    (hd : P.dispatch k (name ++ "=") = some (.proc key holder)) (hm : P.members key = some d)
+    (hlen : d.params.length = 1) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗
+        ▷ (∀ ℓs, PointsToVals ℓs [.obj ℓ, w] -∗
+          WP (LoweredExpr.seq (.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs)
+            Γ.Null) (.val w)) @ s; E {{ Φ }}) ⊢
+      WP (LoweredExpr.propertySet (.val (.obj ℓ)) name (.val w)) @ s; E {{ Φ }} :=
+  wp_step_alloc_of_header (e' := fun ℓs => .seq (.frame (P.memberBody key holder
+    (d.this :: d.params) d.body ℓs) Γ.Null) (.val w)) rfl fun _ hσ =>
+    .propertySetSetter (fs := fs) (by simp [State.object?, hσ]) hd hm hlen
+
+/--
+A method call on the object at `ℓ`, whose arguments have evaluated to `vs`, where the object's
+class `k` dispatches the method's name to member `key`, provided by class `holder` (`hd`), declared
+as `d` (`hm`) with one formal parameter per argument (`hlen`), runs the method's body. It satisfies
+a postcondition `Φ` if:
+- the object's own cell records its class `k` (`ℓ ↦{.discard} .object k C fs`); and
+- one step later (`▷`), for all locations `ℓs`, given the ownership of cells at `ℓs` holding the
+  object and the arguments (`PointsToVals ℓs (.obj ℓ :: vs)`), the body, with `this` and the formal
+  parameters bound to those cells (see `SemanticParams.memberBody`), run as the body of a running
+  call, satisfies `Φ`.
+
+As for `wp_call`, the `▷` is what makes recursive methods provable (see `MemberSpec.intro`).
+-/
+public theorem wp_methodCall {ℓ : Loc} {name k key holder : String} {C : τ}
+    {fs : List (String × Loc)} {d : MemberDecl (τ := τ)} {vs : List Value} {T : τ}
+    (hd : P.dispatch k name = some (.proc key holder)) (hm : P.members key = some d)
+    (hlen : d.params.length = vs.length) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗
+        ▷ (∀ ℓs, PointsToVals ℓs (.obj ℓ :: vs) -∗
+          WP (LoweredExpr.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T) @ s;
+            E {{ Φ }}) ⊢
+      WP (LoweredExpr.methodCall (.val (.obj ℓ)) name (vs.map .val) T) @ s; E {{ Φ }} :=
+  wp_step_alloc_of_header (e' := fun ℓs => .frame (P.memberBody key holder (d.this :: d.params)
+    d.body ℓs) T) rfl fun _ hσ => .methodCall (fs := fs) (by simp [State.object?, hσ])
+    hd hm hlen
+
+/--
+A super method call with receiver `v`, whose slot has been filled in with `sup` and whose arguments
+have evaluated to `vs`, where `sup` dispatches the method's name to member `key`, provided by class
+`holder` (`hd`), declared as `d` (`hm`) with one formal parameter per argument (`hlen`), runs the
+method's body with `v` as `this`. It satisfies a postcondition `Φ` if, one step later, the body
+does, as for `wp_methodCall`.
+-/
+public theorem wp_superCall {v : Value} {name sup key holder : String} {d : MemberDecl (τ := τ)}
+    {vs : List Value} {T : τ} (hd : P.dispatch sup name = some (.proc key holder))
+    (hm : P.members key = some d) (hlen : d.params.length = vs.length) :
+    ▷ (∀ ℓs, PointsToVals ℓs (v :: vs) -∗
+        WP (LoweredExpr.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T) @ s;
+          E {{ Φ }}) ⊢
+      WP (LoweredExpr.superCall (.val v) name (some sup) (vs.map .val) T) @ s; E {{ Φ }} :=
+  wp_step_alloc (e' := fun ℓs => .frame (P.memberBody key holder (d.this :: d.params) d.body ℓs)
+    T) rfl fun _ => .superCall hd hm hlen
+
+/--
+Reading property `p` of the object at `ℓ`, whose class `k` dispatches the property's name to a
+getter that is user code (`hd`, `hm`, with no formal parameters: `hlen`), runs the getter's body,
+and then checks the result against the property's (possibly promoted) static type `T`. It satisfies
+a postcondition `Φ` if:
+- the object's own cell records its class `k` (`ℓ ↦{.discard} .object k C fs`); and
+- one step later (`▷`), for all locations `ℓs`, given the ownership of a cell at `ℓs` holding the
+  object (`PointsToVals ℓs [.obj ℓ]`), the body, with `this` bound to that cell, run as the body of
+  a running call, and then the promotion check (`checkPromotion`), satisfy `Φ`.
+-/
+public theorem wp_propertyGet_getter {ℓ : Loc} {p : Property} {k key holder : String} {C T : τ}
+    {fs : List (String × Loc)} {d : MemberDecl (τ := τ)}
+    (hd : P.dispatch k p.name = some (.proc key holder)) (hm : P.members key = some d)
+    (hlen : d.params.length = 0) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗
+        ▷ (∀ ℓs, PointsToVals ℓs [(.obj ℓ : Value)] -∗
+          WP (LoweredExpr.checkPromotion T
+            (.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T)) @ s;
+            E {{ Φ }}) ⊢
+      WP (LoweredExpr.propertyGet (.val (.obj ℓ)) p T) @ s; E {{ Φ }} :=
+  wp_step_alloc_of_header (e' := fun ℓs => .checkPromotion T (.frame (P.memberBody key holder
+    (d.this :: d.params) d.body ℓs) T)) rfl fun _ hσ =>
+    .propertyGetGetter (fs := fs) (by simp [State.object?, hσ]) hd hm hlen
+
+/--
+Reading property `name` with `super`, with the receiver the object at `ℓ`, whose slot has been
+filled in with `sup`, where `sup` dispatches `name` to the implicit getter of the instance variable
+whose key is `iv` (`hd`), reads that instance variable of the object (at `ℓf`; `hf`), as
+`wp_propertyGet_field` does.
+-/
+public theorem wp_superGet_field {ℓ ℓf : Loc} {name sup k iv : String} {T C S : τ}
+    {fs : List (String × Loc)} {dq : DFrac} {w : Value}
+    (hd : P.dispatch sup name = some (.field iv)) (hf : fs.lookup iv = some ℓf) (hST : S ≤ T) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗ HasDynamicType w S ∗ ▷ (ℓf ↦{dq} (.val w : Cell)) ∗
+        ▷ ((ℓf ↦{dq} (.val w : Cell)) -∗ Φ (.normal w)) ⊢
+      WP (LoweredExpr.superGet (.val (.obj ℓ)) name (some sup) T) @ s; E {{ Φ }} := by
+  iintro ⟨#Hobj, #Hty, >Hl, HΦ⟩
+  iapply wp_lift_atomic_base_step_no_fork rfl
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  ihave %Hobjl : ⌜σ₁.lookup ℓ = some (.object k C fs)⌝ $$ [Hh Hobj]
+  · ihave >%Hv := genHeap_valid $$ [$Hh $Hobj]
+    ipureintro
+    rwa [State.get?_toMap] at Hv
+  ihave %Hlook : ⌜σ₁.lookup ℓf = some (.val w)⌝ $$ [Hh Hl]
+  · ihave >%Hv := genHeap_valid $$ [$Hh $Hl]
+    ipureintro
+    rwa [State.get?_toMap] at Hv
+  ihave %Hdt : ⌜σ₁.dynamicType w = some S⌝ $$ [Hh Hty]
+  · ihave >%Hd := HasDynamicType.valid $$ [$Hh $Hty]
+    ipureintro
+    exact Hd
+  have hobj : σ₁.object? (.obj ℓ) = some (k, fs) := by simp [State.object?, Hobjl]
+  have hstep : HeadStep (LoweredExpr.superGet (.val (.obj ℓ)) name (some sup) T) σ₁ (.val w) σ₁ :=
+    .superGetField hd hobj hf Hlook (.of_le Hdt hST)
+  imodintro
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], hstep, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
+  imodintro
+  isplit
+  · itrivial
+  isplitl [Hh]
+  · iframe Hh
+    iexact Hhdr
+  iexists .normal w
+  isplit
+  · ipureintro
+    rfl
+  · iapply HΦ $$ Hl
+
+/--
+Reading property `name` with `super`, with receiver `v`, whose slot has been filled in with `sup`,
+where `sup` dispatches `name` to a getter that is user code (`hd`, `hm`, `hlen`), runs the getter
+with `v` as `this`. It satisfies a postcondition `Φ` if, one step later, the getter's body and the
+promotion check do, as for `wp_propertyGet_getter`.
+-/
+public theorem wp_superGet_getter {v : Value} {name sup key holder : String} {T : τ}
+    {d : MemberDecl (τ := τ)} (hd : P.dispatch sup name = some (.proc key holder))
+    (hm : P.members key = some d) (hlen : d.params.length = 0) :
+    ▷ (∀ ℓs, PointsToVals ℓs [v] -∗
+        WP (LoweredExpr.checkPromotion T
+          (.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T)) @ s; E {{ Φ }}) ⊢
+      WP (LoweredExpr.superGet (.val v) name (some sup) T) @ s; E {{ Φ }} :=
+  wp_step_alloc (e' := fun ℓs => .checkPromotion T (.frame (P.memberBody key holder
+    (d.this :: d.params) d.body ℓs) T)) rfl fun _ => .superGetGetter hd hm hlen
+
+/--
+An assignment of `w` to property `name` with `super`, with the receiver the object at `ℓ`, whose
+slot has been filled in with `sup`, where `sup` dispatches the setter `name=` to the implicit
+setter of the instance variable whose key is `iv` (`hd`), stores `w` in that instance variable of
+the object (at `ℓf`; `hf`), as `wp_propertySet_field` does.
+-/
+public theorem wp_superSet_field {ℓ ℓf : Loc} {name sup k iv : String} {C : τ}
+    {fs : List (String × Loc)} {c : Cell} {w : Value}
+    (hd : P.dispatch sup (name ++ "=") = some (.field iv)) (hf : fs.lookup iv = some ℓf)
+    (hc : ∀ k C fs, c ≠ .object k C fs) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ (ℓf ↦ c) ∗
+        ▷ ((ℓf ↦ (.val w : Cell)) -∗ Φ (.normal w)) ⊢
+      WP (LoweredExpr.superSet (.val (.obj ℓ)) name (some sup) (.val w)) @ s; E {{ Φ }} := by
+  iintro ⟨#Hobj, Hl, HΦ⟩
+  iapply wp_store_of_header (ℓ := ℓ) (k := k) (C := C) (fs := fs) (e' := .val w) rfl hc
+    fun σ hσ hℓf =>
+    .superSetField (k := k) (fs := fs) hd (by simp [State.object?, hσ]) hf hℓf
+    hc
+  isplitr
+  · iexact Hobj
+  isplitl [Hl]
+  · iexact Hl
+  · inext
+    iintro Hl
+    iapply wp_val
+    iapply HΦ $$ Hl
+
+/--
+An assignment of `w` to property `name` with `super`, with receiver `v`, whose slot has been filled
+in with `sup`, where `sup` dispatches the setter `name=` to a setter that is user code (`hd`, `hm`,
+`hlen`), runs the setter with `v` as `this`, and then evaluates to `w`. It satisfies a postcondition
+`Φ` if, one step later, the setter's body and then evaluating to `w` do, as for
+`wp_propertySet_setter`.
+-/
+public theorem wp_superSet_setter {v w : Value} {name sup key holder : String}
+    {d : MemberDecl (τ := τ)} (hd : P.dispatch sup (name ++ "=") = some (.proc key holder))
+    (hm : P.members key = some d) (hlen : d.params.length = 1) :
+    ▷ (∀ ℓs, PointsToVals ℓs [v, w] -∗
+        WP (LoweredExpr.seq (.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs)
+          Γ.Null) (.val w)) @ s; E {{ Φ }}) ⊢
+      WP (LoweredExpr.superSet (.val v) name (some sup) (.val w)) @ s; E {{ Φ }} :=
+  wp_step_alloc (e' := fun ℓs => .seq (.frame (P.memberBody key holder (d.this :: d.params) d.body
+    ℓs) Γ.Null) (.val w)) rfl fun _ => .superSetSetter hd hm hlen
+
+/--
+The promotion check of a getter's result `w` against type `T` passes if `w`'s dynamic type is `S`
+(`HasDynamicType w S`), a subtype of `T` (`hST`): it satisfies a postcondition `Φ` that holds, one
+step later, of completing normally with `w` (`▷ Φ (.normal w)`).
+-/
+public theorem wp_checkPromotion {w : Value} {S T : τ} (hST : S ≤ T) :
+    HasDynamicType w S ∗ ▷ Φ (.normal w) ⊢
+      WP (LoweredExpr.checkPromotion T (.val w)) @ s; E {{ Φ }} := by
+  refine .trans ?_ (wp_step_of_dynamicType (v := w) (S := S) rfl fun _ hS =>
+    .checkPromotion (.of_le hS hST))
+  iintro ⟨#Hty, HΦ⟩
+  isplitr
+  · iexact Hty
+  · inext
+    iapply wp_val
+    iexact HΦ
+
+/--
+`identical` of values `v₁` and `v₂` that can be compared evaluates to whether they're the same
+object (`h`; see `Value.identical?`): it satisfies a postcondition `Φ` that holds, one step later,
+of completing normally with that boolean (`▷ Φ (.normal (.bool b))`).
+-/
+public theorem wp_identical {v₁ v₂ : Value} {b : Bool} (h : Value.identical? v₁ v₂ = some b) :
+    ▷ Φ (.normal (.bool b)) ⊢ WP (LoweredExpr.identical (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .identical h
+
 end Laws
 
 /-! ## Specifications of functions -/
@@ -1237,6 +1867,162 @@ public theorem FunSpec.intro {f : String} {d : FunctionDecl (τ := τ)}
     iapply HΦ $$ Ho
   · ihave %h := hlen vs $$ HPre
     exact absurd h hl
+
+/--
+`MemberSpec key holder Pre Post` is a specification of member `key` (a method, getter or setter in
+the member table), as provided by class `holder`: every run of its body, with `this` and the formal
+parameters bound to cells holding values `vs` (the receiver, then the arguments) that satisfy the
+precondition `Pre vs`, as the body of a running call, completes safely, with an outcome `o`
+satisfying the postcondition `Post vs o`.
+
+It's a Texan triple (see `FunSpec`) for every such run: for all values `vs`, locations `ℓs` of the
+cells, and static types `T`,
+`{{ Pre vs ∗ PointsToVals ℓs vs }} frame (body …) T {{ o, RET o; Post vs o }}`. Unlike `FunSpec`, it
+describes the member's body rather than a call, since a member can be run by a method call, a
+property read or assignment, or a `super` access. The laws for using it take it under a `▷`, which
+the step into the body removes (see `MemberSpec.wp_methodCall`), so that it can be proved by Löb
+induction (`MemberSpec.intro`).
+
+A specification is for one `holder`, since the `super` accesses in the body depend on it (see
+`Member.proc`).
+-/
+@[expose]
+public def MemberSpec (key holder : String) (Pre : List Value → IProp GF)
+    (Post : List Value → DartLang.Outcome (τ := τ) → IProp GF) : IProp GF :=
+  iprop(∀ (d : MemberDecl (τ := τ)) (vs : List Value) (ℓs : List Loc) (T : τ),
+    ⌜P.members key = some d⌝ →
+    {{ Pre vs ∗ PointsToVals ℓs vs }}
+      (LoweredExpr.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T)
+    {{ o, RET o; Post vs o }})
+
+/-- `MemberSpec key holder Pre Post` is persistent, since each of its Texan triples is. -/
+public instance MemberSpec_persistent (key holder : String) (Pre : List Value → IProp GF)
+    (Post : List Value → DartLang.Outcome (τ := τ) → IProp GF) :
+    Persistent (MemberSpec key holder Pre Post) := by
+  unfold MemberSpec
+  infer_instance
+
+/--
+Using a specification of member `key`, provided by class `holder`, for a method call: a method call
+on the object at `ℓ`, whose arguments have evaluated to `vs`, satisfies a postcondition `Φ`, if:
+- the object's own cell records its class `k` (`ℓ ↦{.discard} .object k C fs`), which dispatches
+  the method's name to `key`, provided by `holder` (`hd`), declared as `d` (`hm`) with one formal
+  parameter per argument (`hlen`);
+- `key` meets a specification (`MemberSpec key holder Pre Post`), which is only needed one step
+  later (`▷`);
+- the precondition holds of the receiver and the arguments (`Pre (.obj ℓ :: vs)`); and
+- the postcondition implies `Φ`, one step later (`▷ ∀ o, Post (.obj ℓ :: vs) o -∗ Φ o`).
+-/
+public theorem MemberSpec.wp_methodCall {ℓ : Loc} {name k key holder : String} {C : τ}
+    {fs : List (String × Loc)} {d : MemberDecl (τ := τ)} {vs : List Value} {T : τ}
+    {Pre : List Value → IProp GF} {Post : List Value → DartLang.Outcome (τ := τ) → IProp GF}
+    {Φ : DartLang.Outcome (τ := τ) → IProp GF}
+    (hd : P.dispatch k name = some (.proc key holder)) (hm : P.members key = some d)
+    (hlen : d.params.length = vs.length) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ MemberSpec key holder Pre Post ∗
+        Pre (.obj ℓ :: vs) ∗ ▷ (∀ o, Post (.obj ℓ :: vs) o -∗ Φ o) ⊢
+      WP (LoweredExpr.methodCall (.val (.obj ℓ)) name (vs.map .val) T) {{ Φ }} := by
+  iintro ⟨#Hobj, #Hspec, HPre, HΦ⟩
+  iapply DartSemantics.wp_methodCall hd hm hlen
+  isplitr
+  · iexact Hobj
+  inext
+  iintro %ℓs Hls
+  ihave HPre' : iprop(Pre (.obj ℓ :: vs) ∗ PointsToVals ℓs (.obj ℓ :: vs)) $$ [HPre Hls]
+  · isplitl [HPre]
+    · iexact HPre
+    · iexact Hls
+  unfold MemberSpec
+  ihave Hrun := Hspec $$ %d %(.obj ℓ :: vs) %ℓs %T %hm %Φ HPre'
+  iapply Hrun
+  inext
+  iexact HΦ
+
+/--
+Using a specification of member `key`, provided by class `holder`, for a property read: reading
+property `p` of the object at `ℓ`, with (possibly promoted) static type `T`, satisfies a
+postcondition `Φ`, if:
+- the object's own cell records its class `k` (`ℓ ↦{.discard} .object k C fs`), which dispatches
+  the property's name to the getter `key`, provided by `holder` (`hd`), declared as `d` (`hm`) with
+  no formal parameters (`hlen`);
+- `key` meets a specification (`MemberSpec key holder Pre Post`), which is only needed one step
+  later (`▷`);
+- the precondition holds of the receiver (`Pre [.obj ℓ]`); and
+- one step later, for each outcome `o` that the postcondition allows, the promotion check of `o`
+  against `T` satisfies `Φ` (`▷ ∀ o, Post [.obj ℓ] o -∗ WP (.checkPromotion T o.toExpr) {{ Φ }}`;
+  see `wp_checkPromotion`).
+-/
+public theorem MemberSpec.wp_propertyGet {ℓ : Loc} {p : Property} {k key holder : String}
+    {C T : τ} {fs : List (String × Loc)} {d : MemberDecl (τ := τ)} {Pre : List Value → IProp GF}
+    {Post : List Value → DartLang.Outcome (τ := τ) → IProp GF}
+    {Φ : DartLang.Outcome (τ := τ) → IProp GF}
+    (hd : P.dispatch k p.name = some (.proc key holder)) (hm : P.members key = some d)
+    (hlen : d.params.length = 0) :
+    ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ MemberSpec key holder Pre Post ∗
+        Pre [.obj ℓ] ∗
+        ▷ (∀ o, Post [.obj ℓ] o -∗ WP (LoweredExpr.checkPromotion T o.toExpr) {{ Φ }}) ⊢
+      WP (LoweredExpr.propertyGet (.val (.obj ℓ)) p T) {{ Φ }} := by
+  iintro ⟨#Hobj, #Hspec, HPre, HΦ⟩
+  iapply DartSemantics.wp_propertyGet_getter hd hm hlen
+  isplitr
+  · iexact Hobj
+  inext
+  iintro %ℓs Hls
+  rw [show LoweredExpr.checkPromotion T
+      (.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T) =
+      (EctxItem.checkPromotion T).fill
+        (.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T) from rfl]
+  iapply wp_bind_item
+  ihave HPre' : iprop(Pre [.obj ℓ] ∗ PointsToVals ℓs [.obj ℓ]) $$ [HPre Hls]
+  · isplitl [HPre]
+    · iexact HPre
+    · iexact Hls
+  unfold MemberSpec
+  ihave Hrun := Hspec $$ %d %([.obj ℓ] : List Value) %ℓs %T %hm HPre'
+  iapply Hrun
+  inext
+  simp only [EctxItem.fill]
+  iexact HΦ
+
+/--
+Proving a specification of member `key`, provided by class `holder`, by Löb induction: `key` meets
+the specification `MemberSpec key holder Pre Post` if:
+- the member table declares `key` as `d` (`hm`); and
+- for all values `vs`, locations `ℓs` and static types `T`, the body, with `this` and the formal
+  parameters bound to cells at `ℓs` (see `SemanticParams.memberBody`), run as the body of a running
+  call, satisfies the postcondition (`WP (.frame (…) T) {{ o, Post vs o }}`), given the
+  precondition (`Pre vs`), the ownership of the cells, holding `vs` (`PointsToVals ℓs vs`), and
+  the specification itself one step later (`▷ MemberSpec key holder Pre Post`), for the body's own
+  calls of `key` (`H`).
+
+Assuming the specification for the body's calls isn't circular: the laws for using it only need it
+one step later, after the step into the body (see `MemberSpec.wp_methodCall`). For a member that
+doesn't call itself, `H` can ignore the assumption.
+-/
+public theorem MemberSpec.intro {key holder : String} {d : MemberDecl (τ := τ)}
+    {Pre : List Value → IProp GF} {Post : List Value → DartLang.Outcome (τ := τ) → IProp GF}
+    (hm : P.members key = some d)
+    (H : ∀ vs ℓs T, ▷ MemberSpec key holder Pre Post ∗ Pre vs ∗ PointsToVals ℓs vs ⊢
+      WP (LoweredExpr.frame (P.memberBody key holder (d.this :: d.params) d.body ℓs) T)
+        {{ o, Post vs o }}) :
+    ⊢ MemberSpec key holder Pre Post := by
+  iloeb as IH
+  unfold MemberSpec
+  iintro %d' %vs %ℓs %T %hm'
+  obtain rfl : d' = d := Option.some.inj (hm'.symm.trans hm)
+  imodintro
+  iintro %Φ ⟨HPre, Hls⟩ HΦ
+  -- `unfold MemberSpec` above unfolded the specification in `IH` too. Fold it back, as `H` needs.
+  ihave #IH' : ▷ MemberSpec key holder Pre Post $$ []
+  · unfold MemberSpec
+    iexact IH
+  ihave Hwp := H vs ℓs T $$ [$IH' $HPre $Hls]
+  ihave Hwp' := wp_frame_step_l' (R := iprop(∀ o, Post vs o -∗ Φ o)) rfl
+    Std.LawfulSet.subset_refl $$ [$HΦ $Hwp]
+  iapply wp_mono _ $$ Hwp'
+  intro o
+  iintro ⟨HΦ, Ho⟩
+  iapply HΦ $$ Ho
 
 end FunSpecs
 
