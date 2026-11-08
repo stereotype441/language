@@ -56,16 +56,17 @@ contents with an *environment* (`Env`), a function from variables to cells. The 
 or `async`, a local variable's cell is never shared, so exclusive ownership is enough: no iris
 invariants or ghost state are needed.
 
-The semantics doesn't have assignments to instance variables yet, so a fact about an instance
-variable is still backed by persistent points-tos for its cell and its object's own cell.
+A fact about an instance variable is backed by persistent points-tos for its cell and its object's
+own cell. So such a fact can only be about an instance variable that doesn't change once the fact
+holds, such as a `final` one (flow analysis only promotes `final` instance variables).
 
 ## Simplifications
 
 A property read is only typed when its receiver reads a property path from a variable (`x._f._g`
 reads path `["_f", "_g"]` from `x`; see `SemTypedPath` in `Compat.lean`), and the context promises
 that the path leads to an instance variable (`Fact.field`). Reading a property whose getter is user
-code, or of an object that isn't reached from a variable, waits for the semantics to have class
-declarations with instance members (see `SemanticParams.getterImpl`).
+code, or of an object that isn't reached from a variable, isn't typed yet: like calls, it needs
+typing rules that assume that the program's members are well typed.
 -/
 
 namespace DartSemantics
@@ -284,17 +285,21 @@ public def interpEnv : List (Variable × Loc) → Env → IProp GF
   | [], _ => iprop(emp)
   | (x, ℓ) :: bs, env => iprop(interpCell ℓ (env x) ∗ interpEnv bs env)
 
+variable [P : SemanticParams τ]
+
 /--
 Following property path `path` from value `v` reaches value `w`: for the empty path, `w` is `v`;
-for `name :: path`, `v` refers to an object whose instance variable `name` holds a value `v'`, and
-following `path` from `v'` reaches `w`. The object's own cell and the instance variable's cell are
-owned persistently, since they never change.
+for `name :: path`, `v` refers to an object whose class dispatches `name` to the implicit getter
+of an instance variable, with key `iv` (so that reading property `name` reads it), and whose
+instance variable `iv` holds a value `v'`, and following `path` from `v'` reaches `w`. The object's
+own cell and the instance variable's cell are owned persistently: the object's own cell never
+changes, and a fact about a property path is only made about instance variables that don't change.
 -/
 @[expose, reducible]
 public def interpFieldPath : List String → Value → Value → IProp GF
   | [], v, w => iprop(⌜v = w⌝)
-  | name :: path, v, w => iprop(∃ ℓo k C fs ℓf v',
-      ⌜v = .obj ℓo ∧ fs.lookup name = some ℓf⌝ ∗
+  | name :: path, v, w => iprop(∃ ℓo k C fs iv ℓf v',
+      ⌜v = .obj ℓo ∧ fs.lookup iv = some ℓf ∧ P.dispatch k name = some (.field iv)⌝ ∗
       ℓo ↦{.discard} (.object k C fs : Cell) ∗ ℓf ↦{.discard} (.val v' : Cell) ∗
       interpFieldPath path v' w)
 
@@ -330,11 +335,11 @@ public theorem interpFieldPath_append (p₁ p₂ : List String) (v w : Value) :
   | cons name p ih =>
     simp only [List.cons_append, interpFieldPath]
     constructor
-    · iintro ⟨%ℓo, %k, %C, %fs, %ℓf, %v', %h, Ho, Hf, H⟩
+    · iintro ⟨%ℓo, %k, %C, %fs, %iv, %ℓf, %v', %h, Ho, Hf, H⟩
       icases (ih v').1 $$ H with ⟨%u, H₁, H₂⟩
       iexists u
       isplitl [Ho Hf H₁]
-      · iexists ℓo, k, C, fs, ℓf, v'
+      · iexists ℓo, k, C, fs, iv, ℓf, v'
         isplitr
         · ipureintro
           exact h
@@ -344,8 +349,8 @@ public theorem interpFieldPath_append (p₁ p₂ : List String) (v w : Value) :
         · iexact Hf
         · iexact H₁
       · iexact H₂
-    · iintro ⟨%u, ⟨%ℓo, %k, %C, %fs, %ℓf, %v', %h, Ho, Hf, H₁⟩, H₂⟩
-      iexists ℓo, k, C, fs, ℓf, v'
+    · iintro ⟨%u, ⟨%ℓo, %k, %C, %fs, %iv, %ℓf, %v', %h, Ho, Hf, H₁⟩, H₂⟩
+      iexists ℓo, k, C, fs, iv, ℓf, v'
       isplitr
       · ipureintro
         exact h
@@ -375,8 +380,8 @@ public theorem interpFieldPath_agree (path : List String) {v w₁ w₂ : Value} 
     exact h₁.symm.trans h₂
   | cons name path ih =>
     simp only [interpFieldPath]
-    iintro ⟨⟨%ℓo, %k, %C, %fs, %ℓf, %v₁, ⟨%hv, %hf⟩, Ho, Hf, H⟩,
-      ⟨%ℓo', %k', %C', %fs', %ℓf', %v₂, ⟨%hv', %hf'⟩, Ho', Hf', H'⟩⟩
+    iintro ⟨⟨%ℓo, %k, %C, %fs, %iv, %ℓf, %v₁, ⟨%hv, %hf, %hd⟩, Ho, Hf, H⟩,
+      ⟨%ℓo', %k', %C', %fs', %iv', %ℓf', %v₂, ⟨%hv', %hf', %hd'⟩, Ho', Hf', H'⟩⟩
     obtain rfl : ℓo = ℓo' := by rw [hv] at hv'; exact Value.obj.inj hv'
     ihave %ho : ⌜(.object k C fs : Cell) = .object k' C' fs'⌝ $$ [Ho Ho']
     · iapply pointsTo_agree
@@ -384,6 +389,7 @@ public theorem interpFieldPath_agree (path : List String) {v w₁ w₂ : Value} 
       · iexact Ho
       · iexact Ho'
     obtain ⟨rfl, rfl, rfl⟩ := Cell.object.inj ho
+    obtain rfl : iv = iv' := by rw [hd] at hd'; exact Member.field.inj (Option.some.inj hd')
     obtain rfl : ℓf = ℓf' := by rw [hf] at hf'; exact Option.some.inj hf'
     ihave %hw : ⌜(.val v₁ : Cell) = .val v₂⌝ $$ [Hf Hf']
     · iapply pointsTo_agree
@@ -444,8 +450,6 @@ public def interpOutcome (bindings : List (Variable × Loc)) (T : τ) (Δa : Val
   | .throwing _ => iprop(True)
   | .returning _ => iprop(True)
   | .breaking _ => iprop(True)
-
-variable [SemanticParams τ]
 
 variable (GF) in
 /--
@@ -568,7 +572,6 @@ public theorem interpVal_nonNull (L : TypeLaws τ) {T : τ} {v : Value} (hv : v 
 
 /-! ### Contexts -/
 
-omit [SemanticParams τ] in
 /--
 A fact about `x` only depends on the cell that `x` is bound to, and what it holds: `f` holds for
 `bindings'` and `env'` if it holds for `bindings` and `env`, and:
@@ -581,7 +584,6 @@ public theorem interpFact_congr {bindings bindings' : List (Variable × Loc)} {e
     interpFact (GF := GF) bindings env f ⊢ interpFact bindings' env' f := by
   cases f <;> simp only [Fact.variable] at h he <;> simp only [interpFact, h, he] <;> exact .rfl
 
-omit [SemanticParams τ] in
 /-- If a context `Δ₀` holds, every context `Δ` with fewer facts (`h`) holds too. -/
 public theorem interpCtx_mono {bindings : List (Variable × Loc)} {env : Env} {Δ Δ₀ : Ctx}
     (h : ∀ f ∈ Δ, f ∈ Δ₀) : interpCtx (GF := GF) bindings env Δ₀ ⊢ interpCtx bindings env Δ := by
@@ -593,7 +595,6 @@ public theorem interpCtx_mono {bindings : List (Variable × Loc)} {env : Env} {�
   ipureintro
   exact h f hf
 
-omit [SemanticParams τ] in
 /--
 If fact `f₁` implies fact `f₂` (`h`), then whenever `f₁` holds, so does `f₂`
 (`interpFact bindings env f₁ ⊢ interpFact bindings env f₂`).
@@ -627,7 +628,6 @@ public theorem interpFact_mono {bindings : List (Variable × Loc)} {env : Env} {
     · iexact Hp
     · iapply interpVal_mono hT $$ Hw
 
-omit [SemanticParams τ] in
 /--
 If a context `Δ₀` holds, every context `Δ` whose facts are each implied by a fact in `Δ₀` (`h`)
 holds too. This generalizes `interpCtx_mono`: a fact may be implied by one with a more precise type.
@@ -645,7 +645,6 @@ public theorem interpCtx_mono' {bindings : List (Variable × Loc)} {env : Env} {
   ipureintro
   exact hf₀
 
-omit [SemanticParams τ] in
 /-- A fact `f` in a context `Δ` (`h`) holds if the whole context holds. -/
 public theorem interpCtx_elim {bindings : List (Variable × Loc)} {env : Env} {Δ : Ctx} {f : Fact}
     (h : f ∈ Δ) : interpCtx (GF := GF) bindings env Δ ⊢ interpFact bindings env f := by
@@ -655,7 +654,6 @@ public theorem interpCtx_elim {bindings : List (Variable × Loc)} {env : Env} {�
   ipureintro
   exact h
 
-omit [SemanticParams τ] in
 /-- The empty context promises nothing. -/
 public theorem interpCtx_nil (bindings : List (Variable × Loc)) (env : Env) :
     ⊢ interpCtx (GF := GF) bindings env ([] : Ctx) := by
@@ -664,7 +662,6 @@ public theorem interpCtx_nil (bindings : List (Variable × Loc)) (env : Env) :
   iintro %f %hf
   exact absurd hf List.not_mem_nil
 
-omit [SemanticParams τ] in
 /--
 A context holds (`interpCtx bindings env (f :: Δ)`) if one of its facts holds
 (`interpFact bindings env f`) and the rest of it holds (`interpCtx bindings env Δ`).
@@ -682,7 +679,6 @@ public theorem interpCtx_cons {bindings : List (Variable × Loc)} {env : Env} {f
     ipureintro
     exact h
 
-omit [SemanticParams τ] in
 /--
 A context made of two parts holds (`interpCtx bindings env (Δ₁ ++ Δ₂)`) if both parts hold
 (`interpCtx bindings env Δ₁` and `interpCtx bindings env Δ₂`).
@@ -702,7 +698,6 @@ public theorem interpCtx_append {bindings : List (Variable × Loc)} {env : Env} 
     ipureintro
     exact h
 
-omit [SemanticParams τ] in
 /--
 A context only depends on the cells that the variables it has facts about are bound to, and what
 they hold: `Δ` holds for `bindings'` and `env'` if it holds for `bindings` and `env`, and, for each

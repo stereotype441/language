@@ -316,6 +316,44 @@ public inductive LoweredExpr where
   of `m₂`.
   -/
   | propertySet (m : LoweredExpr) (name : String) (m₂ : LoweredExpr)
+  /--
+  A method call, `m.name(args)`, whose static type is `T`: evaluates `m` and then `args`, left to
+  right, and calls the method named `name` of the object that `m` refers to, as its class's
+  dispatch table gives it (*dynamic dispatch*; see `ClassDecl.dispatch`).
+
+  The translator expresses `==` on objects as a call of the method named `==`, with Dart's handling
+  of `null` written out: `a == b` is `a.==(b)` if `a` can't be `null`.
+  -/
+  | methodCall (m : LoweredExpr) (name : String) (args : List LoweredExpr) (T : τ)
+  /--
+  A super method call, `super.name(args)`, whose static type is `T`, on the receiver `m` (which is
+  `this`): evaluates `m` and then `args`, left to right, and calls the method named `name` in the
+  dispatch table of the class whose key is `slot`.
+
+  A `super` access is resolved in the superclass of the class whose declaration provides the member
+  it's in (see `Member.proc`), which a step can't see. So the translator leaves `slot` as `none`,
+  and running the member's body fills it in (`LoweredExpr.withSuperclass`), as for integer modes.
+  An access whose `slot` is `none` gets stuck.
+  -/
+  | superCall (m : LoweredExpr) (name : String) (slot : Option String) (args : List LoweredExpr)
+      (T : τ)
+  /--
+  A super property extraction, `super.name`, whose static type (after any promotion) is `T`, on
+  the receiver `m` (which is `this`): reads property `name` as the dispatch table of the class
+  whose key is `slot` gives it (see `superCall` for `slot`).
+  -/
+  | superGet (m : LoweredExpr) (name : String) (slot : Option String) (T : τ)
+  /--
+  A super property assignment, `super.name = m₂`, on the receiver `m` (which is `this`): evaluates
+  `m` and then `m₂`, runs the setter `name=` as the dispatch table of the class whose key is `slot`
+  gives it (see `superCall` for `slot`), and evaluates to the value of `m₂`.
+  -/
+  | superSet (m : LoweredExpr) (name : String) (slot : Option String) (m₂ : LoweredExpr)
+  /--
+  Dart's `identical(m₁, m₂)`: evaluates `m₁` and then `m₂`, and evaluates to whether they're the
+  same object: the same location, or the same null object, boolean or integer.
+  -/
+  | identical (m₁ m₂ : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -365,6 +403,12 @@ public inductive LoweredExpr where
   the null object, since an instance creation's value is the object (see `new`).
   -/
   | ctorFrame (m : LoweredExpr)
+  /--
+  The promotion check of the result of `m`, the body of a running getter, against `T`, the
+  (possibly promoted) static type of the property read that ran the getter: once `m` completes
+  normally with `w`, `checkPromotion` does too, if `w` passes the check.
+  -/
+  | checkPromotion (T : τ) (m : LoweredExpr)
 
 /--
 An evaluation context item: an expression with a hole in the position that evaluates next. See
@@ -435,6 +479,33 @@ public inductive EctxItem where
   | propertySetR (v₁ : Value) (name : String)
   /-- `ctorFrame(□)`: the initializers and body of a running constructor -/
   | ctorFrame
+  /-- `□.name(args)` (of type `T`) -/
+  | methodCallRecv (name : String) (args : List LoweredExpr) (T : τ)
+  /--
+  `v.name(v₁, …, vₙ, □, m₁, …, mₖ)` (of type `T`): an argument of a method call, whose receiver has
+  evaluated to `v`
+  -/
+  | methodCallArgs (v : Value) (name : String) (vs : List Value) (ms : List LoweredExpr) (T : τ)
+  /-- `superCall(□, name, slot, args)` (of type `T`): the receiver of a super method call -/
+  | superCallRecv (name : String) (slot : Option String) (args : List LoweredExpr) (T : τ)
+  /--
+  `superCall(v, name, slot, (v₁, …, vₙ, □, m₁, …, mₖ))` (of type `T`): an argument of a super
+  method call, whose receiver has evaluated to `v`
+  -/
+  | superCallArgs (v : Value) (name : String) (slot : Option String) (vs : List Value)
+      (ms : List LoweredExpr) (T : τ)
+  /-- `superGet(□, name, slot)` (of type `T`) -/
+  | superGet (name : String) (slot : Option String) (T : τ)
+  /-- `superSet(□, name, slot, m₂)` -/
+  | superSetL (name : String) (slot : Option String) (m₂ : LoweredExpr)
+  /-- `superSet(v₁, name, slot, □)`, where the receiver has evaluated to `v₁` -/
+  | superSetR (v₁ : Value) (name : String) (slot : Option String)
+  /-- `checkPromotion(T, □)`: the body of a running getter -/
+  | checkPromotion (T : τ)
+  /-- `identical(□, m₂)` -/
+  | identicalL (m₂ : LoweredExpr)
+  /-- `identical(v₁, □)`, where the first operand has evaluated to `v₁` -/
+  | identicalR (v₁ : Value)
 
 end
 
@@ -473,8 +544,8 @@ omit Γ in
 Whether two values are equal, for the intrinsic check `LoweredExpr.checkEq` and for equality
 `LoweredExpr.primEq`, if they can be
 compared: two values that are each the null object, a boolean or an integer are equal if they're
-the same value. Any other value can't be compared yet (`none`): `==` on objects runs user code,
-which the semantics doesn't support yet.
+the same value. Any other value can't be compared (`none`): `==` on objects runs user code (a call
+of the method named `==`; see `LoweredExpr.methodCall`).
 -/
 @[expose]
 public def Value.primEq? : Value → Value → Option Bool
@@ -484,6 +555,20 @@ public def Value.primEq? : Value → Value → Option Bool
   | .null, .bool _ | .null, .int _ | .bool _, .null | .bool _, .int _ | .int _, .null
   | .int _, .bool _ => some false
   | _, _ => none
+
+omit Γ in
+/--
+Whether two values are the same object, for `LoweredExpr.identical`: references to objects in the
+heap are the same if they refer to the same location, and are never the same as the null object, a
+boolean or an integer, which are compared as by `primEq?`. Exception objects and captured
+continuations can't be compared (`none`).
+-/
+@[expose]
+public def Value.identical? : Value → Value → Option Bool
+  | .obj ℓ₁, .obj ℓ₂ => some (ℓ₁ == ℓ₂)
+  | .obj _, .null | .obj _, .bool _ | .obj _, .int _ | .null, .obj _ | .bool _, .obj _
+  | .int _, .obj _ => some false
+  | v₁, v₂ => Value.primEq? v₁ v₂
 
 omit Γ in
 /--
@@ -549,6 +634,11 @@ public def LoweredExpr.typeOf :
   | initCtor _ _ _ => Γ.Null
   | initField _ _ _ => Γ.Null
   | propertySet _ _ m₂ => m₂.typeOf
+  | methodCall _ _ _ T => T
+  | superCall _ _ _ _ T => T
+  | superGet _ _ _ T => T
+  | superSet _ _ _ m₂ => m₂.typeOf
+  | identical _ _ => Γ.bool
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -559,6 +649,7 @@ public def LoweredExpr.typeOf :
   | variableSetAt _ _ m => m.typeOf
   | ctorRun _ _ _ => Γ.Null
   | ctorFrame _ => Γ.Null
+  | checkPromotion T _ => T
 
 mutual
 
@@ -600,6 +691,13 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .initCtor m k args => .initCtor (m.withIntMode mode) k (LoweredExpr.withIntModeList mode args)
   | .initField m name m₂ => .initField (m.withIntMode mode) name (m₂.withIntMode mode)
   | .propertySet m name m₂ => .propertySet (m.withIntMode mode) name (m₂.withIntMode mode)
+  | .methodCall m name args T =>
+    .methodCall (m.withIntMode mode) name (LoweredExpr.withIntModeList mode args) T
+  | .superCall m name slot args T =>
+    .superCall (m.withIntMode mode) name slot (LoweredExpr.withIntModeList mode args) T
+  | .superGet m name slot T => .superGet (m.withIntMode mode) name slot T
+  | .superSet m name slot m₂ => .superSet (m.withIntMode mode) name slot (m₂.withIntMode mode)
+  | .identical m₁ m₂ => .identical (m₁.withIntMode mode) (m₂.withIntMode mode)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -610,6 +708,7 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .variableSetAt v ℓ m => .variableSetAt v ℓ (m.withIntMode mode)
   | .ctorRun ℓ k vs => .ctorRun ℓ k vs
   | .ctorFrame m => .ctorFrame (m.withIntMode mode)
+  | .checkPromotion T m => .checkPromotion T (m.withIntMode mode)
 
 /-- Set the integer mode of every integer operator in each of `ms`, as `withIntMode` does. -/
 @[expose]
@@ -617,6 +716,71 @@ public def LoweredExpr.withIntModeList (mode : IntMode) :
     List LoweredExpr → List LoweredExpr
   | [] => []
   | m :: ms => m.withIntMode mode :: withIntModeList mode ms
+
+end
+
+mutual
+
+/--
+Fill every `super` slot in `m` (of `superCall`, `superGet` and `superSet`) with `s`. Running a
+member's body fills them with the superclass of the class that provides the member, since that
+class can't be seen from the `super` access (see `LoweredExpr.superCall`). Calls and values are
+treated as by `withIntMode`.
+-/
+@[expose]
+public def LoweredExpr.withSuperclass (s : Option String) : LoweredExpr → LoweredExpr
+  | .var v T => .var v T
+  | .nullCheck m => .nullCheck (m.withSuperclass s)
+  | .as m T => .as (m.withSuperclass s) T
+  | .is m T => .is (m.withSuperclass s) T
+  | .null => .null
+  | .bool b => .bool b
+  | .int n => .int n
+  | .declare v T startsNull => .declare v T startsNull
+  | .cond m₁ m₂ m₃ T => .cond (m₁.withSuperclass s) (m₂.withSuperclass s) (m₃.withSuperclass s) T
+  | .block ms => .block (LoweredExpr.withSuperclassList s ms)
+  | .propertyGet m p T => .propertyGet (m.withSuperclass s) p T
+  | .variableSet v m => .variableSet v (m.withSuperclass s)
+  | .unsupported kind T => .unsupported kind T
+  | .call f args T => .call f (LoweredExpr.withSuperclassList s args) T
+  | .ret m => .ret (m.withSuperclass s)
+  | .check kind m => .check kind (m.withSuperclass s)
+  | .checkEq m₁ m₂ => .checkEq (m₁.withSuperclass s) (m₂.withSuperclass s)
+  | .loop m => .loop (m.withSuperclass s)
+  | .labeled l m => .labeled l (m.withSuperclass s)
+  | .brk l => .brk l
+  | .intBin op mode m₁ m₂ => .intBin op mode (m₁.withSuperclass s) (m₂.withSuperclass s)
+  | .intNeg mode m => .intNeg mode (m.withSuperclass s)
+  | .primEq m₁ m₂ => .primEq (m₁.withSuperclass s) (m₂.withSuperclass s)
+  | .new k args T => .new k (LoweredExpr.withSuperclassList s args) T
+  | .initCtor m k args => .initCtor (m.withSuperclass s) k (LoweredExpr.withSuperclassList s args)
+  | .initField m name m₂ => .initField (m.withSuperclass s) name (m₂.withSuperclass s)
+  | .propertySet m name m₂ => .propertySet (m.withSuperclass s) name (m₂.withSuperclass s)
+  | .methodCall m name args T =>
+    .methodCall (m.withSuperclass s) name (LoweredExpr.withSuperclassList s args) T
+  | .superCall m name _ args T =>
+    .superCall (m.withSuperclass s) name s (LoweredExpr.withSuperclassList s args) T
+  | .superGet m name _ T => .superGet (m.withSuperclass s) name s T
+  | .superSet m name _ m₂ => .superSet (m.withSuperclass s) name s (m₂.withSuperclass s)
+  | .identical m₁ m₂ => .identical (m₁.withSuperclass s) (m₂.withSuperclass s)
+  | .val v => .val v
+  | .throwing v => .throwing v
+  | .returning v => .returning v
+  | .breaking l => .breaking l
+  | .frame m T => .frame (m.withSuperclass s) T
+  | .varAt v T ℓ => .varAt v T ℓ
+  | .seq m₁ m₂ => .seq (m₁.withSuperclass s) (m₂.withSuperclass s)
+  | .variableSetAt v ℓ m => .variableSetAt v ℓ (m.withSuperclass s)
+  | .ctorRun ℓ k vs => .ctorRun ℓ k vs
+  | .ctorFrame m => .ctorFrame (m.withSuperclass s)
+  | .checkPromotion T m => .checkPromotion T (m.withSuperclass s)
+
+/-- Fill every `super` slot in each of `ms` with `s`, as `withSuperclass` does. -/
+@[expose]
+public def LoweredExpr.withSuperclassList (s : Option String) :
+    List LoweredExpr → List LoweredExpr
+  | [] => []
+  | m :: ms => m.withSuperclass s :: withSuperclassList s ms
 
 end
 
@@ -650,7 +814,8 @@ public inductive Member where
   | field (iv : String)
   /--
   The method, getter or setter whose declaration is `SemanticParams.members key`, provided by the
-  declaration of the class whose key is `holder` (the class itself, or a superclass).
+  declaration of the class whose key is `holder` (the class itself, or a superclass). A `super`
+  access in its body is resolved in `holder`'s superclass (see `LoweredExpr.superCall`).
   -/
   | proc (key holder : String)
   deriving Repr, BEq, DecidableEq
@@ -814,6 +979,17 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .propertySetL name m₂, m => .propertySet m name m₂
   | .propertySetR v₁ name, m => .propertySet (.val v₁) name m
   | .ctorFrame, m => .ctorFrame m
+  | .methodCallRecv name args T, m => .methodCall m name args T
+  | .methodCallArgs v name vs ms T, m => .methodCall (.val v) name (vs.map .val ++ m :: ms) T
+  | .superCallRecv name slot args T, m => .superCall m name slot args T
+  | .superCallArgs v name slot vs ms T, m =>
+    .superCall (.val v) name slot (vs.map .val ++ m :: ms) T
+  | .superGet name slot T, m => .superGet m name slot T
+  | .superSetL name slot m₂, m => .superSet m name slot m₂
+  | .superSetR v₁ name slot, m => .superSet (.val v₁) name slot m
+  | .checkPromotion T, m => .checkPromotion T m
+  | .identicalL m₂, m => .identical m m₂
+  | .identicalR v₁, m => .identical (.val v₁) m
 
 /--
 Whether context item `Ki` handles a return (`returning`) in its hole, rather than propagating it
@@ -1019,6 +1195,24 @@ public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredEx
   case initFieldR.initFieldL => exact absurd (LoweredExpr.initField.inj h).1.symm (h₂ _)
   case propertySetL.propertySetR => exact absurd (LoweredExpr.propertySet.inj h).1 (h₁ _)
   case propertySetR.propertySetL => exact absurd (LoweredExpr.propertySet.inj h).1.symm (h₂ _)
+  case methodCallArgs.methodCallArgs v name vs ms T v' name' vs' ms' T' =>
+    simp only [LoweredExpr.methodCall.injEq, LoweredExpr.val.injEq] at h
+    obtain ⟨rfl, rfl, hl, rfl⟩ := h
+    obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ hl
+    exact ⟨rfl, rfl⟩
+  case methodCallRecv.methodCallArgs => exact absurd (LoweredExpr.methodCall.inj h).1 (h₁ _)
+  case methodCallArgs.methodCallRecv => exact absurd (LoweredExpr.methodCall.inj h).1.symm (h₂ _)
+  case superCallArgs.superCallArgs v name slot vs ms T v' name' slot' vs' ms' T' =>
+    simp only [LoweredExpr.superCall.injEq, LoweredExpr.val.injEq] at h
+    obtain ⟨rfl, rfl, rfl, hl, rfl⟩ := h
+    obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ hl
+    exact ⟨rfl, rfl⟩
+  case superCallRecv.superCallArgs => exact absurd (LoweredExpr.superCall.inj h).1 (h₁ _)
+  case superCallArgs.superCallRecv => exact absurd (LoweredExpr.superCall.inj h).1.symm (h₂ _)
+  case superSetL.superSetR => exact absurd (LoweredExpr.superSet.inj h).1 (h₁ _)
+  case superSetR.superSetL => exact absurd (LoweredExpr.superSet.inj h).1.symm (h₂ _)
+  case identicalL.identicalR => exact absurd (LoweredExpr.identical.inj h).1 (h₁ _)
+  case identicalR.identicalL => exact absurd (LoweredExpr.identical.inj h).1.symm (h₂ _)
   all_goals simp_all
 
 /--

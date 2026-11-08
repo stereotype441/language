@@ -186,55 +186,6 @@ public theorem HasDynamicType.of_headers {σ : State} {v : Value} {S : τ}
   | error e => cases h
   | cont k => cases h
 
-/--
-The persistent knowledge that value `v` doesn't refer to an object with an instance variable named
-`name`, so that reading property `name` of `v` runs a getter that is user code.
-
-This mirrors how the semantics currently chooses between the two (`State.instanceVariable?`, which
-looks at the instance variables recorded in the object's own cell). Once the semantics has class
-declarations, a property read will dispatch on the members of the receiver's class instead (which
-also closes the known gaps described at `State.instanceVariable?`), and this will be replaced by a
-fact about that class.
--/
-@[expose]
-public def NoInstanceVariable (v : Value) (name : String) : IProp GF :=
-  match v with
-  | .obj ℓ => iprop(∃ k C fs, ℓ ↦{.discard} (.object k C fs : Cell) ∗ ⌜fs.lookup name = none⌝)
-  | _ => iprop(True)
-
-/--
-`NoInstanceVariable v name` is persistent: it's a persistent points-to with a pure fact, or `True`,
-depending on `v`.
--/
-public instance NoInstanceVariable_persistent (v : Value) (name : String) :
-    Persistent (NoInstanceVariable (GF := GF) v name) := by
-  cases v <;> simp only [NoInstanceVariable] <;> infer_instance
-
-omit Γ in
-/--
-The ghost heap agrees with what `NoInstanceVariable` says: given the ghost heap's interpretation of
-the state (`genHeapInterp σ.toMap`), if `v` has no instance variable named `name` according to the
-logic (`NoInstanceVariable v name`), then it has none in the state either
-(`σ.instanceVariable? v name = none`).
--/
-public theorem NoInstanceVariable.valid {σ : State} {v : Value} {name : String} :
-    genHeapInterp σ.toMap ∗ NoInstanceVariable (GF := GF) v name ⊢
-      |==> ⌜σ.instanceVariable? v name = none⌝ := by
-  cases v with
-  | obj ℓ =>
-    simp only [NoInstanceVariable]
-    iintro ⟨Hσ, %k, %C, %fs, Hℓ, %hf⟩
-    imod genHeap_valid $$ [$Hσ $Hℓ] with %h
-    imodintro
-    ipureintro
-    rw [State.get?_toMap] at h
-    simp [State.instanceVariable?, h, hf]
-  | _ =>
-    iintro -
-    imodintro
-    ipureintro
-    rfl
-
 omit Γ in
 /-- A cell `c` that isn't an object's own cell (`hc`) has no header (`cellHeader ℓ c ⊣⊢ emp`). -/
 theorem cellHeader_of_ne_object {ℓ : Loc} {c : Cell} (hc : ∀ k C fs, c ≠ .object k C fs) :
@@ -752,20 +703,22 @@ public theorem wp_variableSetAt {x : Variable} {ℓ : Loc} {c : Cell} {w : Value
 
 /--
 Reading property `p` of an object, with (possibly promoted) static type `T`, gives the value `w` in
-the cell of the object's instance variable of that name, provided `w` satisfies `T`, so that the
-promotion check passes. The read satisfies a postcondition `Φ` if:
-- the object's own cell, at `ℓ`, records instance variables `fs`
-  (`ℓ ↦{.discard} (.object k C fs)`), among them one named `p.name` at `ℓf`
-  (`hf`: `fs.lookup p.name = some ℓf`);
+the cell of the instance variable that the object's class dispatches `p.name` to, provided `w`
+satisfies `T`, so that the promotion check passes. The read satisfies a postcondition `Φ` if:
+- the object's own cell, at `ℓ`, records its class `k` and instance variables `fs`
+  (`ℓ ↦{.discard} (.object k C fs)`);
+- `k` dispatches `p.name` to the implicit getter of the instance variable whose key is `iv`
+  (`hd`: `P.dispatch k p.name = some (.field iv)`), which is at `ℓf`
+  (`hf`: `fs.lookup iv = some ℓf`);
 - the dynamic type of `w` is `S` (`HasDynamicType w S`), a subtype of `T` (`hST`);
 - one step later, the cell at `ℓf` holds `w` (`▷ ℓf ↦{dq} (.val w)`), with any fraction `dq` of its
   ownership; and
 - one step later, `Φ` holds of completing normally with `w` (`Φ (.normal w)`), given the ownership
   back (`▷ (ℓf ↦{dq} (.val w) -∗ …)`).
 -/
-public theorem wp_propertyGetField {ℓ ℓf : Loc} {p : Property} {k : String} {T C S : τ}
-    {fs : List (String × Loc)} {dq : DFrac} {w : Value} (hf : fs.lookup p.name = some ℓf)
-    (hST : S ≤ T) :
+public theorem wp_propertyGetField {ℓ ℓf : Loc} {p : Property} {k iv : String} {T C S : τ}
+    {fs : List (String × Loc)} {dq : DFrac} {w : Value}
+    (hd : P.dispatch k p.name = some (.field iv)) (hf : fs.lookup iv = some ℓf) (hST : S ≤ T) :
     ℓ ↦{.discard} (.object k C fs : Cell) ∗ HasDynamicType w S ∗ ▷ (ℓf ↦{dq} (.val w : Cell)) ∗
         ▷ ((ℓf ↦{dq} (.val w : Cell)) -∗ Φ (.normal w)) ⊢
       WP (LoweredExpr.propertyGet (.val (.obj ℓ)) p T) @ s; E {{ Φ }} := by
@@ -785,10 +738,9 @@ public theorem wp_propertyGetField {ℓ ℓf : Loc} {p : Property} {k : String} 
   · ihave >%Hd := HasDynamicType.valid $$ [$Hh $Hty]
     ipureintro
     exact Hd
-  have hiv : σ₁.instanceVariable? (.obj ℓ) p.name = some ℓf := by
-    simp [State.instanceVariable?, Hobjl, hf]
+  have hobj : σ₁.object? (.obj ℓ) = some (k, fs) := by simp [State.object?, Hobjl]
   have hstep : HeadStep (LoweredExpr.propertyGet (.val (.obj ℓ)) p T) σ₁ (.val w) σ₁ :=
-    .propertyGetField hiv Hlook (.of_le Hdt hST)
+    .propertyGetField hobj hd hf Hlook (.of_le Hdt hST)
   imodintro
   isplit
   · ipureintro
@@ -808,67 +760,6 @@ public theorem wp_propertyGetField {ℓ ℓf : Loc} {p : Property} {k : String} 
   · ipureintro
     rfl
   · iapply HΦ $$ Hl
-
-/--
-Reading property `p` of a value `v` that doesn't refer to an object with an instance variable of
-that name runs the property's getter, which is user code (see `SemanticParams.getterImpl`).
-
-Until the semantics has instance members (calls so far are only of top-level functions), a getter
-is a function of the whole state, which a proof doesn't own, so this law takes a specification of
-the getter instead, as the getter's own body would guarantee. The placeholder getter model can't
-loop forever or throw; real getters can, and the law will change when instance getters replace
-`SemanticParams.getterImpl`.
-
-The read, with (possibly promoted) static type `T`, satisfies a postcondition `Φ` if:
-- `v` has no instance variable named `p.name` (`NoInstanceVariable v p.name`);
-- the getter never gets stuck: in every state, it returns some value (`hans`);
-- every value `w` it returns satisfies `Q` (`Q w`), and its dynamic type is a subtype of the
-  property's declared type `p.type` (`∃ S, σ.dynamicType w = some S ∧ S ≤ p.type`) (`hQ`);
-- `p.type` is a subtype of `T` (`hT`), so the promotion check passes; and
-- one step later, `Φ` holds of completing normally with every such value `w` (`Φ (.normal w)`),
-  given that `w` satisfies `Q` (`⌜Q w⌝`), that its dynamic type is `S` (`HasDynamicType w S`), and
-  that `S` is a subtype of `p.type` (`⌜S ≤ p.type⌝`).
--/
-public theorem wp_propertyGetGetter {v : Value} {p : Property} {T : τ} (Q : Value → Prop)
-    (hans : ∀ σ, ∃ w, P.getterImpl p v σ = some w)
-    (hQ : ∀ σ w, P.getterImpl p v σ = some w →
-      Q w ∧ ∃ S, σ.dynamicType w = some S ∧ S ≤ p.type)
-    (hT : p.type ≤ T) :
-    NoInstanceVariable v p.name ∗
-        ▷ (∀ w S, ⌜Q w⌝ -∗ HasDynamicType w S -∗ ⌜S ≤ p.type⌝ -∗ Φ (.normal w)) ⊢
-      WP (LoweredExpr.propertyGet (.val v) p T) @ s; E {{ Φ }} := by
-  iintro ⟨#Hno, HΦ⟩
-  iapply wp_lift_atomic_base_step_no_fork rfl
-  isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
-  ihave %Hiv : ⌜σ₁.instanceVariable? v p.name = none⌝ $$ [Hh Hno]
-  · ihave >%Hd := NoInstanceVariable.valid $$ [$Hh $Hno]
-    ipureintro
-    exact Hd
-  obtain ⟨w, hw⟩ := hans σ₁
-  obtain ⟨hq, S, hS, hSp⟩ := hQ σ₁ w hw
-  have hstep : HeadStep (LoweredExpr.propertyGet (.val v) p T) σ₁ (.val w) σ₁ :=
-    .propertyGetGetter Hiv hw (.of_le hS (le_trans hSp hT))
-  imodintro
-  isplit
-  · ipureintro
-    exact ⟨[], _, _, [], hstep, rfl, rfl⟩
-  inext
-  iintro %e₂ %σ₂ %eₜ %Hstep _
-  obtain ⟨hs, -, rfl⟩ := Hstep
-  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
-  ihave #Htyw := HasDynamicType.of_headers hS $$ Hhdr
-  imodintro
-  isplit
-  · itrivial
-  isplitl [Hh]
-  · iframe Hh
-    iexact Hhdr
-  iexists .normal w
-  isplit
-  · ipureintro
-    rfl
-  · iapply HΦ $$ %w %S %hq Htyw %hSp
 
 /-! ### Calls, returns and intrinsic checks -/
 

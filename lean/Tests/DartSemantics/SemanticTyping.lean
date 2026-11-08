@@ -29,24 +29,25 @@ theorem typeLaws : TypeLaws SimpleType where
     cases S <;> cases T <;> simp_all [LE.le, isSubtype, DartTypeRepr.NonNull, NonNull]
 
 /--
-A placeholder implementation of user-code getters (`SemanticParams.getterImpl`), needed only to
-build the `SemanticParams` instances below: every such getter returns null. The programs tested
-here read only properties backed by instance variables, so the choice doesn't matter.
+The classes of the programs tested here: just `class C { final Object? _f; final Object? _g; }`.
+(The constructors aren't needed: the programs start from a state in which the objects exist.)
 -/
-def getterImpl : Property → Value → State → Option Value
-  | _, _, _ => some .null
+def classes : String → Option (ClassDecl (τ := SimpleType))
+  | "C" => some ⟨.Class "C" [], ["_f", "_g"],
+      fun name => if name = "_f" ∨ name = "_g" then some (.field name) else none, none⟩
+  | _ => none
 
-/-- The semantics with promotion checks, for a program with no functions. -/
+/-- The semantics with promotion checks, for a program with no functions, and the classes above. -/
 @[instance_reducible]
 def verify : SemanticParams SimpleType :=
-  ⟨.verify, getterImpl, fun _ => none, fun _ => none, fun _ => none, fun _ => none,
-    fun _ => .checked⟩
+  ⟨.verify, fun _ => none, classes, fun _ => none, fun _ => none, fun _ => .checked⟩
 
-/-- The semantics without promotion checks, for a program with no functions. -/
+/--
+The semantics without promotion checks, for a program with no functions, and the classes above.
+-/
 @[instance_reducible]
 def trust : SemanticParams SimpleType :=
-  ⟨.trust, getterImpl, fun _ => none, fun _ => none, fun _ => none, fun _ => none,
-    fun _ => .checked⟩
+  ⟨.trust, fun _ => none, classes, fun _ => none, fun _ => none, fun _ => .checked⟩
 
 def x : Variable := { name := "x", type := ObjectQ }
 
@@ -68,7 +69,7 @@ example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bin
   castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h
 
 /--
-With promotion checks, `{ x._f!; x._f }` is safe whenever `x` refers to an object whose instance
+With promotion checks, `{ x._f!; x._f }` is safe whenever `x` refers to a `C` whose instance
 variable `_f` holds a value that satisfies `Object?`: the second read of `x._f`, promoted to
 `Object`, passes its promotion check.
 -/
@@ -84,10 +85,9 @@ example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bin
 def g : Property := ⟨"_g", ObjectQ, true⟩
 
 /--
-With promotion checks, `{ x._f._g!; x._f._g }` is safe whenever `x` refers to an object whose
-instance variable `_f` refers to an object whose instance variable `_g` holds a value that
-satisfies `Object?`: the second read of `x._f._g`, promoted to `Object`, passes its promotion
-check.
+With promotion checks, `{ x._f._g!; x._f._g }` is safe whenever `x` refers to a `C` whose
+instance variable `_f` refers to a `C` whose instance variable `_g` holds a value that satisfies
+`Object?`: the second read of `x._f._g`, promoted to `Object`, passes its promotion check.
 -/
 example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
     (hx : FactHolds σ bindings (.var x Object))

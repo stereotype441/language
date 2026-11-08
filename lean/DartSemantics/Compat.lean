@@ -99,7 +99,6 @@ public def interpPathTo (bindings : List (Variable × Loc)) (env : Env) (x : Var
     (path : List String) (w : Value) : IProp GF :=
   iprop(∃ ℓ v, ⌜bindings.lookup x = some ℓ ∧ env x = .val v⌝ ∗ interpFieldPath path v w)
 
-omit [SemanticParams τ] in
 /--
 If following property path `path` from variable `x` reaches `w` (`interpPathTo bindings env x path
 w`), and `w` satisfies `T` (`interpVal T w`), then the fact that the value at that path satisfies
@@ -217,10 +216,10 @@ public theorem SemTypedPath.propertyGet {Δ : Ctx} {m : LoweredExpr} {x : Variab
     · iexact Hp₀'
   subst hu
   simp only [DartLang.Outcome.toExpr, EctxItem.fill]
-  icases Huw with ⟨%ℓo, %k, %C, %fs, %ℓf, %w', ⟨%hu, %hfs⟩, #Ho, #Hlf, %hw'⟩
+  icases Huw with ⟨%ℓo, %k, %C, %fs, %iv, %ℓf, %w', ⟨%hu, %hfs, %hd⟩, #Ho, #Hlf, %hw'⟩
   subst hu hw'
   icases Hw with ⟨%S, #Hty, %hS, %hok⟩
-  iapply wp_propertyGetField (fs := fs) (w := w') hfs (le_trans hS hW)
+  iapply wp_propertyGetField (fs := fs) (w := w') hd hfs (le_trans hS hW)
   isplitr
   · iexact Ho
   isplitr
@@ -244,10 +243,10 @@ public theorem SemTypedPath.propertyGet {Δ : Ctx} {m : LoweredExpr} {x : Variab
         iexists .obj ℓo
         isplitr
         · iexact Hpu
-        · iexists ℓo, k, C, fs, ℓf, w'
+        · iexists ℓo, k, C, fs, iv, ℓf, w'
           isplitr
           · ipureintro
-            exact ⟨rfl, hfs⟩
+            exact ⟨rfl, hfs, hd⟩
           isplitr
           · iexact Ho
           isplitr

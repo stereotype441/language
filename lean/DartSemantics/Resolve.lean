@@ -65,6 +65,14 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .initCtor m k args => .initCtor (m.resolve x ℓ) k (LoweredExpr.resolveList x ℓ args)
   | .initField m name m₂ => .initField (m.resolve x ℓ) name (m₂.resolve x ℓ)
   | .propertySet m name m₂ => .propertySet (m.resolve x ℓ) name (m₂.resolve x ℓ)
+  -- As for a call, the member's body is in the member table, not here.
+  | .methodCall m name args T =>
+    .methodCall (m.resolve x ℓ) name (LoweredExpr.resolveList x ℓ args) T
+  | .superCall m name slot args T =>
+    .superCall (m.resolve x ℓ) name slot (LoweredExpr.resolveList x ℓ args) T
+  | .superGet m name slot T => .superGet (m.resolve x ℓ) name slot T
+  | .superSet m name slot m₂ => .superSet (m.resolve x ℓ) name slot (m₂.resolve x ℓ)
+  | .identical m₁ m₂ => .identical (m₁.resolve x ℓ) (m₂.resolve x ℓ)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -76,6 +84,7 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .variableSetAt v ℓ' m => .variableSetAt v ℓ' (m.resolve x ℓ)
   | .ctorRun ℓ' k vs => .ctorRun ℓ' k vs
   | .ctorFrame m => .ctorFrame (m.resolve x ℓ)
+  | .checkPromotion T m => .checkPromotion T (m.resolve x ℓ)
 
 /--
 Resolve each reference to variable `x` in the elements `ms` of a block to the cell at `ℓ`, as

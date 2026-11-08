@@ -124,6 +124,12 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
   | .initCtor m _ args => by simp only [resolve, resolve_comm hne m, resolveList_comm hne args]
   | .initField m₁ _ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
   | .propertySet m₁ _ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
+  | .methodCall m _ args _ => by simp only [resolve, resolve_comm hne m, resolveList_comm hne args]
+  | .superCall m _ _ args _ => by
+    simp only [resolve, resolve_comm hne m, resolveList_comm hne args]
+  | .superGet m _ _ _ => by simp only [resolve, resolve_comm hne m]
+  | .superSet m₁ _ _ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
+  | .identical m₁ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
   | .val _ => rfl
   | .throwing _ => rfl
   | .returning _ => rfl
@@ -134,6 +140,7 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
   | .variableSetAt _ _ m => by simp only [resolve, resolve_comm hne m]
   | .ctorRun _ _ _ => rfl
   | .ctorFrame m => by simp only [resolve, resolve_comm hne m]
+  | .checkPromotion _ m => by simp only [resolve, resolve_comm hne m]
 
 /-- Resolving two different variables (`hne`) in a block gives the same result in either order. -/
 public theorem LoweredExpr.resolveBlock_comm {x y : Variable} {ℓ ℓ' : Loc} (hne : x ≠ y) :

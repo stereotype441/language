@@ -28,12 +28,6 @@ local notation "Property" => Property (τ := SimpleType)
 local notation "Value" => Value (τ := SimpleType)
 local notation "State" => State (τ := SimpleType)
 
-/--
-The getter of every property that isn't backed by an instance variable returns the null object.
--/
-def getterImpl : Property → Value → State → Option Value
-  | _, _, _ => some .null
-
 def x : Variable := { name := "x", type := ObjectQ }
 def y : Variable := { name := "y", type := Object }
 def b : Variable := { name := "b", type := bool }
@@ -146,16 +140,50 @@ abbrev tR : SimpleType := .Class "R" []
 abbrev tD : SimpleType := .Class "D" []
 /-- The class type of class `U`. -/
 abbrev tU : SimpleType := .Class "U" []
+/-- The class type of class `A`. -/
+abbrev tA : SimpleType := .Class "A" []
+/-- The class type of class `B`, a subclass of `A`. -/
+abbrev tB : SimpleType := .Class "B" ["A"]
+/-- The class type of class `C2`, a subclass of `B`. -/
+abbrev tC2 : SimpleType := .Class "C2" ["B", "A"]
+/-- The class type of class `P1`, a subclass of `A`. -/
+abbrev tP1 : SimpleType := .Class "P1" ["A"]
+/-- The class type of class `P2`, a subclass of `B`. -/
+abbrev tP2 : SimpleType := .Class "P2" ["B", "A"]
+/-- The class type of class `G`. -/
+abbrev tG : SimpleType := .Class "G" []
+/-- The class type of class `H`, a subclass of `G`. -/
+abbrev tH : SimpleType := .Class "H" ["G"]
+/-- The class type of class `G2`. -/
+abbrev tG2 : SimpleType := .Class "G2" []
+/-- The class type of class `H2`, a subclass of `G2`. -/
+abbrev tH2 : SimpleType := .Class "H2" ["G2"]
+/-- The class type of class `E`. -/
+abbrev tE : SimpleType := .Class "E" []
+/-- The class type of class `Obj`. -/
+abbrev tObj : SimpleType := .Class "Obj" []
+/-- The class type of class `V`. -/
+abbrev tV : SimpleType := .Class "V" []
+/-- The class type of class `W`, a subclass of `V`. -/
+abbrev tW : SimpleType := .Class "W" ["V"]
 
 /-- `this`, in the members of the class whose class type is `T`. -/
 def thisOf (T : SimpleType) : Variable := { name := "this", type := T }
 /-- A parameter `l` of type `Log`. -/
 def l : Variable := { name := "l", type := tLog }
+/-- A parameter `v` of type `int`. -/
+def pv : Variable := { name := "v", type := int }
+/-- A parameter `other` of type `Object?`. -/
+def other : Variable := { name := "other", type := ObjectQ }
 
 /-- The property `n` of class `Log`. -/
 def pn : Property := ⟨"n", int, false⟩
-/-- The property `x` of classes `D` and `U`. -/
+/-- The property `x` of classes `D`, `U`, `G` and `H`. -/
 def px : Property := ⟨"x", int, false⟩
+/-- The property `y` of classes `G2` and `H2`. -/
+def py : Property := ⟨"y", int, false⟩
+/-- The instance variable `_y` of classes `G2` and `H2`. -/
+def p_y : Property := ⟨"_y", int, false⟩
 
 /--
 `l.n = l.n * 10 + k`: appends digit `k` to the log `l`, so that the order in which these run can
@@ -182,7 +210,29 @@ The classes of the programs tested here:
 - `class R { R(Log l) { logStep(1); return; logStep(2); } }`, whose constructor returns early;
 - `class D { int x = 1; D() : x = 2; }`, whose instance variable is initialized twice; and
 - `class U { int x; U() { x; } }`, whose constructor reads `x` before it's initialized (which Dart
-  rejects).
+  rejects); and
+- `X`, the class of the object in `σx`, which has an instance variable `_f` and a getter
+  `Object? get h => null;`. To test run-time type checks on objects, its instances' dynamic type is
+  `int` (which no real class can have).
+
+and, for instance members (see `members`):
+- `class A { int f() => 1; int callF() => f(); }`;
+- `class B extends A { int f() => super.f() + 10; int bf() => super.f(); }`;
+- `class C2 extends B { int f() => 100; }`;
+- `class P1 extends A with M {}` and `class P2 extends B with M {}`, where
+  `mixin M on A { int m() => super.f(); }`: one member body, provided by two classes with different
+  superclasses, so that its `super` call reaches a different member in each;
+- `class G { int x; G() : x = 5; }`;
+- `class H extends G { int get x => 7; int superX() => super.x;
+  void setSuperX(int v) { super.x = v; } }`, whose getter overrides an instance variable;
+- `class G2 { int _y; G2() : _y = 0; int get y => _y + 100; set y(int v) { _y = v; } }`;
+- `class H2 extends G2 { int get y => 0; int superY() => super.y;
+  void setSuperY(int v) { super.y = v; } }`;
+- `class E { bool operator ==(Object? other) => true; }`;
+- `class Obj { bool operator ==(Object? other) => identical(this, other); }`, like `Object`; and
+- `class V { int x = 1; int readX() => x; }` and `class W extends V { int x = 2;
+  int get sup => super.x; void setSup(int v) { super.x = v; } }`, whose instance variable `x`
+  shadows `V`'s: a `W` has two instance variables named `x`, with keys `"V::x"` and `"W::x"`.
 -/
 def classes : String → Option (ClassDecl (τ := SimpleType))
   | "Log" => some ⟨tLog, ["n"], fieldDispatch ["n"], none⟩
@@ -191,10 +241,72 @@ def classes : String → Option (ClassDecl (τ := SimpleType))
   | "R" => some ⟨tR, [], fieldDispatch [], none⟩
   | "D" => some ⟨tD, ["x"], fieldDispatch ["x"], none⟩
   | "U" => some ⟨tU, ["x"], fieldDispatch ["x"], none⟩
+  | "X" => some ⟨int, ["_f"],
+      fun name => if name = "h" then some (.proc "X.h" "X") else fieldDispatch ["_f"] name, none⟩
+  | "A" => some ⟨tA, [], fun
+      | "f" => some (.proc "A.f" "A") | "callF" => some (.proc "A.callF" "A") | _ => none, none⟩
+  | "B" => some ⟨tB, [], fun
+      | "f" => some (.proc "B.f" "B") | "callF" => some (.proc "A.callF" "A")
+      | "bf" => some (.proc "B.bf" "B") | _ => none, some "A"⟩
+  | "C2" => some ⟨tC2, [], fun
+      | "f" => some (.proc "C2.f" "C2") | "callF" => some (.proc "A.callF" "A")
+      | "bf" => some (.proc "B.bf" "B") | _ => none, some "B"⟩
+  | "P1" => some ⟨tP1, [], fun
+      | "f" => some (.proc "A.f" "A") | "callF" => some (.proc "A.callF" "A")
+      | "m" => some (.proc "M.m" "P1") | _ => none, some "A"⟩
+  | "P2" => some ⟨tP2, [], fun
+      | "f" => some (.proc "B.f" "B") | "callF" => some (.proc "A.callF" "A")
+      | "bf" => some (.proc "B.bf" "B") | "m" => some (.proc "M.m" "P2") | _ => none, some "B"⟩
+  | "G" => some ⟨tG, ["x"], fieldDispatch ["x"], none⟩
+  | "H" => some ⟨tH, ["x"], fun
+      | "x" => some (.proc "H.x" "H") | "x=" => some (.field "x")
+      | "superX" => some (.proc "H.superX" "H") | "setSuperX" => some (.proc "H.setSuperX" "H")
+      | _ => none, some "G"⟩
+  | "G2" => some ⟨tG2, ["_y"], fun
+      | "y" => some (.proc "G2.y" "G2") | "y=" => some (.proc "G2.y=" "G2")
+      | name => fieldDispatch ["_y"] name, none⟩
+  | "H2" => some ⟨tH2, ["_y"], fun
+      | "y" => some (.proc "H2.y" "H2") | "y=" => some (.proc "G2.y=" "G2")
+      | "superY" => some (.proc "H2.superY" "H2")
+      | "setSuperY" => some (.proc "H2.setSuperY" "H2")
+      | name => fieldDispatch ["_y"] name, some "G2"⟩
+  | "E" => some ⟨tE, [], fun | "==" => some (.proc "E.==" "E") | _ => none, none⟩
+  | "Obj" => some ⟨tObj, [], fun | "==" => some (.proc "Obj.==" "Obj") | _ => none, none⟩
+  | "V" => some ⟨tV, ["V::x"], fun
+      | "x" | "x=" => some (.field "V::x") | "readX" => some (.proc "V.readX" "V") | _ => none,
+      none⟩
+  | "W" => some ⟨tW, ["V::x", "W::x"], fun
+      | "x" | "x=" => some (.field "W::x") | "readX" => some (.proc "V.readX" "V")
+      | "sup" => some (.proc "W.sup" "W") | "setSup" => some (.proc "W.setSup" "W") | _ => none,
+      some "V"⟩
   | _ => none
 
 /-- The methods, getters and setters of the classes in `classes`. -/
 def members : String → Option (MemberDecl (τ := SimpleType))
+  | "X.h" => some ⟨thisOf int, [], .ret .null⟩
+  | "A.f" => some ⟨thisOf tA, [], .ret (.int 1)⟩
+  | "A.callF" => some ⟨thisOf tA, [], .ret (.methodCall (.var (thisOf tA) tA) "f" [] int)⟩
+  | "B.f" => some ⟨thisOf tB, [],
+      .ret (.intBin .add none (.superCall (.var (thisOf tB) tB) "f" none [] int) (.int 10))⟩
+  | "B.bf" => some ⟨thisOf tB, [], .ret (.superCall (.var (thisOf tB) tB) "f" none [] int)⟩
+  | "C2.f" => some ⟨thisOf tC2, [], .ret (.int 100)⟩
+  | "M.m" => some ⟨thisOf tA, [], .ret (.superCall (.var (thisOf tA) tA) "f" none [] int)⟩
+  | "H.x" => some ⟨thisOf tH, [], .ret (.int 7)⟩
+  | "H.superX" => some ⟨thisOf tH, [], .ret (.superGet (.var (thisOf tH) tH) "x" none int)⟩
+  | "H.setSuperX" => some ⟨thisOf tH, [pv], .superSet (.var (thisOf tH) tH) "x" none (.var pv int)⟩
+  | "G2.y" => some ⟨thisOf tG2, [],
+      .ret (.intBin .add none (.propertyGet (.var (thisOf tG2) tG2) p_y int) (.int 100))⟩
+  | "G2.y=" => some ⟨thisOf tG2, [pv], .propertySet (.var (thisOf tG2) tG2) "_y" (.var pv int)⟩
+  | "H2.y" => some ⟨thisOf tH2, [], .ret (.int 0)⟩
+  | "H2.superY" => some ⟨thisOf tH2, [], .ret (.superGet (.var (thisOf tH2) tH2) "y" none int)⟩
+  | "H2.setSuperY" => some ⟨thisOf tH2, [pv],
+      .superSet (.var (thisOf tH2) tH2) "y" none (.var pv int)⟩
+  | "E.==" => some ⟨thisOf tE, [other], .ret (.bool true)⟩
+  | "Obj.==" => some ⟨thisOf tObj, [other],
+      .ret (.identical (.var (thisOf tObj) tObj) (.var other ObjectQ))⟩
+  | "V.readX" => some ⟨thisOf tV, [], .ret (.propertyGet (.var (thisOf tV) tV) px int)⟩
+  | "W.sup" => some ⟨thisOf tW, [], .ret (.superGet (.var (thisOf tW) tW) "x" none int)⟩
+  | "W.setSup" => some ⟨thisOf tW, [pv], .superSet (.var (thisOf tW) tW) "x" none (.var pv int)⟩
   | _ => none
 
 /-- The constructors of the classes in `classes`, named `<class>.new`. -/
@@ -209,17 +321,34 @@ def constructors : String → Option (ConstructorDecl (τ := SimpleType))
   | "D.new" => some ⟨"D", thisOf tD, [], [.initField (.var (thisOf tD) tD) "x" (.int 1),
       .initField (.var (thisOf tD) tD) "x" (.int 2)], .block []⟩
   | "U.new" => some ⟨"U", thisOf tU, [], [], .propertyGet (.var (thisOf tU) tU) px int⟩
+  | "A.new" => some ⟨"A", thisOf tA, [], [], .block []⟩
+  | "B.new" => some ⟨"B", thisOf tB, [], [], .block []⟩
+  | "C2.new" => some ⟨"C2", thisOf tC2, [], [], .block []⟩
+  | "P1.new" => some ⟨"P1", thisOf tP1, [], [], .block []⟩
+  | "P2.new" => some ⟨"P2", thisOf tP2, [], [], .block []⟩
+  | "G.new" => some ⟨"G", thisOf tG, [], [.initField (.var (thisOf tG) tG) "x" (.int 5)], .block []⟩
+  | "H.new" => some ⟨"H", thisOf tH, [], [.initCtor (.var (thisOf tH) tH) "G.new" []], .block []⟩
+  | "G2.new" => some ⟨"G2", thisOf tG2, [], [.initField (.var (thisOf tG2) tG2) "_y" (.int 0)],
+      .block []⟩
+  | "H2.new" => some ⟨"H2", thisOf tH2, [], [.initCtor (.var (thisOf tH2) tH2) "G2.new" []],
+      .block []⟩
+  | "E.new" => some ⟨"E", thisOf tE, [], [], .block []⟩
+  | "Obj.new" => some ⟨"Obj", thisOf tObj, [], [], .block []⟩
+  | "V.new" => some ⟨"V", thisOf tV, [], [.initField (.var (thisOf tV) tV) "V::x" (.int 1)],
+      .block []⟩
+  | "W.new" => some ⟨"W", thisOf tW, [], [.initField (.var (thisOf tW) tW) "W::x" (.int 2),
+      .initCtor (.var (thisOf tW) tW) "V.new" []], .block []⟩
   | _ => none
 
 /-- The semantics with promotion checks. -/
 @[instance_reducible]
 def verify : SemanticParams SimpleType :=
-  ⟨.verify, getterImpl, functions, classes, members, constructors, intModeOf⟩
+  ⟨.verify, functions, classes, members, constructors, intModeOf⟩
 
 /-- The semantics without promotion checks. -/
 @[instance_reducible]
 def trust : SemanticParams SimpleType :=
-  ⟨.trust, getterImpl, functions, classes, members, constructors, intModeOf⟩
+  ⟨.trust, functions, classes, members, constructors, intModeOf⟩
 
 /-- A promotable property, backed by an instance variable of the object in `σx`. -/
 def f : Property := ⟨"_f", ObjectQ, true⟩
@@ -231,15 +360,15 @@ variable.
 -/
 def f' : Property := ⟨"_f", ObjectQ, false⟩
 
-/-- A property that isn't backed by an instance variable of the object in `σx`. -/
+/-- A property of the object in `σx` whose getter is user code. -/
 def h : Property := ⟨"h", ObjectQ, false⟩
 
 /--
 A state for running a program with parameter `x`: `x` (at location 2) refers to an object (at
-location 0) of type `int`, whose instance variable `_f` (at location 1) holds `true`.
+location 0) of class `X`, whose instance variable `_f` (at location 1) holds `true`.
 -/
 def σx : State :=
-  ⟨#[.object "C" int [("_f", ⟨1⟩)], .val (.bool true), .val (.obj ⟨0⟩)]⟩
+  ⟨#[.object "X" int [("_f", ⟨1⟩)], .val (.bool true), .val (.obj ⟨0⟩)]⟩
 
 /-- A summary of the result of a run, without the final state or the redex of a stuck run. -/
 def summary : Interp.RunResult (τ := SimpleType) → Std.Format
@@ -319,8 +448,8 @@ def runClosed (P : SemanticParams SimpleType) (m : LoweredExpr) : Std.Format :=
 #guard_msgs in
 #eval runWithX verify (.propertyGet (.var x ObjectQ) f Object)
 
--- `x.h`, where parameter `x` refers to an object with no instance variable `h` (see `runWithX`),
--- so the read runs the getter of `h`, which is user code (and returns the null object).
+-- `x.h`, where the class of the object that parameter `x` refers to dispatches `h` to a getter
+-- (see `runWithX`), so the read runs the getter, which is user code (and returns the null object).
 /-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
 #guard_msgs in
 #eval runWithX verify (.propertyGet (.var x ObjectQ) h ObjectQ)
@@ -838,16 +967,15 @@ info: stuck at: DartLang.LoweredExpr.propertyGet
 #guard_msgs in
 #eval runWithX trust (.propertyGet (.var x ObjectQ) f int)
 
--- `x.h`, typed as `int`: the object that parameter `x` refers to has no instance variable `h`
--- (see `runWithX`), so the read runs the getter, which returns the null object, and that fails the
--- promotion check.
+-- `x.h`, typed as `int`: the class of the object that parameter `x` refers to dispatches `h` to a
+-- getter (see `runWithX`), so the read runs the getter, which returns the null object, and that
+-- fails the promotion check.
 /--
-info: stuck at: DartLang.LoweredExpr.propertyGet
-  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 }))
-  { name := "h", type := DartLang.SimpleType.ObjectQ, isPromotable := false }
+info: stuck at: DartLang.LoweredExpr.checkPromotion
   (DartLang.SimpleType.int)
+  (DartLang.LoweredExpr.val (DartLang.Value.null))
 -/
-#guard_msgs in
+#guard_msgs (whitespace := lax) in
 #eval runWithX verify (.propertyGet (.var x ObjectQ) h int)
 
 -- A variable that isn't bound to a cell can't be read.
@@ -969,6 +1097,180 @@ info: stuck at redex: DartLang.LoweredExpr.propertySet
 -/
 #guard_msgs in
 #eval stuckRedex (Interp.run (P := verify) 100 (.propertySet (.new "D.new" [] tD) "y" (.int 1))
+  State.empty)
+
+/-! ## Instance members (see `classes` and `members`) -/
+
+/-- A local variable `h` of type `H`. -/
+def vh : Variable := { name := "h", type := tH }
+/-- A local variable `g` of type `G2`. -/
+def vg : Variable := { name := "g", type := tG2 }
+/-- A local variable `h2` of type `H2`. -/
+def vh2 : Variable := { name := "h2", type := tH2 }
+/-- A local variable `a` of type `A`. -/
+def va : Variable := { name := "a", type := tA }
+/-- A local variable `w` of type `W`. -/
+def vw : Variable := { name := "w", type := tW }
+/-- A local variable `o` of type `Obj`. -/
+def vo : Variable := { name := "o", type := tObj }
+
+-- `[A().callF(), B().callF()]`: `callF` calls `f`, which dispatches on the receiver's class, so
+-- `B`'s override runs for a `B` (and calls `A`'s `f` with `super.f()`).
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 1),
+ done: DartLang.Outcome.normal (DartLang.Value.int 11)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.methodCall (.new "A.new" [] tA) "callF" [] int),
+  runClosed verify (.methodCall (.new "B.new" [] tB) "callF" [] int)]
+
+-- `C2().bf()`: `super.f()` in `B`'s `bf` calls `A`'s `f`, the one in the superclass of `B` (the
+-- class that provides `bf`), not `C2`'s or `B`'s.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 1) -/
+#guard_msgs in
+#eval runClosed verify (.methodCall (.new "C2.new" [] tC2) "bf" [] int)
+
+-- `[P1().m(), P2().m()]`: the same member body `m`, provided by `P1` and by `P2`, calls `A`'s `f`
+-- and `B`'s `f` respectively with `super.f()`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 1),
+ done: DartLang.Outcome.normal (DartLang.Value.int 11)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.methodCall (.new "P1.new" [] tP1) "m" [] int),
+  runClosed verify (.methodCall (.new "P2.new" [] tP2) "m" [] int)]
+
+-- `[H().x, H().superX()]`: `H`'s getter `x` overrides `G`'s instance variable `x`, which
+-- `super.x` reads.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 7),
+ done: DartLang.Outcome.normal (DartLang.Value.int 5)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.propertyGet (.new "H.new" [] tH) px int),
+  runClosed verify (.methodCall (.new "H.new" [] tH) "superX" [] int)]
+
+-- `{ H h = H(); h.setSuperX(9); return h.superX(); }`: `super.x = 9` assigns `G`'s instance
+-- variable.
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 9) -/
+#guard_msgs in
+#eval runClosed verify (.block [.declare vh tH false, .variableSet vh (.new "H.new" [] tH),
+  .methodCall (.var vh tH) "setSuperX" [.int 9] Null,
+  .ret (.methodCall (.var vh tH) "superX" [] int)])
+
+-- `{ G2 g = G2(); g.y = 4; return g.y; }`: the setter `y=` and the getter `y` run.
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 104) -/
+#guard_msgs in
+#eval runClosed verify (.block [.declare vg tG2 false, .variableSet vg (.new "G2.new" [] tG2),
+  .propertySet (.var vg tG2) "y" (.int 4), .ret (.propertyGet (.var vg tG2) py int)])
+
+-- `G2().y = 4`: an assignment through a setter evaluates to the value assigned.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 4) -/
+#guard_msgs in
+#eval runClosed verify (.propertySet (.new "G2.new" [] tG2) "y" (.int 4))
+
+-- `[H2().y, { H2 h2 = H2(); h2.setSuperY(4); return h2.superY(); }]`: `super.y = 4` and `super.y`
+-- run `G2`'s setter and getter, not `H2`'s getter.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 0),
+ done: DartLang.Outcome.returning (DartLang.Value.int 104)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.propertyGet (.new "H2.new" [] tH2) py int),
+  runClosed verify (.block [.declare vh2 tH2 false, .variableSet vh2 (.new "H2.new" [] tH2),
+    .methodCall (.var vh2 tH2) "setSuperY" [.int 4] Null,
+    .ret (.methodCall (.var vh2 tH2) "superY" [] int)])]
+
+-- `[W().x, W().sup, W().readX(), V().readX()]`: `W`'s instance variable `x` shadows `V`'s, so a
+-- `W` has two cells for them. `x` reads `W`'s, even from `V`'s method `readX` (since the getter
+-- is virtual), and `super.x` reads `V`'s.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 2),
+ done: DartLang.Outcome.normal (DartLang.Value.int 1),
+ done: DartLang.Outcome.normal (DartLang.Value.int 2),
+ done: DartLang.Outcome.normal (DartLang.Value.int 1)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.propertyGet (.new "W.new" [] tW) px int),
+  runClosed verify (.propertyGet (.new "W.new" [] tW) ⟨"sup", int, false⟩ int),
+  runClosed verify (.methodCall (.new "W.new" [] tW) "readX" [] int),
+  runClosed verify (.methodCall (.new "V.new" [] tV) "readX" [] int)]
+
+-- `[{ W w = W(); w.setSup(9); return w.sup; }, { W w = W(); w.setSup(9); return w.x; }]`:
+-- `super.x = 9` assigns `V`'s instance variable, and leaves `W`'s alone.
+/--
+info: [done: DartLang.Outcome.returning (DartLang.Value.int 9),
+ done: DartLang.Outcome.returning (DartLang.Value.int 2)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.block [.declare vw tW false, .variableSet vw (.new "W.new" [] tW),
+    .methodCall (.var vw tW) "setSup" [.int 9] Null,
+    .ret (.propertyGet (.var vw tW) ⟨"sup", int, false⟩ int)]),
+  runClosed verify (.block [.declare vw tW false, .variableSet vw (.new "W.new" [] tW),
+    .methodCall (.var vw tW) "setSup" [.int 9] Null, .ret (.propertyGet (.var vw tW) px int)])]
+
+-- `[identical(A(), A()), { A a = A(); return identical(a, a); }, identical(1, 1),
+-- identical(null, A())]`
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.bool false),
+ done: DartLang.Outcome.returning (DartLang.Value.bool true),
+ done: DartLang.Outcome.normal (DartLang.Value.bool true),
+ done: DartLang.Outcome.normal (DartLang.Value.bool false)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.identical (.new "A.new" [] tA) (.new "A.new" [] tA)),
+  runClosed verify (.block [.declare va tA false, .variableSet va (.new "A.new" [] tA),
+    .ret (.identical (.var va tA) (.var va tA))]),
+  runClosed verify (.identical (.int 1) (.int 1)),
+  runClosed verify (.identical .null (.new "A.new" [] tA))]
+
+-- `[E() == E(), Obj() == Obj(), { Obj o = Obj(); return o == o; }]`: `==` on objects calls the
+-- receiver's `operator ==`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.bool true),
+ done: DartLang.Outcome.normal (DartLang.Value.bool false),
+ done: DartLang.Outcome.returning (DartLang.Value.bool true)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.methodCall (.new "E.new" [] tE) "==" [.new "E.new" [] tE] bool),
+  runClosed verify (.methodCall (.new "Obj.new" [] tObj) "==" [.new "Obj.new" [] tObj] bool),
+  runClosed verify (.block [.declare vo tObj false, .variableSet vo (.new "Obj.new" [] tObj),
+    .ret (.methodCall (.var vo tObj) "==" [.var vo tObj] bool)])]
+
+-- `super.f()` outside a member body: its slot isn't filled in, so it gets stuck.
+/--
+info: stuck at redex: DartLang.LoweredExpr.superCall
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 }))
+  "f"
+  none
+  []
+  (DartLang.SimpleType.int)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.superCall (.new "A.new" [] tA) "f" none [] int)
+  State.empty)
+
+-- `1.f()`: a method call on an integer gets stuck.
+/--
+info: stuck at redex: DartLang.LoweredExpr.methodCall
+  (DartLang.LoweredExpr.val (DartLang.Value.int 1))
+  "f"
+  []
+  (DartLang.SimpleType.int)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.methodCall (.int 1) "f" [] int) State.empty)
+
+-- `A().g()`: `A` has no member `g`, so the call gets stuck.
+/--
+info: stuck at redex: DartLang.LoweredExpr.methodCall
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 }))
+  "g"
+  []
+  (DartLang.SimpleType.int)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.methodCall (.new "A.new" [] tA) "g" [] int)
   State.empty)
 
 /-! ## A program that runs out of fuel -/

@@ -25,7 +25,7 @@ local notation "Outcome" => Outcome (τ := SimpleType)
 local notation "Cell" => Cell (τ := SimpleType)
 
 variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS SimpleType hlc GF]
-variable [SemanticParams SimpleType]
+variable [P : SemanticParams SimpleType]
 
 include hlc
 
@@ -215,11 +215,12 @@ example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
 def f : Property (τ := SimpleType) := ⟨"_f", ObjectQ, true⟩
 
 /--
-`{ x._f!; x._f }`, where parameter `x` (at `ℓ`) refers to an object of type `int` (at `ℓo`) whose
-instance variable `_f` (at `ℓf`) holds `true`, completes normally, and leaves the cells as they
-were. The second read is promoted to `Object`, which the promotion check verifies.
+`{ x._f!; x._f }`, where parameter `x` (at `ℓ`) refers to an object of class `C` and type `int` (at
+`ℓo`) whose instance variable `_f` (at `ℓf`) holds `true`, completes normally, and leaves the cells
+as they were, if `C` dispatches `_f` to the instance variable (`hd`). The second read is promoted
+to `Object`, which the promotion check verifies.
 -/
-example (ℓ ℓo ℓf : Loc) :
+example (ℓ ℓo ℓf : Loc) (hd : P.dispatch "C" "_f" = some (.field "_f")) :
     {{ ℓ ↦ (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object "C" int [("_f", ℓf)] : Cell) ∗
         ℓf ↦ (.val (.bool true) : Cell) }}
       (LoweredExpr.block (τ := SimpleType)
@@ -240,7 +241,7 @@ example (ℓ ℓo ℓf : Loc) :
   wp_pures
   -- Read `x._f`, of static type `Object?`.
   iapply DartSemantics.wp_propertyGetField (fs := [("_f", ℓf)]) (w := .bool true)
-    (S := SimpleType.bool) rfl (by decide)
+    (S := SimpleType.bool) hd rfl (by decide)
   isplitr
   · iexact Ho
   isplitr
@@ -263,7 +264,7 @@ example (ℓ ℓo ℓf : Loc) :
   wp_pures
   -- Read `x._f`, promoted to `Object`.
   iapply DartSemantics.wp_propertyGetField (fs := [("_f", ℓf)]) (w := .bool true)
-    (S := SimpleType.bool) rfl (by decide)
+    (S := SimpleType.bool) hd rfl (by decide)
   isplitr
   · iexact Ho
   isplitr
@@ -278,7 +279,7 @@ example (ℓ ℓo ℓf : Loc) :
   iexact Hf
 
 /-- The same spec, proved with the `wp_load` tactic for the reads. -/
-example (ℓ ℓo ℓf : Loc) :
+example (ℓ ℓo ℓf : Loc) (hd : P.dispatch "C" "_f" = some (.field "_f")) :
     {{ ℓ ↦ (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object "C" int [("_f", ℓf)] : Cell) ∗
         ℓf ↦ (.val (.bool true) : Cell) }}
       (LoweredExpr.block (τ := SimpleType)

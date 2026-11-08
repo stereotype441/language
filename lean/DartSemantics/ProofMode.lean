@@ -245,19 +245,20 @@ public theorem tac_wp_load {x : Variable} {T S : τ} {ℓ : Loc} {dq : DFrac} {v
 
 /--
 The proof-mode form of `wp_propertyGetField`, with its pure facts as premises
-(`⌜fs.lookup p.name = some ℓf⌝`, after the object's own cell, and `⌜S ≤ T⌝`, after the dynamic
-type): to prove that reading property `p` of the object at `ℓ` satisfies `Φ` from the hypotheses
-`Δ`, prove `wp_propertyGetField`'s premises (`H`).
+(`⌜P.dispatch k p.name = some (.field iv)⌝` and `⌜fs.lookup iv = some ℓf⌝`, after the object's own
+cell, and `⌜S ≤ T⌝`, after the dynamic type): to prove that reading property `p` of the object at
+`ℓ` satisfies `Φ` from the hypotheses `Δ`, prove `wp_propertyGetField`'s premises (`H`).
 -/
-public theorem tac_wp_load_field {ℓ ℓf : Loc} {p : Property} {k : String} {T C S : τ}
+public theorem tac_wp_load_field {ℓ ℓf : Loc} {p : Property} {k iv : String} {T C S : τ}
     {fs : List (String × Loc)} {dq : DFrac} {w : Value}
-    (H : Entails' Δ iprop(ℓ ↦{.discard} (.object k C fs : Cell) ∗ ⌜fs.lookup p.name = some ℓf⌝ ∗
+    (H : Entails' Δ iprop(ℓ ↦{.discard} (.object k C fs : Cell) ∗
+        ⌜P.dispatch k p.name = some (.field iv)⌝ ∗ ⌜fs.lookup iv = some ℓf⌝ ∗
         HasDynamicType w S ∗ ⌜S ≤ T⌝ ∗ ▷ (ℓf ↦{dq} (.val w : Cell)) ∗
         ▷ ((ℓf ↦{dq} (.val w : Cell)) -∗ Φ (.normal w)))) :
     Entails' Δ (WP (LoweredExpr.propertyGet (.val (.obj ℓ)) p T) @ s; E {{ Φ }}) := by
   refine (show Δ ⊢ _ from H).trans ?_
-  iintro ⟨#Hobj, %hf, #Hty, %hST, Hl, HΦ⟩
-  iapply wp_propertyGetField hf hST
+  iintro ⟨#Hobj, %hd, %hf, #Hty, %hST, Hl, HΦ⟩
+  iapply wp_propertyGetField hd hf hST
   isplitr
   · iexact Hobj
   isplitr
@@ -604,8 +605,8 @@ macro_rules
 
 /--
 Prove a pure side condition of a load: a subtype fact, or the lookup of an instance variable. If
-neither `decide` nor `rfl` proves it (for example, a subtype fact about types that aren't concrete),
-it's left as a goal, after the remaining goals.
+neither `decide` nor `rfl` proves it (for example, a subtype fact about types that aren't
+concrete), it's left as a goal, after the remaining goals.
 -/
 syntax "dart_load_side_condition" : tactic
 
@@ -614,11 +615,25 @@ macro_rules
     `(tactic| (ipureintro; first | decide | rfl | rotate_left))
 
 /--
+Prove the dispatch side condition of a load of an instance variable: that the object's class
+dispatches the property's name to the implicit getter of some instance variable. A hypothesis in
+the Lean context saying so (`assumption`) also determines which instance variable it is. If
+neither `decide`, `rfl` nor `assumption` proves it, it's left as a goal, after the remaining
+goals; then so is the instance variable's lookup, which depends on it.
+-/
+syntax "dart_dispatch_side_condition" : tactic
+
+macro_rules
+  | `(tactic| dart_dispatch_side_condition) =>
+    `(tactic| (ipureintro; first | decide | rfl | assumption | rotate_left))
+
+/--
 `wp_load H` takes the step of reading a variable, or an instance variable of an object, using the
 points-to `H` for the cell read. The value's dynamic type comes from `dart_dynamic_type`, and the
 pure side conditions (the subtype fact needed for the promotion check, and for an instance
-variable, its lookup) from `dart_load_side_condition`; any it can't prove are left as goals after
-the main one. Afterwards, `H` is back in the context.
+variable, the dispatch of the property's name to it and its lookup) from
+`dart_load_side_condition` and `dart_dispatch_side_condition`; any they can't prove are left as
+goals after the main one. Afterwards, `H` is back in the context.
 -/
 syntax "wp_load " ident : tactic
 
@@ -635,6 +650,8 @@ macro_rules
          iframe $h:ident
          isplitr
          · iassumption
+         isplitr
+         dart_dispatch_side_condition
          isplitr
          dart_load_side_condition
          isplitr

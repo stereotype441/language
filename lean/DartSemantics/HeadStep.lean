@@ -86,26 +86,11 @@ public class SemanticParams where
   /-- Whether the semantics performs promotion checks. -/
   promotionChecks : PromotionChecks
   /--
-  The implementation of getters that are user code (rather than the implicit getter of an instance
-  variable): `getterImpl p v σ` is the result of reading property `p` of value `v` in state `σ`,
-  or `none` if the read gets stuck.
-
-  In Dart, a getter runs arbitrary code. Until the semantics has instance members (calls so far
-  are only of top-level functions), a getter is modeled as a pure function of the state: it can't
-  change the state, throw, or fail to terminate. Theorems quantify over all implementations that
-  are well-formed, in the sense that the result (if any) has the property's static type. This
-  parameter is a placeholder. Once the semantics has instance members, reading a property whose
-  getter is user code will invoke the getter like any other call, and `getterImpl` will be
-  removed. Theorems will then quantify over programs instead, assuming that each getter is well
-  typed.
-  -/
-  getterImpl : Property → Value → State → Option Value
-  /--
   The program's function table: the declaration of each top-level function, by key (`none` for a
   key that isn't declared). A function's key identifies it uniquely in the program, so it isn't
-  necessarily the function's name (see `LoweredExpr.call`). The program is a parameter of the
-  semantics, like `getterImpl`, so that a theorem can be about one program, or quantify over
-  programs. Functions may call each other, and themselves, in any way.
+  necessarily the function's name (see `LoweredExpr.call`). The program (this table and the ones
+  below) is a parameter of the semantics, so that a theorem can be about one program, or quantify
+  over programs. Functions may call each other, and themselves, in any way.
   -/
   functions : String → Option (FunctionDecl (τ := τ))
   /--
@@ -143,30 +128,24 @@ public def SemanticParams.dispatch (P : SemanticParams τ) (cls name : String) :
   (P.classes cls).bind (·.dispatch name)
 
 /--
-The location of the cell holding instance variable `name` of the object that value `v` refers
-to, if `v` refers to an object that has such an instance variable. Reading property `name` of such
-an object runs the instance variable's implicit getter, which reads the cell. Reading any other
-property runs a getter that is user code.
-
-This lookup has two known gaps, which will be closed when the semantics has class declarations:
-- In Dart, a subclass can override an inherited instance variable with a getter. Its objects
-  still have the inherited instance variable, but reading the property runs the subclass's
-  getter, not the implicit getter. The class declarations, not the object's instance variables,
-  should decide which getter runs.
-- Instance variables are matched by name, which disregards privacy. An object can have two
-  distinct instance variables named `_foo`, declared in different libraries by different classes
-  in its superclass chain. Which one a property read reads depends on the library that the code
-  doing the reading is in. Reading a property whose getter is user code (and, later, calling a
-  setter or method) depends on the library in the same way.
+The key of the superclass of the class whose key is `cls`, if it's declared and has a superclass:
+the class in which a `super` access in a member that `cls` provides is resolved.
 -/
 @[expose]
-public def State.instanceVariable? (σ : State) (v : Value) (name : String) : Option Loc :=
-  match v with
-  | .obj ℓ =>
-    match σ.lookup ℓ with
-    | some (.object _ _ fs) => fs.lookup name
-    | _ => none
-  | _ => none
+public def SemanticParams.superclassOf (P : SemanticParams τ) (cls : String) : Option String :=
+  (P.classes cls).bind (·.superclass)
+
+/--
+`body`, the body of the member or constructor whose key is `key`, provided by the class whose key
+is `holder`, ready to run with `this` and the formal parameters (`xs`) bound to the cells `ℓs`:
+with every integer operator's mode set to the member's integer mode, every `super` slot filled with
+`holder`'s superclass, and the variables bound.
+-/
+@[expose]
+public def SemanticParams.memberBody (P : SemanticParams τ) (key holder : String)
+    (xs : List (Variable (τ := τ))) (body : LoweredExpr) (ℓs : List Loc) : LoweredExpr :=
+  ((body.withIntMode (P.intModeOf key)).withSuperclass (P.superclassOf holder)).bindVariables
+    (xs.zip ℓs)
 
 /--
 `PassesPromotionCheck σ v T` says that in state `σ`, value `v` passes the promotion check against
@@ -283,23 +262,31 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | condFalse {m₂ m₃ : LoweredExpr} {T : τ} {σ : State} :
       HeadStep (.cond (.val (.bool false)) m₂ m₃ T) σ m₃ σ
   /--
-  Reading a property whose getter is the implicit getter of an instance variable (see
-  `State.instanceVariable?`) reads the instance variable's cell, if the value passes the promotion
-  check against the property's (possibly promoted) static type.
+  Reading a property of an object (`ho`) whose class dispatches the property's name to the
+  implicit getter of the instance variable whose key is `iv` (`hd`) reads that instance variable's
+  cell (`hf`, `hw`), if the value passes the promotion check against the property's (possibly
+  promoted) static type (`hc`).
   -/
-  | propertyGetField {v w : Value} {p : Property} {T : τ} {ℓf : Loc} {σ : State}
-      (hf : σ.instanceVariable? v p.name = some ℓf) (hw : σ.lookup ℓf = some (.val w))
-      (hc : PassesPromotionCheck σ w T) :
+  | propertyGetField {v w : Value} {p : Property} {T : τ} {k iv : String}
+      {fs : List (String × Loc)} {ℓf : Loc} {σ : State} (ho : σ.object? v = some (k, fs))
+      (hd : P.dispatch k p.name = some (.field iv)) (hf : fs.lookup iv = some ℓf)
+      (hw : σ.lookup ℓf = some (.val w)) (hc : PassesPromotionCheck σ w T) :
       HeadStep (.propertyGet (.val v) p T) σ (.val w) σ
   /--
-  Reading any other property runs its getter, which is user code (see
-  `SemanticParams.getterImpl`), if the result passes the promotion check against the property's
-  (possibly promoted) static type.
+  Reading a property of an object (`ho`) whose class dispatches the property's name to a getter
+  that is user code (`hd`, `hm`, with no formal parameters: `hlen`) runs the getter's body, with
+  `this` bound to a new cell holding the object (see `SemanticParams.memberBody`), as the body of a
+  running call (`frame`). The result is then checked against the property's (possibly promoted)
+  static type (`checkPromotion`).
   -/
-  | propertyGetGetter {v w : Value} {p : Property} {T : τ} {σ : State}
-      (hf : σ.instanceVariable? v p.name = none) (hg : P.getterImpl p v σ = some w)
-      (hc : PassesPromotionCheck σ w T) :
-      HeadStep (.propertyGet (.val v) p T) σ (.val w) σ
+  | propertyGetGetter {v : Value} {p : Property} {T : τ} {k key holder : String}
+      {fs : List (String × Loc)} {d : MemberDecl (τ := τ)} {σ : State}
+      (ho : σ.object? v = some (k, fs)) (hd : P.dispatch k p.name = some (.proc key holder))
+      (hm : P.members key = some d) (hlen : d.params.length = 0) :
+      HeadStep (.propertyGet (.val v) p T) σ
+        (.checkPromotion T (.frame (P.memberBody key holder (d.this :: d.params) d.body
+          (σ.allocAll ([v].map Cell.val)).1) T))
+        (σ.allocAll ([v].map Cell.val)).2
   /--
   Once every argument of a call has been evaluated (to `vs`), the call looks up the function in the
   function table (`hf`), and checks that it has one formal parameter per argument (`hlen`). It
@@ -403,16 +390,15 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   Running a generative constructor on the object at `ℓ` looks it up in the constructor table
   (`hk`), and checks that it has one formal parameter per argument (`hlen`), as a call does. It
   allocates a cell for `this`, holding the object, and one cell per formal parameter, holding its
-  argument. Then it runs the constructor's initializers and body, with every integer operator's
-  mode set to the constructor's integer mode, and `this` and the formal parameters bound to their
-  cells, as the body of a running constructor (`ctorFrame`).
+  argument. Then it runs the constructor's initializers and body, with `this` and the formal
+  parameters bound to their cells (see `SemanticParams.memberBody`, with the constructor's class
+  providing it), as the body of a running constructor (`ctorFrame`).
   -/
   | ctorRun {ℓ : Loc} {k : String} {d : ConstructorDecl (τ := τ)} {vs : List Value} {σ : State}
       (hk : P.constructors k = some d) (hlen : d.params.length = vs.length) :
       HeadStep (.ctorRun ℓ k vs) σ
-        (.ctorFrame (((LoweredExpr.block (d.initializers ++ [d.body])).withIntMode
-          (P.intModeOf k)).bindVariables
-            ((d.this :: d.params).zip (σ.allocAll ((Value.obj ℓ :: vs).map Cell.val)).1)))
+        (.ctorFrame (P.memberBody k d.cls (d.this :: d.params)
+          (.block (d.initializers ++ [d.body])) (σ.allocAll ((Value.obj ℓ :: vs).map Cell.val)).1))
         (σ.allocAll ((Value.obj ℓ :: vs).map Cell.val)).2
   /--
   Once its receiver and arguments have been evaluated, a `super(args)` or `this(args)` call in an
@@ -448,6 +434,113 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
       HeadStep (.ctorFrame (.returning v)) σ (.val .null) σ
   /-- When the body of a running constructor completes normally, so does the constructor. -/
   | ctorFrameVal {v : Value} {σ : State} : HeadStep (.ctorFrame (.val v)) σ (.val .null) σ
+  /--
+  An assignment to a property of an object (`ho`) whose class dispatches the setter `name=` to a
+  setter that is user code (`hd`, `hm`, with one formal parameter: `hlen`) runs the setter's body,
+  with `this` and the formal parameter bound to new cells holding the object and the value (see
+  `SemanticParams.memberBody`), as the body of a running call (`frame`), and then evaluates to the
+  value.
+  -/
+  | propertySetSetter {v w : Value} {name k key holder : String} {fs : List (String × Loc)}
+      {d : MemberDecl (τ := τ)} {σ : State} (ho : σ.object? v = some (k, fs))
+      (hd : P.dispatch k (name ++ "=") = some (.proc key holder)) (hm : P.members key = some d)
+      (hlen : d.params.length = 1) :
+      HeadStep (.propertySet (.val v) name (.val w)) σ
+        (.seq (.frame (P.memberBody key holder (d.this :: d.params) d.body
+          (σ.allocAll ([v, w].map Cell.val)).1) Γ.Null) (.val w))
+        (σ.allocAll ([v, w].map Cell.val)).2
+  /--
+  Once its receiver and arguments have been evaluated (to `v` and `vs`), a method call on an
+  object (`ho`) whose class dispatches the method's name to a method (`hd`, `hm`) with one formal
+  parameter per argument (`hlen`) runs the method's body, with `this` and the formal parameters
+  bound to new cells holding the receiver and the arguments (see `SemanticParams.memberBody`), as
+  the body of a running call (`frame`).
+
+  A method call on anything else gets stuck: on the null object, a boolean or an integer, or with a
+  member name that the class doesn't dispatch to a method, or with the wrong number of arguments.
+  None of these can happen in a program that Dart accepts, since the subset of Dart modeled so far
+  has no dynamic calls, and no members of core library classes.
+  -/
+  | methodCall {v : Value} {name k key holder : String} {fs : List (String × Loc)}
+      {d : MemberDecl (τ := τ)} {vs : List Value} {T : τ} {σ : State}
+      (ho : σ.object? v = some (k, fs)) (hd : P.dispatch k name = some (.proc key holder))
+      (hm : P.members key = some d) (hlen : d.params.length = vs.length) :
+      HeadStep (.methodCall (.val v) name (vs.map .val) T) σ
+        (.frame (P.memberBody key holder (d.this :: d.params) d.body
+          (σ.allocAll ((v :: vs).map Cell.val)).1) T)
+        (σ.allocAll ((v :: vs).map Cell.val)).2
+  /--
+  Once its receiver and arguments have been evaluated (to `v` and `vs`), a super method call whose
+  slot has been filled in with `s` looks the method's name up in `s`'s dispatch table (`hd`, `hm`),
+  and runs the method as `methodCall` does, with the receiver `v` as `this`.
+  -/
+  | superCall {v : Value} {name s key holder : String} {d : MemberDecl (τ := τ)} {vs : List Value}
+      {T : τ} {σ : State} (hd : P.dispatch s name = some (.proc key holder))
+      (hm : P.members key = some d) (hlen : d.params.length = vs.length) :
+      HeadStep (.superCall (.val v) name (some s) (vs.map .val) T) σ
+        (.frame (P.memberBody key holder (d.this :: d.params) d.body
+          (σ.allocAll ((v :: vs).map Cell.val)).1) T)
+        (σ.allocAll ((v :: vs).map Cell.val)).2
+  /--
+  A super property extraction whose slot has been filled in with `s`, where `s`'s dispatch table
+  gives the property's name to the implicit getter of the instance variable whose key is `iv`
+  (`hd`), reads that instance variable (`hf`, `hw`) of the object that the receiver refers to
+  (`ho`), as `propertyGetField` does. If the receiver's class has an instance variable with the same
+  name that shadows it, that's a different instance variable, with a different key, so this reads
+  the superclass's one.
+  -/
+  | superGetField {v w : Value} {name s k iv : String} {T : τ} {fs : List (String × Loc)}
+      {ℓf : Loc} {σ : State} (hd : P.dispatch s name = some (.field iv))
+      (ho : σ.object? v = some (k, fs)) (hf : fs.lookup iv = some ℓf)
+      (hw : σ.lookup ℓf = some (.val w)) (hc : PassesPromotionCheck σ w T) :
+      HeadStep (.superGet (.val v) name (some s) T) σ (.val w) σ
+  /--
+  A super property extraction whose slot has been filled in with `s`, where `s`'s dispatch table
+  gives the property's name to a getter that is user code (`hd`, `hm`, `hlen`), runs the getter
+  with the receiver as `this`, as `propertyGetGetter` does.
+  -/
+  | superGetGetter {v : Value} {name s key holder : String} {T : τ} {d : MemberDecl (τ := τ)}
+      {σ : State} (hd : P.dispatch s name = some (.proc key holder)) (hm : P.members key = some d)
+      (hlen : d.params.length = 0) :
+      HeadStep (.superGet (.val v) name (some s) T) σ
+        (.checkPromotion T (.frame (P.memberBody key holder (d.this :: d.params) d.body
+          (σ.allocAll ([v].map Cell.val)).1) T))
+        (σ.allocAll ([v].map Cell.val)).2
+  /--
+  A super property assignment whose slot has been filled in with `s`, where `s`'s dispatch table
+  gives the setter `name=` to the implicit setter of the instance variable whose key is `iv`
+  (`hd`), stores the value in that instance variable (`hf`) of the object that the receiver refers
+  to (`ho`), as `propertySetField` does.
+  -/
+  | superSetField {v w : Value} {name s k iv : String} {fs : List (String × Loc)} {ℓf : Loc}
+      {c : Cell} {σ : State} (hd : P.dispatch s (name ++ "=") = some (.field iv))
+      (ho : σ.object? v = some (k, fs)) (hf : fs.lookup iv = some ℓf)
+      (hℓf : σ.lookup ℓf = some c) (hc : ∀ k C fs, c ≠ .object k C fs) :
+      HeadStep (.superSet (.val v) name (some s) (.val w)) σ (.val w) (σ.update ℓf (.val w))
+  /--
+  A super property assignment whose slot has been filled in with `s`, where `s`'s dispatch table
+  gives the setter `name=` to a setter that is user code (`hd`, `hm`, `hlen`), runs the setter with
+  the receiver as `this`, as `propertySetSetter` does.
+  -/
+  | superSetSetter {v w : Value} {name s key holder : String} {d : MemberDecl (τ := τ)}
+      {σ : State} (hd : P.dispatch s (name ++ "=") = some (.proc key holder))
+      (hm : P.members key = some d) (hlen : d.params.length = 1) :
+      HeadStep (.superSet (.val v) name (some s) (.val w)) σ
+        (.seq (.frame (P.memberBody key holder (d.this :: d.params) d.body
+          (σ.allocAll ([v, w].map Cell.val)).1) Γ.Null) (.val w))
+        (σ.allocAll ([v, w].map Cell.val)).2
+  /--
+  Once the body of a running getter has completed normally with `w`, the result passes on, if it
+  passes the promotion check against the property's (possibly promoted) static type (`hc`).
+  -/
+  | checkPromotion {w : Value} {T : τ} {σ : State} (hc : PassesPromotionCheck σ w T) :
+      HeadStep (.checkPromotion T (.val w)) σ (.val w) σ
+  /--
+  `identical` of values `v₁` and `v₂` that can be compared (anything but exception objects and
+  captured continuations) evaluates to whether they're the same object (`h`).
+  -/
+  | identical {v₁ v₂ : Value} {b : Bool} {σ : State} (h : Value.identical? v₁ v₂ = some b) :
+      HeadStep (.identical (.val v₁) (.val v₂)) σ (.val (.bool b)) σ
   /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.

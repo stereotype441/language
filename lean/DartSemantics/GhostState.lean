@@ -84,12 +84,9 @@ public instance cellHeader_persistent (ℓ : Loc) (c : Cell) :
 /--
 A persistent points-to for the own cell of every object in the heap of `σ`.
 
-The state interpretation holds these only so that a proof can learn the dynamic type of a value
-it has no other knowledge of: the result of a getter that is user code, which the placeholder
-`SemanticParams.getterImpl` can pick from anywhere in the state (see `wp_propertyGetGetter` in
-`PrimitiveLaws.lean`). Every other law gets the dynamic types it needs from its precondition. Once
-getters are real calls, a getter's result will come with its specification, and the headers may no
-longer be needed here.
+The state interpretation holds these so that a proof can learn the class and dynamic type of an
+object it has no other knowledge of (see `HasDynamicType.of_headers` in `PrimitiveLaws.lean`). The
+laws so far get the facts they need from their preconditions instead, including objects' headers.
 -/
 @[expose]
 public def ObjectHeaders (σ : State) : IProp GF :=

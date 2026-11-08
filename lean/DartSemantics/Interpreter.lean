@@ -158,6 +158,49 @@ public def initCtorStep (e : LoweredExpr) (v : Value) (k : String) (vs : List Va
   | _ => .stuck e
 
 /--
+The head step of the call `e` of member `m` (as a dispatch table gives it) with receiver `v` and
+arguments `vs`, in state `σ` (see `HeadStep.methodCall` and `HeadStep.superCall`), whose static type
+is `T`. If there is none, the result is stuck at `e`.
+-/
+@[expose]
+public def memberCallStep (e : LoweredExpr) (m : Option Member) (v : Value) (vs : List Value)
+    (T : τ) (σ : State) : StepResult :=
+  match m with
+  | some (.proc key holder) =>
+    match P.members key with
+    | some d =>
+      if d.params.length = vs.length then
+        let r := σ.allocAll ((v :: vs).map Cell.val)
+        .next (.frame (P.memberBody key holder (d.this :: d.params) d.body r.1) T) r.2
+      else .stuck e
+    | none => .stuck e
+  | _ => .stuck e
+
+/--
+The head step of the method call `e`, which is `.methodCall (.val v) name (vs.map .val) T`, in state
+`σ`, once its arguments have evaluated to `vs` (see `HeadStep.methodCall`). If there is none, the
+result is stuck at `e`.
+-/
+@[expose]
+public def methodCallStep (e : LoweredExpr) (v : Value) (name : String) (vs : List Value) (T : τ)
+    (σ : State) : StepResult :=
+  match σ.object? v with
+  | some (k, _) => memberCallStep e (P.dispatch k name) v vs T σ
+  | none => .stuck e
+
+/--
+The head step of the super method call `e`, which is
+`.superCall (.val v) name slot (vs.map .val) T`, in state `σ`, once its arguments have evaluated to
+`vs` (see `HeadStep.superCall`). If there is none, the result is stuck at `e`.
+-/
+@[expose]
+public def superCallStep (e : LoweredExpr) (v : Value) (name : String) (slot : Option String)
+    (vs : List Value) (T : τ) (σ : State) : StepResult :=
+  match slot with
+  | some s => memberCallStep e (P.dispatch s name) v vs T σ
+  | none => .stuck e
+
+/--
 The step of an expression whose operand in evaluation position is `m`, if `m` has completed
 abruptly: if `m` has thrown, returned or broken out of a labeled statement, propagating it outward
 (see `HeadStep.bubbleException`, `HeadStep.bubbleReturn` and `HeadStep.bubbleBreak`), and otherwise
@@ -207,15 +250,27 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .cond (.val (.bool true)) m₂ _ _ => .next m₂ σ
   | .cond (.val (.bool false)) _ m₃ _ => .next m₃ σ
   | .propertyGet (.val v) p T =>
-    match σ.instanceVariable? v p.name with
-    | some ℓf =>
-      match σ.lookup ℓf with
-      | some (.val w) => promotionCheck fuel σ w T e (.next (.val w) σ)
-      | _ => .stuck e
-    | none =>
-      match P.getterImpl p v σ with
-      | some w => promotionCheck fuel σ w T e (.next (.val w) σ)
+    match σ.object? v with
+    | some (k, fs) =>
+      match P.dispatch k p.name with
+      | some (.field iv) =>
+        match fs.lookup iv with
+        | some ℓf =>
+          match σ.lookup ℓf with
+          | some (.val w) => promotionCheck fuel σ w T e (.next (.val w) σ)
+          | _ => .stuck e
+        | none => .stuck e
+      | some (.proc key holder) =>
+        match P.members key with
+        | some d =>
+          if d.params.length = 0 then
+            let r := σ.allocAll ([v].map Cell.val)
+            .next (.checkPromotion T (.frame (P.memberBody key holder (d.this :: d.params) d.body
+              r.1) T)) r.2
+          else .stuck e
+        | none => .stuck e
       | none => .stuck e
+    | none => .stuck e
   | .variableSetAt x ℓ (.val w) =>
     -- Inspect the cell before updating it, so that the update can be done in place.
     match σ.lookup ℓ with
@@ -259,8 +314,8 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     | some d =>
       if d.params.length = vs.length then
         let r := σ.allocAll ((Value.obj ℓ :: vs).map Cell.val)
-        .next (.ctorFrame (((LoweredExpr.block (d.initializers ++ [d.body])).withIntMode
-          (P.intModeOf k)).bindVariables ((d.this :: d.params).zip r.1))) r.2
+        .next (.ctorFrame (P.memberBody k d.cls (d.this :: d.params)
+          (.block (d.initializers ++ [d.body])) r.1)) r.2
       else .stuck e
     | none => .stuck e
   | .initField (.val v) name (.val w) =>
@@ -287,10 +342,72 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
           | some .uninit => .next (.val w) (σ.update ℓf (.val w))
           | _ => .stuck e
         | none => .stuck e
-      | _ => .stuck e
+      | some (.proc key holder) =>
+        match P.members key with
+        | some d =>
+          if d.params.length = 1 then
+            let r := σ.allocAll ([v, w].map Cell.val)
+            .next (.seq (.frame (P.memberBody key holder (d.this :: d.params) d.body r.1) Γ.Null)
+              (.val w)) r.2
+          else .stuck e
+        | none => .stuck e
+      | none => .stuck e
     | none => .stuck e
   | .ctorFrame (.returning _) => .next (.val .null) σ
   | .ctorFrame (.val _) => .next (.val .null) σ
+  | .methodCall (.val v) name args T => headStepArgs e args σ (methodCallStep e v name · T σ)
+  | .superCall (.val v) name slot args T =>
+    headStepArgs e args σ (superCallStep e v name slot · T σ)
+  | .superGet (.val v) name (some s) T =>
+    match P.dispatch s name with
+    | some (.field iv) =>
+      match σ.object? v with
+      | some (_, fs) =>
+        match fs.lookup iv with
+        | some ℓf =>
+          match σ.lookup ℓf with
+          | some (.val w) => promotionCheck fuel σ w T e (.next (.val w) σ)
+          | _ => .stuck e
+        | none => .stuck e
+      | none => .stuck e
+    | some (.proc key holder) =>
+      match P.members key with
+      | some d =>
+        if d.params.length = 0 then
+          let r := σ.allocAll ([v].map Cell.val)
+          .next (.checkPromotion T (.frame (P.memberBody key holder (d.this :: d.params) d.body
+            r.1) T)) r.2
+        else .stuck e
+      | none => .stuck e
+    | none => .stuck e
+  | .superSet (.val v) name (some s) (.val w) =>
+    match P.dispatch s (name ++ "=") with
+    | some (.field iv) =>
+      match σ.object? v with
+      | some (_, fs) =>
+        match fs.lookup iv with
+        | some ℓf =>
+          match σ.lookup ℓf with
+          | some (.val _) => .next (.val w) (σ.update ℓf (.val w))
+          | some .uninit => .next (.val w) (σ.update ℓf (.val w))
+          | _ => .stuck e
+        | none => .stuck e
+      | none => .stuck e
+    | some (.proc key holder) =>
+      match P.members key with
+      | some d =>
+        if d.params.length = 1 then
+          let r := σ.allocAll ([v, w].map Cell.val)
+          .next (.seq (.frame (P.memberBody key holder (d.this :: d.params) d.body r.1) Γ.Null)
+            (.val w)) r.2
+        else .stuck e
+      | none => .stuck e
+    | none => .stuck e
+  | .checkPromotion T (.val w) => promotionCheck fuel σ w T e (.next (.val w) σ)
+  | .identical (.val v₁) (.val v₂) =>
+    match Value.identical? v₁ v₂ with
+    | some b => .next (.val (.bool b)) σ
+    | none => .stuck e
   -- The remaining cases propagate an abrupt completion out of the operand in evaluation position
   -- (whose other cases are above).
   | .nullCheck m => propagate m σ (.stuck e)
@@ -318,6 +435,14 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .propertySet (.val _) _ m => propagate m σ (.stuck e)
   | .propertySet m _ _ => propagate m σ (.stuck e)
   | .ctorFrame (.throwing v) => .next (.throwing v) σ
+  | .methodCall m _ _ _ => propagate m σ (.stuck e)
+  | .superCall m _ _ _ _ => propagate m σ (.stuck e)
+  | .superGet m _ _ _ => propagate m σ (.stuck e)
+  | .superSet (.val _) _ _ m => propagate m σ (.stuck e)
+  | .superSet m _ _ _ => propagate m σ (.stuck e)
+  | .checkPromotion _ m => propagate m σ (.stuck e)
+  | .identical (.val _) m => propagate m σ (.stuck e)
+  | .identical m _ => propagate m σ (.stuck e)
   | _ => .stuck e
 
 /-
@@ -412,6 +537,41 @@ public def primStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     else stepIn (.propertySetL name m₂) (primStep fuel m₁ σ)
   | .ctorFrame m =>
     if m.toOutcome?.isSome then headStep fuel e σ else stepIn .ctorFrame (primStep fuel m σ)
+  | .methodCall m name args T =>
+    if m.toOutcome?.isSome then
+      match m with
+      | .val v => primStepArgs fuel e (fun vs ms => .methodCallArgs v name vs ms T) [] args σ
+      | _ => headStep fuel e σ
+    else stepIn (.methodCallRecv name args T) (primStep fuel m σ)
+  | .superCall m name slot args T =>
+    if m.toOutcome?.isSome then
+      match m with
+      | .val v =>
+        primStepArgs fuel e (fun vs ms => .superCallArgs v name slot vs ms T) [] args σ
+      | _ => headStep fuel e σ
+    else stepIn (.superCallRecv name slot args T) (primStep fuel m σ)
+  | .superGet m name slot T =>
+    if m.toOutcome?.isSome then headStep fuel e σ
+    else stepIn (.superGet name slot T) (primStep fuel m σ)
+  | .superSet m₁ name slot m₂ =>
+    if m₁.toOutcome?.isSome then
+      match m₁ with
+      | .val v₁ =>
+        if m₂.toOutcome?.isSome then headStep fuel e σ
+        else stepIn (.superSetR v₁ name slot) (primStep fuel m₂ σ)
+      | _ => headStep fuel e σ
+    else stepIn (.superSetL name slot m₂) (primStep fuel m₁ σ)
+  | .checkPromotion T m =>
+    if m.toOutcome?.isSome then headStep fuel e σ
+    else stepIn (.checkPromotion T) (primStep fuel m σ)
+  | .identical m₁ m₂ =>
+    if m₁.toOutcome?.isSome then
+      match m₁ with
+      | .val v₁ =>
+        if m₂.toOutcome?.isSome then headStep fuel e σ
+        else stepIn (.identicalR v₁) (primStep fuel m₂ σ)
+      | _ => headStep fuel e σ
+    else stepIn (.identicalL m₂) (primStep fuel m₁ σ)
   | _ => headStep fuel e σ
 termination_by structural e
 
@@ -624,7 +784,7 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
     case object k' C fs' => exact absurd rfl (hc k' C fs')
     all_goals exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, ho, hd, hf, hℓf])
   | checkPass h | checkFail h | checkEqPass h | checkEqFail h | intBin h | intNeg h
-  | primEq h =>
+  | primEq h | identical h =>
     exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, h])
   | @blockCons m ms σ h =>
     cases m
@@ -642,12 +802,33 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
       (withCheck_converges h (by rfl)))
   | asDiverge hS h | isDiverge hS h =>
     exact .inr ⟨rfl, rfl, fun fuel => by simp only [headStep, hS]; exact withCheck_diverge h⟩
-  | @propertyGetField v w p T ℓf σ hf hw hc =>
-    exact .inl (Converges.congr (fun fuel => by simp [headStep.eq_def, hf, hw])
+  | @propertyGetField v w p T k iv fs ℓf σ ho hd hf hw hc =>
+    exact .inl (Converges.congr (fun fuel => by simp [headStep.eq_def, ho, hd, hf, hw])
       (promotionCheck_converges (redex := .propertyGet (.val v) p T) hc _))
-  | @propertyGetGetter v w p T σ hf hg hc =>
-    exact .inl (Converges.congr (fun fuel => by simp [headStep.eq_def, hf, hg])
-      (promotionCheck_converges (redex := .propertyGet (.val v) p T) hc _))
+  | propertyGetGetter ho hd hm hlen =>
+    exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, ho, hd, hm, hlen])
+  | propertySetSetter ho hd hm hlen =>
+    exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, ho, hd, hm, hlen])
+  | methodCall ho hd hm hlen =>
+    exact .inl (Converges.of_eq fun _ => by
+      simp [headStep.eq_def, headStepArgs, methodCallStep, memberCallStep, ho, hd, hm, hlen])
+  | superCall hd hm hlen =>
+    exact .inl (Converges.of_eq fun _ => by
+      simp [headStep.eq_def, headStepArgs, superCallStep, memberCallStep, hd, hm, hlen])
+  | @superGetField v w name s k iv T fs ℓf σ hd ho hf hw hc =>
+    exact .inl (Converges.congr (fun fuel => by simp [headStep.eq_def, ho, hd, hf, hw])
+      (promotionCheck_converges (redex := .superGet (.val v) name (some s) T) hc _))
+  | superGetGetter hd hm hlen =>
+    exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, hd, hm, hlen])
+  | @superSetField v w name s k iv fs ℓf c σ hd ho hf hℓf hc =>
+    cases c
+    case object k' C fs' => exact absurd rfl (hc k' C fs')
+    all_goals exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, ho, hd, hf, hℓf])
+  | superSetSetter hd hm hlen =>
+    exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, hd, hm, hlen])
+  | @checkPromotion w T σ hc =>
+    exact .inl (Converges.congr (fun fuel => rfl)
+      (promotionCheck_converges (redex := .checkPromotion T (.val w)) hc _))
   | @variableSetAt x ℓ w c σ hℓ hc hfin =>
     cases c
     case object k C fs => exact absurd rfl (hc k C fs)
@@ -670,10 +851,22 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
       exact .inl (Converges.of_eq fun _ => by
         simp [EctxItem.fill, headStep.eq_def, headStepArgs,
           LoweredExpr.splitVals_map_val_append vs (ms := .throwing v :: ms) (by simp)])
+    case methodCallArgs u name vs ms T =>
+      exact .inl (Converges.of_eq fun _ => by
+        simp [EctxItem.fill, headStep.eq_def, headStepArgs,
+          LoweredExpr.splitVals_map_val_append vs (ms := .throwing v :: ms) (by simp)])
+    case superCallArgs u name slot vs ms T =>
+      exact .inl (Converges.of_eq fun _ => by
+        simp [EctxItem.fill, headStep.eq_def, headStepArgs,
+          LoweredExpr.splitVals_map_val_append vs (ms := .throwing v :: ms) (by simp)])
     all_goals exact .inl (Converges.of_eq fun _ => by
-      -- An integer operator's propagation case is only reached once `headStep` has seen that it
-      -- doesn't match the cases before it, which depend on its mode and first operand.
-      first | rfl | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl)))
+      -- An integer operator's (or `super` assignment's) propagation case is only reached once
+      -- `headStep` has seen that it doesn't match the cases before it, which depend on its mode
+      -- (or slot) and first operand.
+      first
+        | rfl
+        | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl))
+        | (cases ‹Option String› <;> rfl))
   | @bubbleReturn Ki v σ hKi =>
     cases Ki
     case call f vs ms T =>
@@ -688,12 +881,24 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
       exact .inl (Converges.of_eq fun _ => by
         simp [EctxItem.fill, headStep.eq_def, headStepArgs,
           LoweredExpr.splitVals_map_val_append vs (ms := .returning v :: ms) (by simp)])
+    case methodCallArgs u name vs ms T =>
+      exact .inl (Converges.of_eq fun _ => by
+        simp [EctxItem.fill, headStep.eq_def, headStepArgs,
+          LoweredExpr.splitVals_map_val_append vs (ms := .returning v :: ms) (by simp)])
+    case superCallArgs u name slot vs ms T =>
+      exact .inl (Converges.of_eq fun _ => by
+        simp [EctxItem.fill, headStep.eq_def, headStepArgs,
+          LoweredExpr.splitVals_map_val_append vs (ms := .returning v :: ms) (by simp)])
     case frame T => simp [EctxItem.handlesReturn] at hKi
     case ctorFrame => simp [EctxItem.handlesReturn] at hKi
     all_goals exact .inl (Converges.of_eq fun _ => by
-      -- An integer operator's propagation case is only reached once `headStep` has seen that it
-      -- doesn't match the cases before it, which depend on its mode and first operand.
-      first | rfl | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl)))
+      -- An integer operator's (or `super` assignment's) propagation case is only reached once
+      -- `headStep` has seen that it doesn't match the cases before it, which depend on its mode
+      -- (or slot) and first operand.
+      first
+        | rfl
+        | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl))
+        | (cases ‹Option String› <;> rfl))
   | @bubbleBreak Ki l σ hKi hret =>
     cases Ki
     case call f vs ms T =>
@@ -708,15 +913,27 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
       exact .inl (Converges.of_eq fun _ => by
         simp [EctxItem.fill, headStep.eq_def, headStepArgs,
           LoweredExpr.splitVals_map_val_append vs (ms := .breaking l :: ms) (by simp)])
+    case methodCallArgs u name vs ms T =>
+      exact .inl (Converges.of_eq fun _ => by
+        simp [EctxItem.fill, headStep.eq_def, headStepArgs,
+          LoweredExpr.splitVals_map_val_append vs (ms := .breaking l :: ms) (by simp)])
+    case superCallArgs u name slot vs ms T =>
+      exact .inl (Converges.of_eq fun _ => by
+        simp [EctxItem.fill, headStep.eq_def, headStepArgs,
+          LoweredExpr.splitVals_map_val_append vs (ms := .breaking l :: ms) (by simp)])
     case frame T => simp [EctxItem.handlesReturn] at hret
     case ctorFrame => simp [EctxItem.handlesReturn] at hret
     case labeled l' =>
       have hne : l ≠ l' := fun h => by subst h; simp [EctxItem.handlesBreak] at hKi
       exact .inl (Converges.of_eq fun _ => by simp [EctxItem.fill, headStep.eq_def, hne])
     all_goals exact .inl (Converges.of_eq fun _ => by
-      -- An integer operator's propagation case is only reached once `headStep` has seen that it
-      -- doesn't match the cases before it, which depend on its mode and first operand.
-      first | rfl | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl)))
+      -- An integer operator's (or `super` assignment's) propagation case is only reached once
+      -- `headStep` has seen that it doesn't match the cases before it, which depend on its mode
+      -- (or slot) and first operand.
+      first
+        | rfl
+        | (cases ‹Option IntMode› <;> first | rfl | (cases ‹Value› <;> rfl))
+        | (cases ‹Option String› <;> rfl))
   | labeledBreak => exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def])
 
 omit [RtSubChecker τ] in
@@ -828,6 +1045,48 @@ theorem headStepInitCtor_sound {v : Value} {k : String} {args : List LoweredExpr
     exact .initCtor
   · cases hk
 
+omit [RtSubChecker τ] in
+/--
+Soundness of `headStep` for a method call: every step that it finds for
+`.methodCall (.val v) name args T` (`h`) is a head step
+(`HeadStep (.methodCall (.val v) name args T) σ e' σ'`).
+-/
+theorem headStepMethodCall_sound {v : Value} {name : String} {args : List LoweredExpr} {T : τ}
+    {e' : LoweredExpr} {σ σ' : State}
+    (h : headStepArgs (.methodCall (.val v) name args T) args σ
+      (methodCallStep (.methodCall (.val v) name args T) v name · T σ) = .next e' σ') :
+    HeadStep (.methodCall (.val v) name args T) σ e' σ' := by
+  refine headStepArgs_sound (E := (.methodCall (.val v) name · T))
+    (mk := (.methodCallArgs v name · · T)) (fun _ _ _ => rfl) (fun _ _ => rfl) (fun _ _ _ => rfl)
+    (fun vs hk => ?_) h
+  unfold methodCallStep memberCallStep at hk
+  repeat' split at hk
+  all_goals first
+    | (cases hk; done)
+    | (obtain ⟨rfl, rfl⟩ := StepResult.next.inj hk
+       exact .methodCall ‹_› ‹_› ‹_› ‹_›)
+
+omit [RtSubChecker τ] in
+/--
+Soundness of `headStep` for a super method call: every step that it finds for
+`.superCall (.val v) name slot args T` (`h`) is a head step
+(`HeadStep (.superCall (.val v) name slot args T) σ e' σ'`).
+-/
+theorem headStepSuperCall_sound {v : Value} {name : String} {slot : Option String}
+    {args : List LoweredExpr} {T : τ} {e' : LoweredExpr} {σ σ' : State}
+    (h : headStepArgs (.superCall (.val v) name slot args T) args σ
+      (superCallStep (.superCall (.val v) name slot args T) v name slot · T σ) = .next e' σ') :
+    HeadStep (.superCall (.val v) name slot args T) σ e' σ' := by
+  refine headStepArgs_sound (E := (.superCall (.val v) name slot · T))
+    (mk := (.superCallArgs v name slot · · T)) (fun _ _ _ => rfl) (fun _ _ => rfl)
+    (fun _ _ _ => rfl) (fun vs hk => ?_) h
+  unfold superCallStep memberCallStep at hk
+  repeat' split at hk
+  all_goals first
+    | (cases hk; done)
+    | (obtain ⟨rfl, rfl⟩ := StepResult.next.inj hk
+       exact .superCall ‹_› ‹_› ‹_›)
+
 omit Γ P [RtSubChecker τ] in
 /--
 `headStepArgs` is only ever stuck at the expression it was given, if its continuation `k` is
@@ -875,6 +1134,28 @@ theorem initCtorStep_eq_stuck {e : LoweredExpr} {v : Value} {k : String} {vs : L
   · simp only [StepResult.stuck.injEq] at h
     exact h.symm
 
+omit [RtSubChecker τ] in
+/-- `methodCallStep` is only ever stuck at the expression it was given (`h`; `redex = e`). -/
+theorem methodCallStep_eq_stuck {e : LoweredExpr} {v : Value} {name : String} {vs : List Value}
+    {T : τ} {σ : State} {redex : LoweredExpr} (h : methodCallStep e v name vs T σ = .stuck redex) :
+    redex = e := by
+  unfold methodCallStep memberCallStep at h
+  repeat' split at h
+  all_goals first
+    | (cases h; done)
+    | (simp only [StepResult.stuck.injEq] at h; exact h.symm)
+
+omit [RtSubChecker τ] in
+/-- `superCallStep` is only ever stuck at the expression it was given (`h`; `redex = e`). -/
+theorem superCallStep_eq_stuck {e : LoweredExpr} {v : Value} {name : String}
+    {slot : Option String} {vs : List Value} {T : τ} {σ : State} {redex : LoweredExpr}
+    (h : superCallStep e v name slot vs T σ = .stuck redex) : redex = e := by
+  unfold superCallStep memberCallStep at h
+  repeat' split at h
+  all_goals first
+    | (cases h; done)
+    | (simp only [StepResult.stuck.injEq] at h; exact h.symm)
+
 /--
 Soundness of `headStep`: every step that it finds (`h`) is a head step (`HeadStep e σ e' σ'`).
 -/
@@ -891,6 +1172,7 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .variableSetAt ‹_› (by intro _ _ _ h; cases h) (by simp_all)
          | exact .initField ‹_› ‹_› ‹_› (by intro _ _ _ h; cases h)
          | exact .propertySetField ‹_› ‹_› ‹_› ‹_› (by intro _ _ _ h; cases h)
+         | exact .superSetField ‹_› ‹_› ‹_› ‹_› (by intro _ _ _ h; cases h)
          | (rename_i hb
             first
               | (subst hb; exact .blockDeclare)
@@ -919,6 +1201,14 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleException (Ki := .propertySetL _ _)
          | exact .bubbleException (Ki := .propertySetR _ _)
          | exact .bubbleException (Ki := .ctorFrame)
+         | exact .bubbleException (Ki := .methodCallRecv _ _ _)
+         | exact .bubbleException (Ki := .superCallRecv _ _ _ _)
+         | exact .bubbleException (Ki := .superGet _ _ _)
+         | exact .bubbleException (Ki := .superSetL _ _ _)
+         | exact .bubbleException (Ki := .superSetR _ _ _)
+         | exact .bubbleException (Ki := .checkPromotion _)
+         | exact .bubbleException (Ki := .identicalL _)
+         | exact .bubbleException (Ki := .identicalR _)
          | exact .bubbleReturn (Ki := .nullCheck) rfl
          | exact .bubbleReturn (Ki := .as _) rfl
          | exact .bubbleReturn (Ki := .is _) rfl
@@ -941,6 +1231,14 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleReturn (Ki := .initFieldR _ _) rfl
          | exact .bubbleReturn (Ki := .propertySetL _ _) rfl
          | exact .bubbleReturn (Ki := .propertySetR _ _) rfl
+         | exact .bubbleReturn (Ki := .methodCallRecv _ _ _) rfl
+         | exact .bubbleReturn (Ki := .superCallRecv _ _ _ _) rfl
+         | exact .bubbleReturn (Ki := .superGet _ _ _) rfl
+         | exact .bubbleReturn (Ki := .superSetL _ _ _) rfl
+         | exact .bubbleReturn (Ki := .superSetR _ _ _) rfl
+         | exact .bubbleReturn (Ki := .checkPromotion _) rfl
+         | exact .bubbleReturn (Ki := .identicalL _) rfl
+         | exact .bubbleReturn (Ki := .identicalR _) rfl
          | exact .bubbleBreak (Ki := .intBinL _ _ _) rfl rfl
          | exact .bubbleBreak (Ki := .intBinR _ _ _) rfl rfl
          | exact .bubbleBreak (Ki := .intNeg _) rfl rfl
@@ -962,6 +1260,14 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleBreak (Ki := .initFieldR _ _) rfl rfl
          | exact .bubbleBreak (Ki := .propertySetL _ _) rfl rfl
          | exact .bubbleBreak (Ki := .propertySetR _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .methodCallRecv _ _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .superCallRecv _ _ _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .superGet _ _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .superSetL _ _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .superSetR _ _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .checkPromotion _) rfl rfl
+         | exact .bubbleBreak (Ki := .identicalL _) rfl rfl
+         | exact .bubbleBreak (Ki := .identicalR _) rfl rfl
          | (subst_vars; exact .labeledBreak)
          | (rename_i hne
             exact .bubbleBreak (Ki := .labeled _)
@@ -970,6 +1276,8 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
     | exact headStepCall_sound h
     | exact headStepNew_sound h
     | exact headStepInitCtor_sound h
+    | exact headStepMethodCall_sound h
+    | exact headStepSuperCall_sound h
     -- A case of `propagate` that an earlier case of `headStep` has already covered (a labeled
     -- statement's own break).
     | (exfalso; simp_all)
@@ -977,8 +1285,9 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
        obtain ⟨rfl, rfl⟩ := StepResult.next.inj hr
        first
          | exact .varAt ‹_› hc
-         | exact .propertyGetField ‹_› ‹_› hc
-         | exact .propertyGetGetter ‹_› ‹_› hc)
+         | exact .propertyGetField ‹_› ‹_› ‹_› ‹_› hc
+         | exact .superGetField ‹_› ‹_› ‹_› ‹_› hc
+         | exact .checkPromotion hc)
     | (obtain ⟨b, hb, hk⟩ := withCheck_eq_next h
        first
          | (obtain ⟨rfl, rfl⟩ := StepResult.next.inj hk
@@ -1025,6 +1334,22 @@ theorem primStep_fill (fuel : Nat) {Ki : EctxItem} {e : LoweredExpr} (σ : State
     simp only [EctxItem.fill, primStep, hv, Option.isSome_some, ite_true]
     rw [primStepArgs_map_val_append]
     simp [primStepArgs, he]
+  case methodCallArgs v name vs ms T =>
+    have hv : (LoweredExpr.val v).toOutcome? = some (.normal v) := rfl
+    simp only [EctxItem.fill, primStep, hv, Option.isSome_some, ite_true]
+    rw [primStepArgs_map_val_append]
+    simp [primStepArgs, he]
+  case superCallArgs v name slot vs ms T =>
+    have hv : (LoweredExpr.val v).toOutcome? = some (.normal v) := rfl
+    simp only [EctxItem.fill, primStep, hv, Option.isSome_some, ite_true]
+    rw [primStepArgs_map_val_append]
+    simp [primStepArgs, he]
+  case superSetR v₁ name slot =>
+    have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
+    simp [EctxItem.fill, primStep, he, hv]
+  case identicalR v₁ =>
+    have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
+    simp [EctxItem.fill, primStep, he, hv]
   case checkEqR v₁ =>
     have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
     simp [EctxItem.fill, primStep, he, hv]
@@ -1110,22 +1435,56 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
       simp only [primStep, hv, Option.isSome_some, ite_true]
       exact primStepArgs_of_isSome _ _ _ _ _ _ fun ws m ms heq =>
         hin (.initCtorArgs v k ws ms) m (by rw [heq]; rfl)
-    | _ => simp_all [primStep, LoweredExpr.toOutcome?]
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
   | initField m₁ name m₂ =>
     have h₁ := hin (.initFieldL name m₂) m₁ rfl
     cases m₁ with
     | val v₁ =>
       have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
       simp [primStep, hin (.initFieldR v₁ name) m₂ rfl, hv]
-    | _ => simp_all [primStep, LoweredExpr.toOutcome?]
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
   | propertySet m₁ name m₂ =>
     have h₁ := hin (.propertySetL name m₂) m₁ rfl
     cases m₁ with
     | val v₁ =>
       have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
       simp [primStep, hin (.propertySetR v₁ name) m₂ rfl, hv]
-    | _ => simp_all [primStep, LoweredExpr.toOutcome?]
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
   | ctorFrame m => simp [primStep, hin .ctorFrame m rfl]
+  | methodCall m name args T =>
+    have h₁ := hin (.methodCallRecv name args T) m rfl
+    cases m with
+    | val v =>
+      have hv : (LoweredExpr.val v).toOutcome? = some (.normal v) := rfl
+      simp only [primStep, hv, Option.isSome_some, ite_true]
+      exact primStepArgs_of_isSome _ _ _ _ _ _ fun ws m ms heq =>
+        hin (.methodCallArgs v name ws ms T) m (by rw [heq]; rfl)
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
+  | superCall m name slot args T =>
+    have h₁ := hin (.superCallRecv name slot args T) m rfl
+    cases m with
+    | val v =>
+      have hv : (LoweredExpr.val v).toOutcome? = some (.normal v) := rfl
+      simp only [primStep, hv, Option.isSome_some, ite_true]
+      exact primStepArgs_of_isSome _ _ _ _ _ _ fun ws m ms heq =>
+        hin (.superCallArgs v name slot ws ms T) m (by rw [heq]; rfl)
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
+  | superGet m name slot T => simp [primStep, hin (.superGet name slot T) m rfl]
+  | superSet m₁ name slot m₂ =>
+    have h₁ := hin (.superSetL name slot m₂) m₁ rfl
+    cases m₁ with
+    | val v₁ =>
+      have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
+      simp [primStep, hin (.superSetR v₁ name slot) m₂ rfl, hv]
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
+  | checkPromotion T m => simp [primStep, hin (.checkPromotion T) m rfl]
+  | identical m₁ m₂ =>
+    have h₁ := hin (.identicalL m₂) m₁ rfl
+    cases m₁ with
+    | val v₁ =>
+      have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
+      simp [primStep, hin (.identicalR v₁) m₂ rfl, hv]
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
   | ret m => simp [primStep, hin .ret m rfl]
   | frame m T => simp [primStep, hin (.frame T) m rfl]
   | labeled l m => simp [primStep, hin (.labeled l) m rfl]
@@ -1136,14 +1495,14 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
     | val v₁ =>
       have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
       simp [primStep, hin (.intBinR op mode v₁) m₂ rfl, hv]
-    | _ => simp_all [primStep, LoweredExpr.toOutcome?]
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
   | primEq m₁ m₂ =>
     have h₁ := hin (.primEqL m₂) m₁ rfl
     cases m₁ with
     | val v₁ =>
       have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
       simp [primStep, hin (.primEqR v₁) m₂ rfl, hv]
-    | _ => simp_all [primStep, LoweredExpr.toOutcome?]
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
   | check kind m => simp [primStep, hin (.check kind) m rfl]
   | checkEq m₁ m₂ =>
     have h₁ := hin (.checkEqL m₂) m₁ rfl
@@ -1151,7 +1510,7 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
     | val v₁ =>
       have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
       simp [primStep, hin (.checkEqR v₁) m₂ rfl, hv]
-    | _ => simp_all [primStep, LoweredExpr.toOutcome?]
+    | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
   | _ => rfl
 
 omit [RtSubChecker τ] in
@@ -1191,6 +1550,20 @@ public theorem primStep_sound {fuel : Nat} (e : LoweredExpr) {σ : State} {e' : 
           args (by simp) h
       · exact (headStep_sound h).primStep
     · exact stepIn_sound (Ki := .initCtorRecv k args) (primStep_sound m) h
+  case methodCall m name args T =>
+    split at h
+    · split at h
+      · exact primStepArgs_sound (E := (.methodCall (.val ‹Value›) name · T)) (fun _ _ _ => rfl)
+          [] args (by simp) h
+      · exact (headStep_sound h).primStep
+    · exact stepIn_sound (Ki := .methodCallRecv name args T) (primStep_sound m) h
+  case superCall m name slot args T =>
+    split at h
+    · split at h
+      · exact primStepArgs_sound (E := (.superCall (.val ‹Value›) name slot · T))
+          (fun _ _ _ => rfl) [] args (by simp) h
+      · exact (headStep_sound h).primStep
+    · exact stepIn_sound (Ki := .superCallRecv name slot args T) (primStep_sound m) h
   all_goals
     repeat' first
       | exact (headStep_sound h).primStep
@@ -1323,7 +1696,9 @@ theorem headStep_eq_stuck {fuel : Nat} {e redex : LoweredExpr} {σ : State}
        first
          | exact callStep_eq_stuck hk
          | exact newStep_eq_stuck hk
-         | exact initCtorStep_eq_stuck hk)
+         | exact initCtorStep_eq_stuck hk
+         | exact methodCallStep_eq_stuck hk
+         | exact superCallStep_eq_stuck hk)
 
 /--
 If `headStep` reports that `e` is stuck at `redex` (`h`), then:
@@ -1398,6 +1773,21 @@ public theorem primStep_stuck_redex {fuel : Nat} (e : LoweredExpr) {redex : Lowe
           [] args (by simp) h
       · exact headStep_stuck_redex h
     · exact stepIn_stuck_redex (Ki := .initCtorRecv k args) (primStep_stuck_redex m) h
+  case methodCall m name args T =>
+    split at h
+    · split at h
+      · exact primStepArgs_stuck_redex (E := (.methodCall (.val ‹Value›) name · T))
+          (fun _ _ _ => rfl) [] args (by simp) h
+      · exact headStep_stuck_redex h
+    · exact stepIn_stuck_redex (Ki := .methodCallRecv name args T) (primStep_stuck_redex m) h
+  case superCall m name slot args T =>
+    split at h
+    · split at h
+      · exact primStepArgs_stuck_redex (E := (.superCall (.val ‹Value›) name slot · T))
+          (fun _ _ _ => rfl) [] args (by simp) h
+      · exact headStep_stuck_redex h
+    · exact stepIn_stuck_redex (Ki := .superCallRecv name slot args T) (primStep_stuck_redex m)
+        h
   all_goals
     repeat' first
       | exact headStep_stuck_redex h

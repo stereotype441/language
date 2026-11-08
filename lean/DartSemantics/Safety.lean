@@ -61,17 +61,19 @@ public structure BindingsOk (σ : State) (bindings : List (Variable × Loc)) : P
 
 /--
 Following property path `path` from value `v` reaches value `w` in state `σ`. For the empty path,
-`w` is `v`. For a path `name :: rest`, `v` refers to an object whose instance variable `name` holds
-a value `v'`, and following `rest` from `v'` reaches `w`. Each instance variable's cell along the
+`w` is `v`. For a path `name :: rest`, `v` refers to an object whose class dispatches `name` to the
+implicit getter of an instance variable, with key `iv`, and whose instance variable `iv` holds a
+value `v'`, and following `rest` from `v'` reaches `w`. Each instance variable's cell along the
 way must not be one of the variables' cells (the cells that `bindings` binds variables to).
 -/
 @[expose]
-public def FieldPathHolds (σ : State) (bindings : List (Variable × Loc)) (path : List String)
-    (v w : Value) : Prop :=
+public def FieldPathHolds [P : SemanticParams τ] (σ : State) (bindings : List (Variable × Loc))
+    (path : List String) (v w : Value) : Prop :=
   match path with
   | [] => v = w
-  | name :: rest => ∃ ℓo k C fs ℓf v', v = .obj ℓo ∧ σ.lookup ℓo = some (.object k C fs) ∧
-      fs.lookup name = some ℓf ∧ (∀ b ∈ bindings, b.2 ≠ ℓf) ∧ σ.lookup ℓf = some (.val v') ∧
+  | name :: rest => ∃ ℓo k C fs iv ℓf v', v = .obj ℓo ∧ σ.lookup ℓo = some (.object k C fs) ∧
+      P.dispatch k name = some (.field iv) ∧ fs.lookup iv = some ℓf ∧
+      (∀ b ∈ bindings, b.2 ≠ ℓf) ∧ σ.lookup ℓf = some (.val v') ∧
       FieldPathHolds σ bindings rest v' w
 
 /--
@@ -79,7 +81,7 @@ Fact `f` holds in state `σ`, for the variables bound to cells by `bindings`. Fo
 property path, the instance variables' cells along it must not be any of the variables' cells.
 -/
 @[expose]
-public def FactHolds (σ : State) (bindings : List (Variable × Loc)) : Fact → Prop
+public def FactHolds [SemanticParams τ] (σ : State) (bindings : List (Variable × Loc)) : Fact → Prop
   | .decl x => ∃ ℓ, bindings.lookup x = some ℓ
   | .uninit x => ∃ ℓ, bindings.lookup x = some ℓ ∧ σ.lookup ℓ = some .uninit
   | .var x T => ∃ ℓ v S, bindings.lookup x = some ℓ ∧ σ.lookup ℓ = some (.val v) ∧
@@ -287,7 +289,7 @@ If following property path `path` from `v` reaches `w` in state `σ`
 persistent ownership of the cells other than the variables' shows that the same holds in the
 program logic (`interpFieldPath path v w`).
 -/
-theorem interpFieldPath_of_holds {σ : State} {bindings : List (Variable × Loc)}
+theorem interpFieldPath_of_holds [SemanticParams τ] {σ : State} {bindings : List (Variable × Loc)}
     (hb : BindingsOk σ bindings) {path : List String} {v w : Value}
     (h : FieldPathHolds σ bindings path v w) :
     ([∗map] ℓ ↦ c ∈ unbound σ.toMap bindings, ℓ ↦{.discard} c) ⊢
@@ -298,12 +300,12 @@ theorem interpFieldPath_of_holds {σ : State} {bindings : List (Variable × Loc)
     ipureintro
     exact h
   | cons name path ih =>
-    obtain ⟨ℓo, k, C, fs, ℓf, v', hv, ho, hfs, hnb, hcf, hp⟩ := h
+    obtain ⟨ℓo, k, C, fs, iv, ℓf, v', hv, ho, hd, hfs, hnb, hcf, hp⟩ := h
     iintro #H
-    iexists ℓo, k, C, fs, ℓf, v'
+    iexists ℓo, k, C, fs, iv, ℓf, v'
     isplitr
     · ipureintro
-      exact ⟨hv, hfs⟩
+      exact ⟨hv, hfs, hd⟩
     isplitr
     · iapply pointsTo_of_unbound ho (not_bound_of_object hb ho) $$ H
     isplitr
@@ -315,7 +317,7 @@ A fact that holds in state `σ` (`hf`: `FactHolds σ bindings f`) also holds as 
 about the environment of `σ` (`interpFact bindings (envOf σ bindings) f`), given persistent
 ownership of the cells other than the variables', if the bindings are suitable (`hb`).
 -/
-theorem interpFact_of_holds {σ : State} {bindings : List (Variable × Loc)}
+theorem interpFact_of_holds [SemanticParams τ] {σ : State} {bindings : List (Variable × Loc)}
     (hb : BindingsOk σ bindings) {f : Fact} (hf : FactHolds σ bindings f) :
     ([∗map] ℓ ↦ c ∈ unbound σ.toMap bindings, ℓ ↦{.discard} c) ⊢
       interpFact (GF := GF) bindings (envOf σ bindings) f := by
