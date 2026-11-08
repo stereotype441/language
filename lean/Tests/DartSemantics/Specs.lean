@@ -220,7 +220,7 @@ instance variable `_f` (at `ℓf`) holds `true`, completes normally, and leaves 
 were. The second read is promoted to `Object`, which the promotion check verifies.
 -/
 example (ℓ ℓo ℓf : Loc) :
-    {{ ℓ ↦ (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object int [("_f", ℓf)] : Cell) ∗
+    {{ ℓ ↦ (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object "C" int [("_f", ℓf)] : Cell) ∗
         ℓf ↦ (.val (.bool true) : Cell) }}
       (LoweredExpr.block (τ := SimpleType)
         [.nullCheck (.propertyGet (.varAt x ObjectQ ℓ) f ObjectQ),
@@ -279,7 +279,7 @@ example (ℓ ℓo ℓf : Loc) :
 
 /-- The same spec, proved with the `wp_load` tactic for the reads. -/
 example (ℓ ℓo ℓf : Loc) :
-    {{ ℓ ↦ (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object int [("_f", ℓf)] : Cell) ∗
+    {{ ℓ ↦ (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object "C" int [("_f", ℓf)] : Cell) ∗
         ℓf ↦ (.val (.bool true) : Cell) }}
       (LoweredExpr.block (τ := SimpleType)
         [.nullCheck (.propertyGet (.varAt x ObjectQ ℓ) f ObjectQ),
@@ -302,7 +302,7 @@ example (ℓ ℓo ℓf : Loc) :
 read in the first branch with `x` promoted to `int`.
 -/
 example (ℓ ℓo : Loc) (fs : List (String × Loc)) :
-    {{ ℓ ↦ (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object int fs : Cell) }}
+    {{ ℓ ↦ (.val (.obj ℓo) : Cell) ∗ ℓo ↦{.discard} (.object "C" int fs : Cell) }}
       (LoweredExpr.cond (τ := SimpleType) (.is (.varAt x ObjectQ ℓ) int) (.varAt x int ℓ) .null
         ObjectQ)
     {{ RET .normal (.obj ℓo); ℓ ↦ (.val (.obj ℓo) : Cell) }} := by

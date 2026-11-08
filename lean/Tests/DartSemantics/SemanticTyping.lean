@@ -38,11 +38,15 @@ def getterImpl : Property → Value → State → Option Value
 
 /-- The semantics with promotion checks, for a program with no functions. -/
 @[instance_reducible]
-def verify : SemanticParams SimpleType := ⟨.verify, getterImpl, fun _ => none, fun _ => .checked⟩
+def verify : SemanticParams SimpleType :=
+  ⟨.verify, getterImpl, fun _ => none, fun _ => none, fun _ => none, fun _ => none,
+    fun _ => .checked⟩
 
 /-- The semantics without promotion checks, for a program with no functions. -/
 @[instance_reducible]
-def trust : SemanticParams SimpleType := ⟨.trust, getterImpl, fun _ => none, fun _ => .checked⟩
+def trust : SemanticParams SimpleType :=
+  ⟨.trust, getterImpl, fun _ => none, fun _ => none, fun _ => none, fun _ => none,
+    fun _ => .checked⟩
 
 def x : Variable := { name := "x", type := ObjectQ }
 

@@ -38,11 +38,12 @@ public inductive Cell where
   -/
   | uninit
   /--
-  An object (an instance of a class), whose dynamic type is `dynamicType`. Its instance variables
-  are stored in other cells: `fields` maps the name of each instance variable to its cell's
-  location.
+  An object (an instance of a class), whose class has key `cls` (see `SemanticParams.classes`),
+  and whose dynamic type is `dynamicType` (the class's instance type). Its instance variables are
+  stored in other cells: `fields` maps the key of each instance variable (see
+  `ClassDecl.instanceVariables`) to its cell's location.
   -/
-  | object (dynamicType : τ) (fields : List (String × Loc))
+  | object (cls : String) (dynamicType : τ) (fields : List (String × Loc))
   deriving Repr, BEq
 
 local notation "Cell" => Cell (τ := τ)
@@ -112,6 +113,20 @@ public theorem State.length_allocAll (σ : State) (cs : List Cell) :
   | cons c cs ih => simp [State.allocAll, ih]
 
 /--
+Allocate a new object of the class whose key is `cls`, whose dynamic type is `T`, and whose
+instance variables have keys `names`: a cell for each instance variable, uninitialized, and then
+the object's own cell. The result is the location of the object's own cell (`.1`) and the state
+afterwards (`.2`).
+-/
+@[expose]
+public def State.allocObject (σ : State) (cls : String) (T : τ) (names : List String) :
+    Loc × State :=
+  let r := σ.allocAll (names.map fun _ => .uninit)
+  -- As in `allocAll`, `fresh` is read before the state is used by `alloc`.
+  let ℓ := r.2.fresh
+  (ℓ, r.2.alloc (.object cls T (names.zip r.1)))
+
+/--
 The dynamic type of value `v`, in the specification's sense: the class of the object that `v`
 represents.
 
@@ -128,10 +143,23 @@ public def State.dynamicType (σ : State) : Value → Option τ
   | .int _ => some Γ.int
   | .obj ℓ =>
     match σ.lookup ℓ with
-    | some (.object T _) => some T
+    | some (.object _ T _) => some T
     | _ => none
   | .error _ => none
   | .cont _ => none
+
+omit Γ in
+/--
+The key of the class of the object that value `v` refers to, and where its instance variables are
+stored (see `Cell.object`), if `v` refers to an object in the heap.
+-/
+@[expose]
+public def State.object? (σ : State) : Value → Option (String × List (String × Loc))
+  | .obj ℓ =>
+    match σ.lookup ℓ with
+    | some (.object k _ fs) => some (k, fs)
+    | _ => none
+  | _ => none
 
 omit Γ in
 /-- A newly allocated cell holds what it was allocated with. -/
@@ -163,7 +191,8 @@ Updating the cell at `ℓ` doesn't change any value's dynamic type, if:
 - the new contents `c` aren't an object's own cell either (`hc`).
 -/
 public theorem State.dynamicType_update {σ : State} {ℓ : Loc} {c₀ c : Cell}
-    (h : σ.lookup ℓ = some c₀) (hc₀ : ∀ C fs, c₀ ≠ .object C fs) (hc : ∀ C fs, c ≠ .object C fs)
+    (h : σ.lookup ℓ = some c₀) (hc₀ : ∀ k C fs, c₀ ≠ .object k C fs)
+    (hc : ∀ k C fs, c ≠ .object k C fs)
     (v : Value) : (σ.update ℓ c).dynamicType v = σ.dynamicType v := by
   cases v with
   | obj ℓ' =>
@@ -172,10 +201,35 @@ public theorem State.dynamicType_update {σ : State} {ℓ : Loc} {c₀ c : Cell}
     · subst hℓ
       rw [State.lookup_update_self h, h]
       cases c₀ with
-      | object C fs => exact absurd rfl (hc₀ C fs)
+      | object k C fs => exact absurd rfl (hc₀ k C fs)
       | _ =>
         cases c with
-        | object C fs => exact absurd rfl (hc C fs)
+        | object k C fs => exact absurd rfl (hc k C fs)
+        | _ => rfl
+    · rw [State.lookup_update_ne hℓ]
+  | _ => rfl
+
+omit Γ in
+/--
+Updating the cell at `ℓ` doesn't change which object any value refers to, if:
+- the cell holds `c₀` (`h`), which isn't an object's own cell (`hc₀`); and
+- the new contents `c` aren't an object's own cell either (`hc`).
+-/
+public theorem State.object?_update {σ : State} {ℓ : Loc} {c₀ c : Cell}
+    (h : σ.lookup ℓ = some c₀) (hc₀ : ∀ k C fs, c₀ ≠ .object k C fs)
+    (hc : ∀ k C fs, c ≠ .object k C fs)
+    (v : Value) : (σ.update ℓ c).object? v = σ.object? v := by
+  cases v with
+  | obj ℓ' =>
+    simp only [State.object?]
+    by_cases hℓ : ℓ' = ℓ
+    · subst hℓ
+      rw [State.lookup_update_self h, h]
+      cases c₀ with
+      | object k C fs => exact absurd rfl (hc₀ k C fs)
+      | _ =>
+        cases c with
+        | object k C fs => exact absurd rfl (hc k C fs)
         | _ => rfl
     · rw [State.lookup_update_ne hℓ]
   | _ => rfl

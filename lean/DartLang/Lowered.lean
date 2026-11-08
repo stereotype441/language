@@ -281,6 +281,41 @@ public inductive LoweredExpr where
   them.
   -/
   | primEq (m₁ m₂ : LoweredExpr)
+  /--
+  An instance creation, `C(args)`, by the generative constructor whose key is `k` (see
+  `SemanticParams.constructors`), with arguments `args`, evaluated left to right. Its static type
+  is `T`. It allocates a new object of the constructor's class, whose instance variables all start
+  out uninitialized, runs the constructor on it (`ctorRun`), and evaluates to the object. (A factory
+  constructor is an ordinary function, called with `call`.)
+  -/
+  | new (k : String) (args : List LoweredExpr) (T : τ)
+  /--
+  A `super(args)` or `this(args)` call in a constructor's initializer list: runs the generative
+  constructor whose key is `k` on the object that `m` (which is `this`) refers to, with arguments
+  `args`. `m` is evaluated first, then `args`, left to right.
+  -/
+  | initCtor (m : LoweredExpr) (k : String) (args : List LoweredExpr)
+  /--
+  An initializer of the instance variable whose key is `name` (see `ClassDecl.instanceVariables`;
+  the key, not the instance variable's name) of the object that `m` (which is `this`) refers to,
+  `x = m₂`: evaluates `m` and then `m₂`, and stores the value in the instance variable's cell,
+  directly (an overriding setter isn't run, and a `final` instance variable can be initialized).
+  It completes normally with the null object.
+
+  A constructor's initializers run after the initializers in the instance variables' declarations,
+  so a non-`final` instance variable can be initialized twice: once by its declaration, and then by
+  the constructor's initializer list, which overwrites the first value. Dart rejects a program that
+  initializes a `final` instance variable twice, or one instance variable twice in one initializer
+  list, so no check is needed at run time.
+  -/
+  | initField (m : LoweredExpr) (name : String) (m₂ : LoweredExpr)
+  /--
+  An assignment to property `name` of the value of `m`, `m.name = m₂`: evaluates `m` and then
+  `m₂`, runs the setter named `name=` of the object that `m` refers to (the implicit setter of an
+  instance variable stores the value in the instance variable's cell), and evaluates to the value
+  of `m₂`.
+  -/
+  | propertySet (m : LoweredExpr) (name : String) (m₂ : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -318,6 +353,18 @@ public inductive LoweredExpr where
   Declaring a variable resolves each `variableSet v m` in its scope to `variableSetAt v ℓ m`.
   -/
   | variableSetAt (v : Variable) (ℓ : Loc) (m : LoweredExpr)
+  /--
+  The generative constructor whose key is `k`, about to run on the object at `ℓ`, with argument
+  values `vs`. Running it binds `this` and the constructor's formal parameters, and runs its
+  initializers and then its body, as the body of a running constructor (`ctorFrame`).
+  -/
+  | ctorRun (ℓ : Loc) (k : String) (vs : List Value)
+  /--
+  The initializers and body `m` of a running constructor. Like the body of a running call
+  (`frame`), it turns a return (`return;`) into completing normally; either way, it completes with
+  the null object, since an instance creation's value is the object (see `new`).
+  -/
+  | ctorFrame (m : LoweredExpr)
 
 /--
 An evaluation context item: an expression with a hole in the position that evaluates next. See
@@ -365,6 +412,29 @@ public inductive EctxItem where
   | primEqR (v₁ : Value)
   /-- `frame(□)` (of type `T`): the body of a running call -/
   | frame (T : τ)
+  /--
+  `C(v₁, …, vₙ, □, m₁, …, mₖ)` (of type `T`): an instance creation by constructor `k`, whose
+  arguments before the hole have evaluated to `vs`, and whose arguments after it, `ms`, are still to
+  be evaluated
+  -/
+  | new (k : String) (vs : List Value) (ms : List LoweredExpr) (T : τ)
+  /-- `initCtor(□, k, args)`: the receiver of a `super(args)` or `this(args)` call -/
+  | initCtorRecv (k : String) (args : List LoweredExpr)
+  /--
+  `initCtor(v, k, (v₁, …, vₙ, □, m₁, …, mₖ))`: an argument of a `super(args)` or `this(args)`
+  call, whose receiver has evaluated to `v`
+  -/
+  | initCtorArgs (v : Value) (k : String) (vs : List Value) (ms : List LoweredExpr)
+  /-- `initField(□, name, m₂)` -/
+  | initFieldL (name : String) (m₂ : LoweredExpr)
+  /-- `initField(v₁, name, □)`, where the receiver has evaluated to `v₁` -/
+  | initFieldR (v₁ : Value) (name : String)
+  /-- `□.name = m₂` -/
+  | propertySetL (name : String) (m₂ : LoweredExpr)
+  /-- `v₁.name = □`, where the receiver has evaluated to `v₁` -/
+  | propertySetR (v₁ : Value) (name : String)
+  /-- `ctorFrame(□)`: the initializers and body of a running constructor -/
+  | ctorFrame
 
 end
 
@@ -475,6 +545,10 @@ public def LoweredExpr.typeOf :
   | intBin op _ _ _ => if op.isComparison then Γ.bool else Γ.int
   | intNeg _ _ => Γ.int
   | primEq _ _ => Γ.bool
+  | new _ _ T => T
+  | initCtor _ _ _ => Γ.Null
+  | initField _ _ _ => Γ.Null
+  | propertySet _ _ m₂ => m₂.typeOf
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -483,6 +557,8 @@ public def LoweredExpr.typeOf :
   | varAt _ T _ => T
   | seq _ m₂ => m₂.typeOf
   | variableSetAt _ _ m => m.typeOf
+  | ctorRun _ _ _ => Γ.Null
+  | ctorFrame _ => Γ.Null
 
 mutual
 
@@ -491,9 +567,9 @@ Set the integer mode of every integer operator in `m` (`intBin` and `intNeg`) to
 function runs its body with every operator's mode set to the function's mode, since the function
 an operator is in can't be seen from the operator (see `LoweredExpr.intBin`).
 
-A call in `m` is left alone, apart from its arguments: the callee's body is in the function table,
-and gets its own mode when it's called. Values (in `val`, `throwing` and `returning`) are left
-alone too.
+A call in `m` (of a function, or of a constructor) is left alone, apart from its arguments: the
+callee's body is in the program's tables, and gets its own mode when it's called. Values (in
+`val`, `throwing` and `returning`) are left alone too.
 -/
 @[expose]
 public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExpr
@@ -520,6 +596,10 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .intBin op _ m₁ m₂ => .intBin op (some mode) (m₁.withIntMode mode) (m₂.withIntMode mode)
   | .intNeg _ m => .intNeg (some mode) (m.withIntMode mode)
   | .primEq m₁ m₂ => .primEq (m₁.withIntMode mode) (m₂.withIntMode mode)
+  | .new k args T => .new k (LoweredExpr.withIntModeList mode args) T
+  | .initCtor m k args => .initCtor (m.withIntMode mode) k (LoweredExpr.withIntModeList mode args)
+  | .initField m name m₂ => .initField (m.withIntMode mode) name (m₂.withIntMode mode)
+  | .propertySet m name m₂ => .propertySet (m.withIntMode mode) name (m₂.withIntMode mode)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -528,6 +608,8 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .varAt v T ℓ => .varAt v T ℓ
   | .seq m₁ m₂ => .seq (m₁.withIntMode mode) (m₂.withIntMode mode)
   | .variableSetAt v ℓ m => .variableSetAt v ℓ (m.withIntMode mode)
+  | .ctorRun ℓ k vs => .ctorRun ℓ k vs
+  | .ctorFrame m => .ctorFrame (m.withIntMode mode)
 
 /-- Set the integer mode of every integer operator in each of `ms`, as `withIntMode` does. -/
 @[expose]
@@ -547,6 +629,105 @@ public structure FunctionDecl where
   /-- The function's formal parameters, in order. -/
   params : List Variable
   /-- The function's body, in which the formal parameters are free variables. -/
+  body : LoweredExpr
+
+/--
+What a class's instances have under a member name (see `ClassDecl.dispatch`): either the implicit
+getter or setter of an instance variable, or a method, getter or setter that is user code.
+-/
+public inductive Member where
+  /--
+  The implicit getter (under the instance variable's name `x`) or setter (under `x=`) of the
+  instance variable whose key is `iv` (see `ClassDecl.instanceVariables`): the object's cell for
+  that key holds the instance variable's value.
+
+  An instance variable that shadows one with the same name in a superclass is a different instance
+  variable, with its own key, so its instances have two cells. The subclass's dispatch table sends
+  `x` to the subclass's instance variable; `super.x` in the subclass looks `x` up in the
+  superclass's dispatch table, which sends it to the superclass's instance variable, and so to the
+  other cell.
+  -/
+  | field (iv : String)
+  /--
+  The method, getter or setter whose declaration is `SemanticParams.members key`, provided by the
+  declaration of the class whose key is `holder` (the class itself, or a superclass).
+  -/
+  | proc (key holder : String)
+  deriving Repr, BEq, DecidableEq
+
+/--
+The declaration of a (non-generic) class, as the semantics needs it. The program's class table
+(`SemanticParams.classes`) maps each class's key to its declaration. Like a function's key, a
+class's key identifies it uniquely in the program.
+-/
+public structure ClassDecl where
+  /-- The class's instance type: the dynamic type of its instances. -/
+  type : τ
+  /--
+  The keys of all the instance variables of the class's instances, including the ones declared in
+  its superclasses. Each instance has one cell per instance variable, found by its key (see
+  `Cell.object`), so the keys must be unique for each instance, even when instance variables have
+  the same name (a private name in different libraries, or an instance variable shadowing one in a
+  superclass). For example, a translator can key each instance variable by the class in the
+  superclass chain that holds its storage, as `"<library URI>::C::x"` (for an instance variable
+  declared in a mixin, the class that holds its storage is the mixin application). The dispatch
+  table maps each implicit getter and setter to its instance variable's key (see `Member.field`).
+  -/
+  instanceVariables : List String
+  /--
+  The *dispatch table*: for each member name, what the class's instances have under that name
+  (`none` if nothing). Getters and methods are named by their names, and setters by their names
+  followed by `=` (so a property `x` can have both a getter `"x"` and a setter `"x="`). The table is
+  flattened: it includes the members inherited from superclasses, and accounts for overriding, as
+  a class hierarchy computes it.
+  -/
+  dispatch : String → Option Member
+  /-- The key of the class's superclass, if it has one (every class but `Object` does). -/
+  superclass : Option String
+
+/--
+The declaration of a method, getter or setter (in the program's member table,
+`SemanticParams.members`): a variable `this`, bound to the receiver when the body runs, its formal
+parameters `params` (none for a getter, one for a setter), and its body.
+-/
+public structure MemberDecl where
+  /-- The variable that refers to the receiver (`this`) in the body. -/
+  this : Variable
+  /-- The member's formal parameters, in order. -/
+  params : List Variable
+  /--
+  The member's body, in which `this` and the formal parameters are free variables. A getter's
+  result is what its body returns (`ret`), and a setter's body's result is discarded.
+  -/
+  body : LoweredExpr
+
+/--
+The declaration of a generative constructor (in the program's constructor table,
+`SemanticParams.constructors`).
+-/
+public structure ConstructorDecl where
+  /-- The key of the constructor's class. -/
+  cls : String
+  /-- The variable that refers to the object being constructed (`this`). -/
+  this : Variable
+  /-- The constructor's formal parameters, in order. -/
+  params : List Variable
+  /--
+  The constructor's initializers, in the order Dart runs them: the initializers of the class's
+  instance variables (from their declarations), then the constructor's initializer list
+  (`initField`), then the superclass constructor call, or the redirecting constructor call
+  (`initCtor`). A redirecting constructor has only the redirecting call. `this` and the formal
+  parameters are free variables in them.
+
+  An instance variable that nothing initializes stays uninitialized, and reading it gets stuck.
+  So the initializers of a non-redirecting constructor must initialize each instance variable
+  declared in its class, even a nullable one that Dart implicitly initializes to `null`. Kernel
+  already provides these: the front end gives each non-`late` instance variable an initializer in
+  every non-redirecting constructor, adding an explicit `= null` where Dart's initialization to
+  `null` is implicit.
+  -/
+  initializers : List LoweredExpr
+  /-- The constructor's body, in which `this` and the formal parameters are free variables. -/
   body : LoweredExpr
 
 local notation "EctxItem" => EctxItem (τ := τ)
@@ -625,14 +806,23 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .primEqL m₂, m => .primEq m m₂
   | .primEqR v₁, m => .primEq (.val v₁) m
   | .frame T, m => .frame m T
+  | .new k vs ms T, m => .new k (vs.map .val ++ m :: ms) T
+  | .initCtorRecv k args, m => .initCtor m k args
+  | .initCtorArgs v k vs ms, m => .initCtor (.val v) k (vs.map .val ++ m :: ms)
+  | .initFieldL name m₂, m => .initField m name m₂
+  | .initFieldR v₁ name, m => .initField (.val v₁) name m
+  | .propertySetL name m₂, m => .propertySet m name m₂
+  | .propertySetR v₁ name, m => .propertySet (.val v₁) name m
+  | .ctorFrame, m => .ctorFrame m
 
 /--
 Whether context item `Ki` handles a return (`returning`) in its hole, rather than propagating it
-outward: only the body of a running call (`frame`) does.
+outward: only the body of a running call (`frame`) or constructor (`ctorFrame`) does.
 -/
 @[expose]
 public def EctxItem.handlesReturn : EctxItem → Bool
   | .frame _ => true
+  | .ctorFrame => true
   | _ => false
 
 omit Γ in
@@ -790,8 +980,9 @@ omit Γ in
 /--
 An expression splits into an evaluation context item and an expression in its hole that isn't a
 value in at most one way: if `Ki₁.fill e₁ = Ki₂.fill e₂` (`h`), where neither `e₁` (`h₁`) nor `e₂`
-(`h₂`) is a value, then `Ki₁ = Ki₂` and `e₁ = e₂`. (The only item for which this isn't immediate
-is a call's, whose hole can be at any argument after the ones that are values.)
+(`h₂`) is a value, then `Ki₁ = Ki₂` and `e₁ = e₂`. (The only items for which this isn't immediate
+are those of calls and instance creations, whose hole can be at any argument after the ones that
+are values.)
 -/
 public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredExpr}
     (h₁ : ∀ v, e₁ ≠ .val v) (h₂ : ∀ v, e₂ ≠ .val v) (h : Ki₁.fill e₁ = Ki₂.fill e₂) :
@@ -812,6 +1003,22 @@ public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredEx
     exact absurd h.2.2.1.symm (h₂ _)
   case primEqL.primEqR => exact absurd (LoweredExpr.primEq.inj h).1 (h₁ _)
   case primEqR.primEqL => exact absurd (LoweredExpr.primEq.inj h).1.symm (h₂ _)
+  case new.new k vs ms T k' vs' ms' T' =>
+    simp only [LoweredExpr.new.injEq] at h
+    obtain ⟨rfl, hl, rfl⟩ := h
+    obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ hl
+    exact ⟨rfl, rfl⟩
+  case initCtorArgs.initCtorArgs v k vs ms v' k' vs' ms' =>
+    simp only [LoweredExpr.initCtor.injEq, LoweredExpr.val.injEq] at h
+    obtain ⟨rfl, rfl, hl⟩ := h
+    obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ hl
+    exact ⟨rfl, rfl⟩
+  case initCtorRecv.initCtorArgs => exact absurd (LoweredExpr.initCtor.inj h).1 (h₁ _)
+  case initCtorArgs.initCtorRecv => exact absurd (LoweredExpr.initCtor.inj h).1.symm (h₂ _)
+  case initFieldL.initFieldR => exact absurd (LoweredExpr.initField.inj h).1 (h₁ _)
+  case initFieldR.initFieldL => exact absurd (LoweredExpr.initField.inj h).1.symm (h₂ _)
+  case propertySetL.propertySetR => exact absurd (LoweredExpr.propertySet.inj h).1 (h₁ _)
+  case propertySetR.propertySetL => exact absurd (LoweredExpr.propertySet.inj h).1.symm (h₂ _)
   all_goals simp_all
 
 /--

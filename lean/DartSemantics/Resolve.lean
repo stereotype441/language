@@ -60,6 +60,11 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .intBin op mode m₁ m₂ => .intBin op mode (m₁.resolve x ℓ) (m₂.resolve x ℓ)
   | .intNeg mode m => .intNeg mode (m.resolve x ℓ)
   | .primEq m₁ m₂ => .primEq (m₁.resolve x ℓ) (m₂.resolve x ℓ)
+  -- As for a call, the constructor's body is in the constructor table, not here.
+  | .new k args T => .new k (LoweredExpr.resolveList x ℓ args) T
+  | .initCtor m k args => .initCtor (m.resolve x ℓ) k (LoweredExpr.resolveList x ℓ args)
+  | .initField m name m₂ => .initField (m.resolve x ℓ) name (m₂.resolve x ℓ)
+  | .propertySet m name m₂ => .propertySet (m.resolve x ℓ) name (m₂.resolve x ℓ)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -69,6 +74,8 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .seq m₁ m₂ => .seq (m₁.resolve x ℓ) (m₂.resolve x ℓ)
   -- The target is already resolved, but `x` may still occur in the right-hand side.
   | .variableSetAt v ℓ' m => .variableSetAt v ℓ' (m.resolve x ℓ)
+  | .ctorRun ℓ' k vs => .ctorRun ℓ' k vs
+  | .ctorFrame m => .ctorFrame (m.resolve x ℓ)
 
 /--
 Resolve each reference to variable `x` in the elements `ms` of a block to the cell at `ℓ`, as

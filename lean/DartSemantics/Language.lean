@@ -94,6 +94,17 @@ public theorem HeadStep.isSome_toOutcome?_of_fill {Ki : EctxItem} {e e' : Lowere
     obtain ⟨-, hl, -⟩ := hE
     obtain ⟨v, rfl⟩ := LoweredExpr.eq_val_of_map_val_append hl
     exact absurd rfl (hv' v)
+  | new =>
+    cases Ki <;> simp only [EctxItem.fill, reduceCtorEq, LoweredExpr.new.injEq] at hE
+    obtain ⟨-, hl, -⟩ := hE
+    obtain ⟨v, rfl⟩ := LoweredExpr.eq_val_of_map_val_append hl
+    exact absurd rfl (hv' v)
+  | initCtor =>
+    cases Ki <;> simp only [EctxItem.fill, reduceCtorEq, LoweredExpr.initCtor.injEq] at hE
+    · exact absurd hE.1 (hv' _)
+    · obtain ⟨-, -, hl⟩ := hE
+      obtain ⟨v, rfl⟩ := LoweredExpr.eq_val_of_map_val_append hl
+      exact absurd rfl (hv' v)
   | _ => cases Ki <;> simp_all [EctxItem.fill, LoweredExpr.toOutcome?]
 
 /--

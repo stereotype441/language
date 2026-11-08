@@ -272,7 +272,7 @@ value, or uninitialized), not an object's own cell.
 -/
 @[expose, reducible]
 public def interpCell (ℓ : Loc) (c : Cell) : IProp GF :=
-  iprop(⌜∀ C fs, c ≠ .object C fs⌝ ∗ ℓ ↦ c)
+  iprop(⌜∀ k C fs, c ≠ .object k C fs⌝ ∗ ℓ ↦ c)
 
 /--
 The interpretation of an environment: exclusive ownership of the cell of each variable in
@@ -293,9 +293,9 @@ owned persistently, since they never change.
 @[expose, reducible]
 public def interpFieldPath : List String → Value → Value → IProp GF
   | [], v, w => iprop(⌜v = w⌝)
-  | name :: path, v, w => iprop(∃ ℓo C fs ℓf v',
+  | name :: path, v, w => iprop(∃ ℓo k C fs ℓf v',
       ⌜v = .obj ℓo ∧ fs.lookup name = some ℓf⌝ ∗
-      ℓo ↦{.discard} (.object C fs : Cell) ∗ ℓf ↦{.discard} (.val v' : Cell) ∗
+      ℓo ↦{.discard} (.object k C fs : Cell) ∗ ℓf ↦{.discard} (.val v' : Cell) ∗
       interpFieldPath path v' w)
 
 /-- `interpFieldPath path v w` is persistent: it's built from persistent points-tos. -/
@@ -330,11 +330,11 @@ public theorem interpFieldPath_append (p₁ p₂ : List String) (v w : Value) :
   | cons name p ih =>
     simp only [List.cons_append, interpFieldPath]
     constructor
-    · iintro ⟨%ℓo, %C, %fs, %ℓf, %v', %h, Ho, Hf, H⟩
+    · iintro ⟨%ℓo, %k, %C, %fs, %ℓf, %v', %h, Ho, Hf, H⟩
       icases (ih v').1 $$ H with ⟨%u, H₁, H₂⟩
       iexists u
       isplitl [Ho Hf H₁]
-      · iexists ℓo, C, fs, ℓf, v'
+      · iexists ℓo, k, C, fs, ℓf, v'
         isplitr
         · ipureintro
           exact h
@@ -344,8 +344,8 @@ public theorem interpFieldPath_append (p₁ p₂ : List String) (v w : Value) :
         · iexact Hf
         · iexact H₁
       · iexact H₂
-    · iintro ⟨%u, ⟨%ℓo, %C, %fs, %ℓf, %v', %h, Ho, Hf, H₁⟩, H₂⟩
-      iexists ℓo, C, fs, ℓf, v'
+    · iintro ⟨%u, ⟨%ℓo, %k, %C, %fs, %ℓf, %v', %h, Ho, Hf, H₁⟩, H₂⟩
+      iexists ℓo, k, C, fs, ℓf, v'
       isplitr
       · ipureintro
         exact h
@@ -375,15 +375,15 @@ public theorem interpFieldPath_agree (path : List String) {v w₁ w₂ : Value} 
     exact h₁.symm.trans h₂
   | cons name path ih =>
     simp only [interpFieldPath]
-    iintro ⟨⟨%ℓo, %C, %fs, %ℓf, %v₁, ⟨%hv, %hf⟩, Ho, Hf, H⟩,
-      ⟨%ℓo', %C', %fs', %ℓf', %v₂, ⟨%hv', %hf'⟩, Ho', Hf', H'⟩⟩
+    iintro ⟨⟨%ℓo, %k, %C, %fs, %ℓf, %v₁, ⟨%hv, %hf⟩, Ho, Hf, H⟩,
+      ⟨%ℓo', %k', %C', %fs', %ℓf', %v₂, ⟨%hv', %hf'⟩, Ho', Hf', H'⟩⟩
     obtain rfl : ℓo = ℓo' := by rw [hv] at hv'; exact Value.obj.inj hv'
-    ihave %ho : ⌜(.object C fs : Cell) = .object C' fs'⌝ $$ [Ho Ho']
+    ihave %ho : ⌜(.object k C fs : Cell) = .object k' C' fs'⌝ $$ [Ho Ho']
     · iapply pointsTo_agree
       isplitl [Ho]
       · iexact Ho
       · iexact Ho'
-    obtain ⟨rfl, rfl⟩ := Cell.object.inj ho
+    obtain ⟨rfl, rfl, rfl⟩ := Cell.object.inj ho
     obtain rfl : ℓf = ℓf' := by rw [hf] at hf'; exact Option.some.inj hf'
     ihave %hw : ⌜(.val v₁ : Cell) = .val v₂⌝ $$ [Hf Hf']
     · iapply pointsTo_agree

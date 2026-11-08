@@ -249,9 +249,9 @@ The proof-mode form of `wp_propertyGetField`, with its pure facts as premises
 type): to prove that reading property `p` of the object at `ℓ` satisfies `Φ` from the hypotheses
 `Δ`, prove `wp_propertyGetField`'s premises (`H`).
 -/
-public theorem tac_wp_load_field {ℓ ℓf : Loc} {p : Property} {T C S : τ}
+public theorem tac_wp_load_field {ℓ ℓf : Loc} {p : Property} {k : String} {T C S : τ}
     {fs : List (String × Loc)} {dq : DFrac} {w : Value}
-    (H : Entails' Δ iprop(ℓ ↦{.discard} (.object C fs : Cell) ∗ ⌜fs.lookup p.name = some ℓf⌝ ∗
+    (H : Entails' Δ iprop(ℓ ↦{.discard} (.object k C fs : Cell) ∗ ⌜fs.lookup p.name = some ℓf⌝ ∗
         HasDynamicType w S ∗ ⌜S ≤ T⌝ ∗ ▷ (ℓf ↦{dq} (.val w : Cell)) ∗
         ▷ ((ℓf ↦{dq} (.val w : Cell)) -∗ Φ (.normal w)))) :
     Entails' Δ (WP (LoweredExpr.propertyGet (.val (.obj ℓ)) p T) @ s; E {{ Φ }}) := by
@@ -274,7 +274,7 @@ determines the cell, and then the facts that the cell isn't an object's own cell
 -/
 public theorem tac_wp_store {x : Variable} {ℓ : Loc} {c : Cell} {w : Value}
     (H : Entails' Δ iprop(▷ (ℓ ↦ c) ∗ ▷ ((ℓ ↦ (.val w : Cell)) -∗ Φ (.normal w))))
-    (hc : ∀ C fs, c ≠ .object C fs) (hfin : x.isFinal = true → c = .uninit) :
+    (hc : ∀ k C fs, c ≠ .object k C fs) (hfin : x.isFinal = true → c = .uninit) :
     Entails' Δ (WP (LoweredExpr.variableSetAt x ℓ (.val w)) @ s; E {{ Φ }}) :=
   (show Δ ⊢ _ from H).trans (wp_variableSetAt hc hfin)
 
@@ -659,7 +659,7 @@ macro_rules
     (apply DartSemantics.tac_wp_store
      iframe $h:ident
      rotate_left
-     · intro _ _ h
+     · intro _ _ _ h
        cases h
      first
        | (· intro h

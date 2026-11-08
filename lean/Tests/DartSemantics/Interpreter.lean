@@ -10,9 +10,9 @@ meta import DartLang.SimpleTypes
 Runs programs on `SimpleType`. The programs include `LoweredExpr`s of the kind flow analysis
 produces (some run with their local variable `x` replaced by a parameter, so that it can hold
 something other than the null object), literals, calls of top-level functions (see `functions`),
-loops and breaks, integer arithmetic in each integer mode, programs for each way a program can fail
-(throwing, and getting stuck), the redex at which a stuck program is reported to be stuck, and
-programs that run out of fuel.
+objects and their construction (see `classes`), loops and breaks, integer arithmetic in each integer
+mode, programs for each way a program can fail (throwing, and getting stuck), the redex at which a
+stuck program is reported to be stuck, and programs that run out of fuel.
 
 A block's value is the null object, so a program that is a block completes normally with the null
 object, unless it throws or gets stuck.
@@ -132,13 +132,94 @@ def intModeOf : String → IntMode
   | "unboundedAdd" => .unbounded
   | _ => .checked
 
+/-! ### Classes -/
+
+/-- The class type of class `Log`. -/
+abbrev tLog : SimpleType := .Class "Log" []
+/-- The class type of class `S`. -/
+abbrev tS : SimpleType := .Class "S" []
+/-- The class type of class `C`, a subclass of `S`. -/
+abbrev tC : SimpleType := .Class "C" ["S"]
+/-- The class type of class `R`. -/
+abbrev tR : SimpleType := .Class "R" []
+/-- The class type of class `D`. -/
+abbrev tD : SimpleType := .Class "D" []
+/-- The class type of class `U`. -/
+abbrev tU : SimpleType := .Class "U" []
+
+/-- `this`, in the members of the class whose class type is `T`. -/
+def thisOf (T : SimpleType) : Variable := { name := "this", type := T }
+/-- A parameter `l` of type `Log`. -/
+def l : Variable := { name := "l", type := tLog }
+
+/-- The property `n` of class `Log`. -/
+def pn : Property := ⟨"n", int, false⟩
+/-- The property `x` of classes `D` and `U`. -/
+def px : Property := ⟨"x", int, false⟩
+
+/--
+`l.n = l.n * 10 + k`: appends digit `k` to the log `l`, so that the order in which these run can
+be read from `l.n`.
+-/
+def logStep (k : Int) : LoweredExpr :=
+  .propertySet (.var l tLog) "n"
+    (.intBin .add none (.intBin .mul none (.propertyGet (.var l tLog) pn int) (.int 10)) (.int k))
+
+/--
+The dispatch table of a class whose only members are the implicit getters and setters of the
+instance variables `names` (each keyed by its own name).
+-/
+def fieldDispatch (names : List String) (name : String) : Option Member :=
+  if name ∈ names then some (.field name)
+  else (names.find? (· ++ "=" == name)).map .field
+
+/--
+The classes of the programs tested here:
+- `class Log { int n; Log() : n = 0; }`, a log of digits (see `logStep`);
+- `class S { int a; S(Log l) : a = logStep(2) { logStep(3); } }`;
+- `class C extends S { int c; C(Log l) : c = logStep(1), super(l) { logStep(4); } }`, so that
+  `C(l)` appends `1234` to `l`, in Dart's order of construction;
+- `class R { R(Log l) { logStep(1); return; logStep(2); } }`, whose constructor returns early;
+- `class D { int x = 1; D() : x = 2; }`, whose instance variable is initialized twice; and
+- `class U { int x; U() { x; } }`, whose constructor reads `x` before it's initialized (which Dart
+  rejects).
+-/
+def classes : String → Option (ClassDecl (τ := SimpleType))
+  | "Log" => some ⟨tLog, ["n"], fieldDispatch ["n"], none⟩
+  | "S" => some ⟨tS, ["a"], fieldDispatch ["a"], none⟩
+  | "C" => some ⟨tC, ["a", "c"], fieldDispatch ["a", "c"], some "S"⟩
+  | "R" => some ⟨tR, [], fieldDispatch [], none⟩
+  | "D" => some ⟨tD, ["x"], fieldDispatch ["x"], none⟩
+  | "U" => some ⟨tU, ["x"], fieldDispatch ["x"], none⟩
+  | _ => none
+
+/-- The methods, getters and setters of the classes in `classes`. -/
+def members : String → Option (MemberDecl (τ := SimpleType))
+  | _ => none
+
+/-- The constructors of the classes in `classes`, named `<class>.new`. -/
+def constructors : String → Option (ConstructorDecl (τ := SimpleType))
+  | "Log.new" => some ⟨"Log", thisOf tLog, [], [.initField (.var (thisOf tLog) tLog) "n" (.int 0)],
+      .block []⟩
+  | "S.new" => some ⟨"S", thisOf tS, [l], [.initField (.var (thisOf tS) tS) "a" (logStep 2)],
+      logStep 3⟩
+  | "C.new" => some ⟨"C", thisOf tC, [l], [.initField (.var (thisOf tC) tC) "c" (logStep 1),
+      .initCtor (.var (thisOf tC) tC) "S.new" [.var l tLog]], logStep 4⟩
+  | "R.new" => some ⟨"R", thisOf tR, [l], [], .block [logStep 1, .ret .null, logStep 2]⟩
+  | "D.new" => some ⟨"D", thisOf tD, [], [.initField (.var (thisOf tD) tD) "x" (.int 1),
+      .initField (.var (thisOf tD) tD) "x" (.int 2)], .block []⟩
+  | "U.new" => some ⟨"U", thisOf tU, [], [], .propertyGet (.var (thisOf tU) tU) px int⟩
+  | _ => none
+
 /-- The semantics with promotion checks. -/
 @[instance_reducible]
-def verify : SemanticParams SimpleType := ⟨.verify, getterImpl, functions, intModeOf⟩
+def verify : SemanticParams SimpleType :=
+  ⟨.verify, getterImpl, functions, classes, members, constructors, intModeOf⟩
 
 /-- The semantics without promotion checks. -/
 @[instance_reducible]
-def trust : SemanticParams SimpleType := ⟨.trust, getterImpl, functions, intModeOf⟩
+def trust : SemanticParams SimpleType :=
+  ⟨.trust, getterImpl, functions, classes, members, constructors, intModeOf⟩
 
 /-- A promotable property, backed by an instance variable of the object in `σx`. -/
 def f : Property := ⟨"_f", ObjectQ, true⟩
@@ -158,7 +239,7 @@ A state for running a program with parameter `x`: `x` (at location 2) refers to 
 location 0) of type `int`, whose instance variable `_f` (at location 1) holds `true`.
 -/
 def σx : State :=
-  ⟨#[.object int [("_f", ⟨1⟩)], .val (.bool true), .val (.obj ⟨0⟩)]⟩
+  ⟨#[.object "C" int [("_f", ⟨1⟩)], .val (.bool true), .val (.obj ⟨0⟩)]⟩
 
 /-- A summary of the result of a run, without the final state or the redex of a stuck run. -/
 def summary : Interp.RunResult (τ := SimpleType) → Std.Format
@@ -828,6 +909,67 @@ info: stuck at redex: DartLang.LoweredExpr.propertyGet
 /-- info: not stuck -/
 #guard_msgs in
 #eval stuckRedex (Interp.run (P := verify) 100 (.nullCheck .null) State.empty)
+
+/-! ## Objects and constructors (see `classes` and `constructors`) -/
+
+-- `{ Log l = Log(); C(l); return l.n; }`: constructing a `C` runs `C`'s initializers, then `S`'s
+-- initializers, then `S`'s body, then `C`'s body.
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 1234) -/
+#guard_msgs in
+#eval runClosed verify (.block [.declare l tLog false, .variableSet l (.new "Log.new" [] tLog),
+  .new "C.new" [.var l tLog] tC, .ret (.propertyGet (.var l tLog) pn int)])
+
+-- `{ Log l = Log(); R(l); return l.n; }`: `return;` in `R`'s constructor ends it early.
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 1) -/
+#guard_msgs in
+#eval runClosed verify (.block [.declare l tLog false, .variableSet l (.new "Log.new" [] tLog),
+  .new "R.new" [.var l tLog] tR, .ret (.propertyGet (.var l tLog) pn int)])
+
+-- `D().x`: the initializer list's initializer of `x` runs after its declaration's, and overwrites
+-- it.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 2) -/
+#guard_msgs in
+#eval runClosed verify (.propertyGet (.new "D.new" [] tD) px int)
+
+-- `D().x = 3`: an assignment to an instance variable, through its implicit setter, evaluates to the
+-- value assigned.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 3) -/
+#guard_msgs in
+#eval runClosed verify (.propertySet (.new "D.new" [] tD) "x" (.int 3))
+
+-- `{ Log l = Log(); l.n = 5; return l.n; }`
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 5) -/
+#guard_msgs in
+#eval runClosed verify (.block [.declare l tLog false, .variableSet l (.new "Log.new" [] tLog),
+  .propertySet (.var l tLog) "n" (.int 5), .ret (.propertyGet (.var l tLog) pn int)])
+
+-- `C(null!)`: an exception thrown by an argument propagates out of the instance creation.
+/--
+info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))
+-/
+#guard_msgs in
+#eval runClosed verify (.new "C.new" [.nullCheck .null] tC)
+
+-- `U()`: `U`'s constructor reads `x` before it's initialized, which gets stuck.
+/--
+info: stuck at redex: DartLang.LoweredExpr.propertyGet
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 1 }))
+  { name := "x", type := DartLang.SimpleType.int, isPromotable := false }
+  (DartLang.SimpleType.int)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.new "U.new" [] tU) State.empty)
+
+-- `D().y = 1`: `D` has no setter `y=`, so the assignment gets stuck.
+/--
+info: stuck at redex: DartLang.LoweredExpr.propertySet
+  (DartLang.LoweredExpr.val (DartLang.Value.obj { n := 1 }))
+  "y"
+  (DartLang.LoweredExpr.val (DartLang.Value.int 1))
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.propertySet (.new "D.new" [] tD) "y" (.int 1))
+  State.empty)
 
 /-! ## A program that runs out of fuel -/
 

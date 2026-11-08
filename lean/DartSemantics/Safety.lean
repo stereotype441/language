@@ -57,7 +57,7 @@ public def OutcomeOk (T : τ) : DartLang.Outcome (τ := τ) → Prop
 public structure BindingsOk (σ : State) (bindings : List (Variable × Loc)) : Prop where
   nodup : (bindings.map (·.1)).Nodup
   nodup_locs : (bindings.map (·.2)).Nodup
-  cells : ∀ b ∈ bindings, ∃ c, σ.lookup b.2 = some c ∧ ∀ C fs, c ≠ .object C fs
+  cells : ∀ b ∈ bindings, ∃ c, σ.lookup b.2 = some c ∧ ∀ k C fs, c ≠ .object k C fs
 
 /--
 Following property path `path` from value `v` reaches value `w` in state `σ`. For the empty path,
@@ -70,7 +70,7 @@ public def FieldPathHolds (σ : State) (bindings : List (Variable × Loc)) (path
     (v w : Value) : Prop :=
   match path with
   | [] => v = w
-  | name :: rest => ∃ ℓo C fs ℓf v', v = .obj ℓo ∧ σ.lookup ℓo = some (.object C fs) ∧
+  | name :: rest => ∃ ℓo k C fs ℓf v', v = .obj ℓo ∧ σ.lookup ℓo = some (.object k C fs) ∧
       fs.lookup name = some ℓf ∧ (∀ b ∈ bindings, b.2 ≠ ℓf) ∧ σ.lookup ℓf = some (.val v') ∧
       FieldPathHolds σ bindings rest v' w
 
@@ -146,7 +146,7 @@ so far doesn't support assignment to instance variables).
 theorem cellOwn_persist (ℓ : Loc) (c : Cell) :
     cellOwn (GF := GF) ℓ c ⊢ |==> ℓ ↦{.discard} c := by
   cases c with
-  | object C fs =>
+  | object k C fs =>
     simp only [cellOwn]
     iintro H
     imodintro
@@ -170,11 +170,11 @@ The ownership of the cells of a heap `m` (`[∗map] ℓ ↦ c ∈ m, cellOwn ℓ
 provided:
 - the variables have cells of their own (`hnd`); and
 - each variable's cell holds what `env` says (`get? m b.2 = some (env b.1)`), which isn't an
-  object's own cell (`∀ C fs, env b.1 ≠ .object C fs`) (`hc`).
+  object's own cell (`∀ k C fs, env b.1 ≠ .object k C fs`) (`hc`).
 -/
 theorem cellOwn_split (env : Env) {bindings : List (Variable × Loc)} {m : LocMap Cell}
     (hnd : (bindings.map (·.2)).Nodup)
-    (hc : ∀ b ∈ bindings, get? m b.2 = some (env b.1) ∧ ∀ C fs, env b.1 ≠ .object C fs) :
+    (hc : ∀ b ∈ bindings, get? m b.2 = some (env b.1) ∧ ∀ k C fs, env b.1 ≠ .object k C fs) :
     ([∗map] ℓ ↦ c ∈ m, cellOwn (GF := GF) ℓ c) ⊢
       interpEnv bindings env ∗ [∗map] ℓ ↦ c ∈ unbound m bindings, cellOwn ℓ c := by
   induction bindings generalizing m with
@@ -186,14 +186,14 @@ theorem cellOwn_split (env : Env) {bindings : List (Variable × Loc)} {m : LocMa
     simp only [List.map_cons, List.nodup_cons] at hnd
     obtain ⟨hm, hobj⟩ := hc (x, ℓ) (List.mem_cons_self ..)
     have hc' : ∀ b ∈ bs, get? (delete m ℓ) b.2 = some (env b.1) ∧
-        ∀ C fs, env b.1 ≠ .object C fs := fun b hb => by
+        ∀ k C fs, env b.1 ≠ .object k C fs := fun b hb => by
       have hne : ℓ ≠ b.2 := fun h => hnd.1 (List.mem_map.2 ⟨b, hb, h.symm⟩)
       rw [LawfulPartialMap.get?_delete_ne hne]
       exact hc b (List.mem_cons_of_mem _ hb)
     have hown : cellOwn (GF := GF) ℓ (env x) ⊢ interpCell ℓ (env x) := by
       revert hobj
       cases env x with
-      | object C fs => intro hobj; exact absurd rfl (hobj C fs)
+      | object k C fs => intro hobj; exact absurd rfl (hobj k C fs)
       | _ =>
         intro hobj
         simp only [cellOwn, interpCell]
@@ -231,12 +231,13 @@ if the bindings are suitable (`hb`).
 -/
 theorem not_bound_of_object {σ : State} {bindings : List (Variable × Loc)}
     (hb : BindingsOk σ bindings)
-    {ℓ : Loc} {C : τ} {fs : List (String × Loc)} (h : σ.lookup ℓ = some (.object C fs)) :
+    {ℓ : Loc} {k : String} {C : τ} {fs : List (String × Loc)}
+    (h : σ.lookup ℓ = some (.object k C fs)) :
     ∀ b ∈ bindings, b.2 ≠ ℓ := by
   intro b hmem heq
   obtain ⟨c, hc, hobj⟩ := hb.cells b hmem
   rw [heq, h] at hc
-  exact hobj C fs (Option.some.inj hc).symm
+  exact hobj k C fs (Option.some.inj hc).symm
 
 /--
 A value `v` satisfies `T` (`interpVal T v`), given persistent ownership of the cells other than the
@@ -297,9 +298,9 @@ theorem interpFieldPath_of_holds {σ : State} {bindings : List (Variable × Loc)
     ipureintro
     exact h
   | cons name path ih =>
-    obtain ⟨ℓo, C, fs, ℓf, v', hv, ho, hfs, hnb, hcf, hp⟩ := h
+    obtain ⟨ℓo, k, C, fs, ℓf, v', hv, ho, hfs, hnb, hcf, hp⟩ := h
     iintro #H
-    iexists ℓo, C, fs, ℓf, v'
+    iexists ℓo, k, C, fs, ℓf, v'
     isplitr
     · ipureintro
       exact ⟨hv, hfs⟩
@@ -414,7 +415,7 @@ public theorem safety [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ 
       ipureintro
       trivial
   have hcells : ∀ b ∈ bindings, get? σ.toMap b.2 = some (envOf σ bindings b.1) ∧
-      ∀ C fs, envOf σ bindings b.1 ≠ .object C fs := by
+      ∀ k C fs, envOf σ bindings b.1 ≠ .object k C fs := by
     intro b hmem
     obtain ⟨c, hc, hobj⟩ := hb.cells b hmem
     have hl : bindings.lookup b.1 = some b.2 := lookup_of_mem hb.nodup hmem

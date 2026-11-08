@@ -16,11 +16,11 @@ over the finite-map view of the heap (`State.toMap`). Its points-to assertion `�
 the cell at `ℓ` holds `c`, and grants ownership of the cell.
 
 An object's own cell (`Cell.object`) never changes once the object exists: it records the object's
-dynamic type and the locations of its instance variables. So the logic keeps a *persistent*
-points-to `ℓ ↦{DFrac.discard} c` (written `ℓ ↦□ c` in Rocq iris) for each object cell, which can
-be freely duplicated: knowing an object's dynamic type doesn't require owning it. The state
-interpretation holds these for every object in the heap (`ObjectHeaders`), so that a proof can
-always learn the dynamic type of an object that a value refers to.
+class, its dynamic type and the locations of its instance variables. So the logic keeps a
+*persistent* points-to `ℓ ↦{DFrac.discard} c` (written `ℓ ↦□ c` in Rocq iris) for each object
+cell, which can be freely duplicated: knowing an object's class and dynamic type doesn't require
+owning it. The state interpretation holds these for every object in the heap (`ObjectHeaders`), so
+that a proof can always learn the class and dynamic type of an object that a value refers to.
 
 The Iris vocabulary used here (ghost state, points-to, persistent propositions, basic updates,
 the state interpretation, weakest preconditions, adequacy) is explained in the README's "Reading
@@ -73,7 +73,7 @@ cell, a persistent points-to for it; otherwise nothing.
 -/
 @[expose]
 public def cellHeader (ℓ : Loc) : Cell → IProp GF
-  | .object C fs => ℓ ↦{.discard} (.object C fs : Cell)
+  | .object k C fs => ℓ ↦{.discard} (.object k C fs : Cell)
   | _ => iprop(emp)
 
 /-- `cellHeader ℓ c` is persistent: it's either a persistent points-to or `emp`. -/
@@ -105,7 +105,7 @@ is an object's own cell (which never changes), and an ordinary points-to otherwi
 -/
 @[expose]
 public def cellOwn (ℓ : Loc) : Cell → IProp GF
-  | .object C fs => ℓ ↦{.discard} (.object C fs : Cell)
+  | .object k C fs => ℓ ↦{.discard} (.object k C fs : Cell)
   | c => ℓ ↦ c
 
 omit Γ in
@@ -116,7 +116,7 @@ Turn ownership of a cell (`ℓ ↦ c`), by a basic update, into its persistent h
 theorem pointsTo_init (ℓ : Loc) (c : Cell) :
     ℓ ↦ c ⊢ |==> (cellHeader (GF := GF) ℓ c ∗ cellOwn ℓ c) := by
   cases c with
-  | object C fs =>
+  | object k C fs =>
     simp only [cellHeader, cellOwn]
     iintro H
     imod pointsTo_persist $$ H with #H

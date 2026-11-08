@@ -109,13 +109,38 @@ public class SemanticParams where
   -/
   functions : String → Option (FunctionDecl (τ := τ))
   /--
-  The integer mode of each top-level function, by key (as for `functions`): how the integer
+  The program's class table: the declaration of each class, by key (`none` for a key that isn't
+  declared). A class's key identifies it uniquely in the program, as a function's does.
+  -/
+  classes : String → Option (ClassDecl (τ := τ))
+  /--
+  The program's member table: the declaration of each method, getter and setter, by key (`none`
+  for a key that isn't declared). Classes' dispatch tables refer to members by these keys (see
+  `ClassDecl.dispatch`), so one declaration can be shared by several classes.
+  -/
+  members : String → Option (MemberDecl (τ := τ))
+  /--
+  The program's constructor table: the declaration of each generative constructor, by key (`none`
+  for a key that isn't declared).
+  -/
+  constructors : String → Option (ConstructorDecl (τ := τ))
+  /--
+  The integer mode of each top-level function, method, getter, setter and constructor, by key (as
+  for `functions`, `members` and `constructors`, whose keys are all distinct): how the integer
   arithmetic in its body treats results that don't fit in 64 bits (see `IntMode`). A theorem can
   choose a mode for each function, or quantify over modes.
   -/
   intModeOf : String → IntMode
 
 variable [P : SemanticParams τ]
+
+/--
+What instances of the class whose key is `cls` have under member name `name` (see
+`ClassDecl.dispatch`): `none` if the class isn't declared, or has nothing under that name.
+-/
+@[expose]
+public def SemanticParams.dispatch (P : SemanticParams τ) (cls name : String) : Option Member :=
+  (P.classes cls).bind (·.dispatch name)
 
 /--
 The location of the cell holding instance variable `name` of the object that value `v` refers
@@ -139,7 +164,7 @@ public def State.instanceVariable? (σ : State) (v : Value) (name : String) : Op
   match v with
   | .obj ℓ =>
     match σ.lookup ℓ with
-    | some (.object _ fs) => fs.lookup name
+    | some (.object _ _ fs) => fs.lookup name
     | _ => none
   | _ => none
 
@@ -228,7 +253,7 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   safety theorem cover flow analysis's definite unassignment check.)
   -/
   | variableSetAt {x : Variable (τ := τ)} {ℓ : Loc} {w : Value} {c : Cell} {σ : State}
-      (hℓ : σ.lookup ℓ = some c) (hc : ∀ C fs, c ≠ .object C fs)
+      (hℓ : σ.lookup ℓ = some c) (hc : ∀ k C fs, c ≠ .object k C fs)
       (hfin : x.isFinal = true → c = .uninit) :
       HeadStep (.variableSetAt x ℓ (.val w)) σ (.val w) (σ.update ℓ (.val w))
   /-- A null check on the null object is a dynamic type error. -/
@@ -362,6 +387,68 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | primEq {v₁ v₂ : Value} {b : Bool} {σ : State} (h : Value.primEq? v₁ v₂ = some b) :
       HeadStep (.primEq (.val v₁) (.val v₂)) σ (.val (.bool b)) σ
   /--
+  Once every argument of an instance creation has been evaluated (to `vs`), it looks up the
+  constructor in the constructor table (`hk`), and the constructor's class in the class table
+  (`hc`). It allocates a new object of that class (see `State.allocObject`), whose instance
+  variables all start out uninitialized, runs the constructor on it (`ctorRun`), and then evaluates
+  to the object.
+  -/
+  | new {k : String} {d : ConstructorDecl (τ := τ)} {c : ClassDecl (τ := τ)} {vs : List Value}
+      {T : τ} {σ : State} (hk : P.constructors k = some d) (hc : P.classes d.cls = some c) :
+      HeadStep (.new k (vs.map .val) T) σ
+        (.seq (.ctorRun (σ.allocObject d.cls c.type c.instanceVariables).1 k vs)
+          (.val (.obj (σ.allocObject d.cls c.type c.instanceVariables).1)))
+        (σ.allocObject d.cls c.type c.instanceVariables).2
+  /--
+  Running a generative constructor on the object at `ℓ` looks it up in the constructor table
+  (`hk`), and checks that it has one formal parameter per argument (`hlen`), as a call does. It
+  allocates a cell for `this`, holding the object, and one cell per formal parameter, holding its
+  argument. Then it runs the constructor's initializers and body, with every integer operator's
+  mode set to the constructor's integer mode, and `this` and the formal parameters bound to their
+  cells, as the body of a running constructor (`ctorFrame`).
+  -/
+  | ctorRun {ℓ : Loc} {k : String} {d : ConstructorDecl (τ := τ)} {vs : List Value} {σ : State}
+      (hk : P.constructors k = some d) (hlen : d.params.length = vs.length) :
+      HeadStep (.ctorRun ℓ k vs) σ
+        (.ctorFrame (((LoweredExpr.block (d.initializers ++ [d.body])).withIntMode
+          (P.intModeOf k)).bindVariables
+            ((d.this :: d.params).zip (σ.allocAll ((Value.obj ℓ :: vs).map Cell.val)).1)))
+        (σ.allocAll ((Value.obj ℓ :: vs).map Cell.val)).2
+  /--
+  Once its receiver and arguments have been evaluated, a `super(args)` or `this(args)` call in an
+  initializer list runs the constructor on the receiver, which is the object being constructed.
+  -/
+  | initCtor {ℓ : Loc} {k : String} {vs : List Value} {σ : State} :
+      HeadStep (.initCtor (.val (.obj ℓ)) k (vs.map .val)) σ (.ctorRun ℓ k vs) σ
+  /--
+  An initializer of an instance variable stores the value in the cell of the instance variable
+  whose key (see `ClassDecl.instanceVariables`) is `name` (`hf`) of the object that the receiver
+  refers to (`ho`). The cell must be an instance variable's (holding a value or uninitialized; `hℓf`
+  and `hc`).
+  -/
+  | initField {v w : Value} {name k : String} {fs : List (String × Loc)} {ℓf : Loc} {c : Cell}
+      {σ : State} (ho : σ.object? v = some (k, fs)) (hf : fs.lookup name = some ℓf)
+      (hℓf : σ.lookup ℓf = some c) (hc : ∀ k C fs, c ≠ .object k C fs) :
+      HeadStep (.initField (.val v) name (.val w)) σ (.val .null) (σ.update ℓf (.val w))
+  /--
+  An assignment to a property whose setter is the implicit setter of an instance variable (the
+  receiver's class dispatches `name=` to `Member.field iv`; `hd`) stores the value in the cell of
+  the instance variable whose key is `iv` (`hf`), and evaluates to the value.
+  -/
+  | propertySetField {v w : Value} {name k iv : String} {fs : List (String × Loc)} {ℓf : Loc}
+      {c : Cell} {σ : State} (ho : σ.object? v = some (k, fs))
+      (hd : P.dispatch k (name ++ "=") = some (.field iv)) (hf : fs.lookup iv = some ℓf)
+      (hℓf : σ.lookup ℓf = some c) (hc : ∀ k C fs, c ≠ .object k C fs) :
+      HeadStep (.propertySet (.val v) name (.val w)) σ (.val w) (σ.update ℓf (.val w))
+  /--
+  When the body of a running constructor returns (by `return;`), the constructor completes
+  normally, with the null object.
+  -/
+  | ctorFrameReturning {v : Value} {σ : State} :
+      HeadStep (.ctorFrame (.returning v)) σ (.val .null) σ
+  /-- When the body of a running constructor completes normally, so does the constructor. -/
+  | ctorFrameVal {v : Value} {σ : State} : HeadStep (.ctorFrame (.val v)) σ (.val .null) σ
+  /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.
 
@@ -375,7 +462,8 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
       HeadStep (Ki.fill (.throwing v)) σ (.throwing v) σ
   /--
   A return propagates outward in the same way, through every evaluation context item that doesn't
-  handle it (`hKi`): that is, up to the body of the running call (`frame`).
+  handle it (`hKi`): that is, up to the body of the running call (`frame`) or constructor
+  (`ctorFrame`).
   -/
   | bubbleReturn {Ki : EctxItem} {v : Value} {σ : State} (hKi : Ki.handlesReturn = false) :
       HeadStep (Ki.fill (.returning v)) σ (.returning v) σ
@@ -383,14 +471,33 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   A break out of labeled statement `l` propagates outward in the same way, through every
   evaluation context item that doesn't handle it (`hKi`): that is, up to the labeled statement `l`.
 
-  A break doesn't propagate out of the body of a running call (`frame`, the only item that handles
-  returns; `hret`): labels are local to a function, so a break can't target a labeled statement in
-  a caller. A break that reaches the body of a running call gets stuck, which can't happen in a
-  program that Dart accepts.
+  A break doesn't propagate out of the body of a running call or constructor (`frame` and
+  `ctorFrame`, the items that handle returns; `hret`): labels are local to a function, so a break
+  can't target a labeled statement in a caller. A break that reaches the body of a running call or
+  constructor gets stuck, which can't happen in a program that Dart accepts.
   -/
   | bubbleBreak {Ki : EctxItem} {l : String} {σ : State} (hKi : Ki.handlesBreak l = false)
       (hret : Ki.handlesReturn = false) :
       HeadStep (Ki.fill (.breaking l)) σ (.breaking l) σ
+
+/--
+A head step of an expression whose hole holds `m`, which isn't a value (`hm`), propagates `m`: if
+`Ki.fill m` takes a head step to `e'` in state `σ'` (`h`), then `e' = m` and `σ' = σ`. Here `m`
+must not be a return that `Ki` handles (`hret`), or a break out of a labeled statement that `Ki`
+handles (`hbrk`). (Only `throwing`, `returning` and `breaking` expressions propagate; with
+anything else in the hole, `Ki.fill m` takes no head step at all.)
+-/
+public theorem HeadStep.fill_propagates {Ki : EctxItem} {m e' : LoweredExpr} {σ σ' : State}
+    (hm : ∀ v, m ≠ .val v) (hret : ∀ v, m = .returning v → Ki.handlesReturn = false)
+    (hbrk : ∀ l, m = .breaking l → Ki.handlesBreak l = false)
+    (h : HeadStep (Ki.fill m) σ e' σ') : e' = m ∧ σ' = σ := by
+  generalize hE : Ki.fill m = E at h
+  cases h
+  case bubbleException | bubbleReturn | bubbleBreak =>
+    obtain ⟨-, rfl⟩ := EctxItem.fill_inj hm (by simp) hE
+    exact ⟨rfl, rfl⟩
+  all_goals cases Ki <;> simp only [EctxItem.fill, reduceCtorEq] at hE
+  all_goals simp_all [EctxItem.handlesReturn, EctxItem.handlesBreak]
 
 /--
 The semantics is deterministic: an expression takes at most one head step. If `e`, in state `σ`,
@@ -399,20 +506,34 @@ expression (`e₁ = e₂`) and the same state (`σ₁ = σ₂`).
 -/
 public theorem HeadStep.deterministic {e e₁ e₂ : LoweredExpr} {σ σ₁ σ₂ : State}
     (h₁ : HeadStep e σ e₁ σ₁) (h₂ : HeadStep e σ e₂ σ₂) : e₁ = e₂ ∧ σ₁ = σ₂ := by
+  have h₁' := h₁
   generalize hE : e = E at h₂
-  cases h₁ <;> cases h₂
-  -- When both steps propagate an abrupt completion out of a context item, `EctxItem.fill_inj`
-  -- shows that the items and the completions are the same, without a case split on both items.
-  case bubbleException.bubbleException | bubbleException.bubbleReturn
-      | bubbleException.bubbleBreak | bubbleReturn.bubbleException | bubbleReturn.bubbleReturn
-      | bubbleReturn.bubbleBreak | bubbleBreak.bubbleException | bubbleBreak.bubbleReturn
-      | bubbleBreak.bubbleBreak =>
-    obtain ⟨-, he⟩ := EctxItem.fill_inj (by simp) (by simp) hE
-    simp_all
-  -- Otherwise at most one of the steps is a propagation, so one case split on its item suffices.
+  -- When either step propagates an abrupt completion out of a context item, `fill_propagates`
+  -- shows that the other step does the same, without a case split on the item.
+  cases h₁
+  case bubbleException | bubbleReturn | bubbleBreak =>
+    subst hE
+    exact And.imp Eq.symm Eq.symm (HeadStep.fill_propagates (fun _ h => by cases h)
+      (fun _ h => by cases h <;> assumption) (fun _ h => by cases h <;> assumption) h₂)
+  all_goals cases h₂
+  all_goals first
+    -- Only a propagation has a context item among its parameters.
+    | (have _ : EctxItem := by assumption
+       rw [hE] at h₁'
+       have R := HeadStep.fill_propagates (fun _ h => by cases h)
+         (fun _ h => by cases h <;> assumption) (fun _ h => by cases h <;> assumption) h₁'
+       -- `rw` also rewrote the expression that `h₁'` steps to if it's the same expression (the
+       -- step of a check that doesn't terminate), so `hE` is needed to undo that.
+       first
+         | exact R
+         | exact ⟨hE.trans R.1, R.2⟩)
+    | skip
+  -- Otherwise neither step propagates, and both are steps of the same expression. (Or one does,
+  -- but the other step's result contains the expression, which defeated the `rw` above; then a
+  -- case split on the item shows that the propagation can't apply.)
   all_goals
     (try cases ‹EctxItem›) <;> (try simp only [EctxItem.fill, reduceCtorEq] at hE)
-  all_goals (try simp_all [EctxItem.handlesReturn, EctxItem.handlesBreak])
+  all_goals (try simp_all)
   all_goals first
     | grind [rtSub_unique]
     | (cases ‹Bool› <;> grind)
