@@ -636,6 +636,44 @@ public theorem wp_blockDeclare {v : Variable} {T : τ} {startsNull : Bool} {ms :
     itrivial
 
 /--
+A let expression whose initializer has evaluated to `w` allocates a cell for its variable `v`,
+holding `w`, and continues with its body `m₂`, with `v` resolved to the cell: it satisfies a
+postcondition `Φ` if, one step later (`▷`), for every location `ℓ`, given the ownership of a cell
+at `ℓ` holding `w` (`ℓ ↦ .val w`), the body with `v` resolved to `ℓ` satisfies `Φ`
+(`WP (m₂.resolve v ℓ) {{ Φ }}`). (Before the initializer has evaluated, the let expression is an
+evaluation context item, `EctxItem.letIn`, so `wp_bind_item` applies.)
+-/
+public theorem wp_letIn {v : Variable} {w : Value} {m₂ : LoweredExpr} :
+    ▷ (∀ ℓ, ℓ ↦ (.val w : Cell) -∗ WP (m₂.resolve v ℓ) @ s; E {{ Φ }}) ⊢
+      WP (LoweredExpr.letIn v (.val w) m₂) @ s; E {{ Φ }} := by
+  iintro H
+  iapply wp_lift_base_step rfl
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iapply fupd_mask_intro Std.LawfulSet.empty_subset
+  iintro Hclose
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], .letIn, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs .letIn
+  imod Hclose
+  have hfresh : get? σ₁.toMap σ₁.fresh = none := by rw [State.get?_toMap, State.lookup_fresh]
+  imod genHeap_alloc (v := (.val w : Cell)) hfresh $$ Hh with ⟨Hh, Hl, -⟩
+  ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ₁) (c := .val w) nofun $$ Hhdr
+  imodintro
+  isplitl [Hh]
+  · rw [State.toMap_alloc]
+    iframe Hh
+    iexact Hhdr'
+  isplitl
+  · iapply H $$ Hl
+  · isimp
+    itrivial
+
+/--
 Reading a local variable `x`, resolved to the cell at `ℓ`, with (possibly promoted) static type
 `T`, gives the value `v` in its cell, provided the value satisfies `T`, so that the promotion check
 passes. The read satisfies a postcondition `Φ` if:

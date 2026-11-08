@@ -261,12 +261,15 @@ What exists so far:
   interpreter support and program-logic laws, including specifications of members (`MemberSpec`),
   but no typing rules yet (reads of instance variables are typed as before, now checking that the
   name is dispatched to the instance variable).
+- The semantics also has let expressions (`letIn`, Kernel's `Let`, which the CFE's lowerings of
+  postfix increments, `?.`, `??` and cascades produce), with interpreter support and a
+  program-logic law (`wp_letIn`), but no typing rule yet.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, a program with calls proved safe and correct (`CallSpecs`), a
   loop proved correct (`LoopSpecs`), a program with an object and one with an overriding method
-  proved correct (`ObjectSpecs`), small programs proved safe with the typing rules
-  (`Corollaries`), and checks that `SimpleType` and `KernelType` obey the laws that the typing
-  rules assume.
+  proved correct (`ObjectSpecs`), a postfix increment proved correct (`LetSpecs`), small programs
+  proved safe with the typing rules (`Corollaries`), and checks that `SimpleType` and `KernelType`
+  obey the laws that the typing rules assume.
 - The Kernel translator hasn't been started.
 
 ## Documentation conventions

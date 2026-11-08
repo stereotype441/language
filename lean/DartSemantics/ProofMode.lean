@@ -23,6 +23,8 @@ program's execution:
   subtype check), wrapped in the evaluation context it came from.
 - `wp_alloc ℓ H`: take the step of a declaration at the start of a block, introducing the new cell
   `ℓ` and its points-to `H`.
+- `wp_let ℓ H`: take the step of a let expression whose initializer has evaluated, introducing the
+  new cell `ℓ` of its variable and its points-to `H`.
 - `wp_load H`: take the step of reading a variable or an instance variable, using the points-to
   `H` for the cell read. The value's dynamic type is proved automatically for the null object,
   booleans, integers, objects whose header is in the context, and values with a `HasDynamicType`
@@ -178,6 +180,8 @@ public theorem tidy_fill_identicalL (m₂ m : LoweredExpr) :
     (EctxItem.identicalL m₂).fill m = .identical m m₂ := rfl
 public theorem tidy_fill_identicalR (v₁ : Value) (m : LoweredExpr) :
     (EctxItem.identicalR v₁).fill m = .identical (.val v₁) m := rfl
+public theorem tidy_fill_letIn (v : Variable) (m₂ m : LoweredExpr) :
+    (EctxItem.letIn v m₂).fill m = .letIn v m m₂ := rfl
 
 variable [Γ : DartRuntimeTypeRepr τ]
 
@@ -330,6 +334,15 @@ public theorem tac_wp_blockDeclare {v : Variable} {T : τ} {startsNull : Bool}
         WP (LoweredExpr.block (LoweredExpr.resolveBlock v ℓ ms)) @ s; E {{ Φ }}))) :
     Entails' Δ (WP (LoweredExpr.block (.declare v T startsNull :: ms)) @ s; E {{ Φ }}) :=
   (show Δ ⊢ _ from H).trans wp_blockDeclare
+
+/--
+The proof-mode form of `wp_letIn`: to prove that a let expression whose initializer has evaluated
+to `w` satisfies `Φ` from the hypotheses `Δ`, prove its premise (`H`).
+-/
+public theorem tac_wp_letIn {v : Variable} {w : Value} {m₂ : LoweredExpr}
+    (H : Entails' Δ iprop(▷ (∀ ℓ, ℓ ↦ (.val w : Cell) -∗ WP (m₂.resolve v ℓ) @ s; E {{ Φ }}))) :
+    Entails' Δ (WP (LoweredExpr.letIn v (.val w) m₂) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans wp_letIn
 
 /--
 The proof-mode form of `wp_varAt`, with the subtype fact as a pure premise (`⌜S ≤ T⌝`), after the
@@ -748,6 +761,9 @@ macro_rules
     | exact DartSemantics.HeadStep.bubbleBreak (Ki := .checkPromotion _) rfl rfl
     | exact DartSemantics.HeadStep.bubbleBreak (Ki := .identicalL _) rfl rfl
     | exact DartSemantics.HeadStep.bubbleBreak (Ki := .identicalR _) rfl rfl
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .letIn _ _)
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .letIn _ _) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .letIn _ _) rfl rfl
     | exact DartSemantics.HeadStep.bubbleException_args (F := (.new _ · _)) (mk := (.new _ · · _))
         (fun _ _ _ => rfl) rfl
     | exact DartSemantics.HeadStep.bubbleException_args (F := (.initCtor (.val _) _ ·))
@@ -804,7 +820,8 @@ macro_rules
       DartSemantics.tidy_fill_superCallArgs, DartSemantics.tidy_fill_superGet,
       DartSemantics.tidy_fill_superSetL, DartSemantics.tidy_fill_superSetR,
       DartSemantics.tidy_fill_checkPromotion, DartSemantics.tidy_fill_identicalL,
-      DartSemantics.tidy_fill_identicalR, DartSemantics.ctorFramePost,
+      DartSemantics.tidy_fill_identicalR, DartSemantics.tidy_fill_letIn,
+      DartSemantics.ctorFramePost,
       DartSemantics.framePost, DartSemantics.labeledPost,
       DartSemantics.loopInvPost, ite_true, ite_false, ↓reduceIte, List.map_cons, List.map_nil,
       List.cons_append, List.nil_append])
@@ -874,6 +891,7 @@ macro_rules
       | refine DartSemantics.tac_wp_bind (.checkPromotion _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.identicalL _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.identicalR _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind (.letIn _ _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind_args (F := (.new _ · _)) (mk := (.new _ · · _))
           (fun _ _ _ => rfl) (by rfl) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind_args (F := (.initCtor (.val _) _ ·))
@@ -903,6 +921,21 @@ syntax "wp_alloc " ident ppSpace ident : tactic
 macro_rules
   | `(tactic| wp_alloc $l $h) => `(tactic|
     (refine DartSemantics.tac_wp_blockDeclare ?_
+     inext
+     iintro %$l $h:ident
+     simp (config := { decide := true }) only [DartLang.LoweredExpr.resolveBlock,
+       DartLang.LoweredExpr.resolve, ite_true, ite_false, Bool.false_eq_true, ↓reduceIte]))
+
+/--
+`wp_let ℓ H` takes the step of a let expression whose initializer has evaluated, introducing the
+new cell `ℓ` of its variable and the cell's points-to `H`, and resolves the variable in the let
+expression's body.
+-/
+syntax "wp_let " ident ppSpace ident : tactic
+
+macro_rules
+  | `(tactic| wp_let $l $h) => `(tactic|
+    (refine DartSemantics.tac_wp_letIn ?_
      inext
      iintro %$l $h:ident
      simp (config := { decide := true }) only [DartLang.LoweredExpr.resolveBlock,
