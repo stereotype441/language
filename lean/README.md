@@ -250,9 +250,20 @@ What exists so far:
   bits, getting stuck on overflow, or unbounded). These have interpreter support and
   program-logic laws, including specifications of functions (`FunSpec`, proved by Löb induction,
   so recursion is supported) and a loop invariant rule (`wp_loop_inv`), but no typing rules yet.
+- The semantics also has classes and objects: a class table (with each class's instance variables,
+  dispatch table and superclass), a constructor table, and a member table in `SemanticParams`;
+  instance creation (`new`), which allocates the object's cells and runs the constructor's
+  initializer list (including a superclass constructor) and body; method calls, getters and
+  setters chosen by dynamic dispatch on the receiver's class, with instance variables read and
+  written through their implicit getters and setters; members of the superclass accessed with
+  `super`; and `identical`. `SimpleType` has class types, with their supertypes. These have
+  interpreter support and program-logic laws, including specifications of members (`MemberSpec`),
+  but no typing rules yet (reads of instance variables are typed as before, now checking that the
+  name is dispatched to the instance variable).
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, a program with calls proved safe and correct (`CallSpecs`), a
-  loop proved correct (`LoopSpecs`), small programs proved safe with the typing rules
+  loop proved correct (`LoopSpecs`), a program with an object and one with an overriding method
+  proved correct (`ObjectSpecs`), small programs proved safe with the typing rules
   (`Corollaries`), and a check that `SimpleType` obeys the laws that the typing rules assume.
 - The Kernel translator hasn't been started.
 
