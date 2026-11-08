@@ -354,6 +354,20 @@ public inductive LoweredExpr where
   same object: the same location, or the same null object, boolean or integer.
   -/
   | identical (m₁ m₂ : LoweredExpr)
+  /--
+  A let expression, `let v = m₁ in m₂` (Kernel's `Let`): evaluates `m₁`, allocates a new cell for
+  local variable `v` holding its value, and then evaluates `m₂`, in which `v` refers to that cell.
+  Its value, and its static type, are `m₂`'s. `v`'s scope is `m₂`: a declaration of a variable
+  with the same name in an enclosing scope is shadowed there.
+
+  The CFE lowers several constructs into let expressions, so that a subexpression is evaluated only
+  once: for example, a postfix increment `x++` whose value is used is
+  `letIn t (var x int) (seq (variableSet x (t + 1)) (var t int))`, and `a?.m()` is
+  `letIn t a (cond (identical (var t) null) null (methodCall (var t) "m" …))`. Each time a let
+  expression runs, it gets a new cell, so one inside a loop doesn't share its variable between
+  iterations. The variable can be assigned in `m₂` if it isn't `final`, as for any local variable.
+  -/
+  | letIn (v : Variable) (m₁ m₂ : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -506,6 +520,8 @@ public inductive EctxItem where
   | identicalL (m₂ : LoweredExpr)
   /-- `identical(v₁, □)`, where the first operand has evaluated to `v₁` -/
   | identicalR (v₁ : Value)
+  /-- `let v = □ in m₂` -/
+  | letIn (v : Variable) (m₂ : LoweredExpr)
 
 end
 
@@ -639,6 +655,7 @@ public def LoweredExpr.typeOf :
   | superGet _ _ _ T => T
   | superSet _ _ _ m₂ => m₂.typeOf
   | identical _ _ => Γ.bool
+  | letIn _ _ m₂ => m₂.typeOf
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -698,6 +715,7 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .superGet m name slot T => .superGet (m.withIntMode mode) name slot T
   | .superSet m name slot m₂ => .superSet (m.withIntMode mode) name slot (m₂.withIntMode mode)
   | .identical m₁ m₂ => .identical (m₁.withIntMode mode) (m₂.withIntMode mode)
+  | .letIn v m₁ m₂ => .letIn v (m₁.withIntMode mode) (m₂.withIntMode mode)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -763,6 +781,7 @@ public def LoweredExpr.withSuperclass (s : Option String) : LoweredExpr → Lowe
   | .superGet m name _ T => .superGet (m.withSuperclass s) name s T
   | .superSet m name _ m₂ => .superSet (m.withSuperclass s) name s (m₂.withSuperclass s)
   | .identical m₁ m₂ => .identical (m₁.withSuperclass s) (m₂.withSuperclass s)
+  | .letIn v m₁ m₂ => .letIn v (m₁.withSuperclass s) (m₂.withSuperclass s)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -990,6 +1009,7 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .checkPromotion T, m => .checkPromotion T m
   | .identicalL m₂, m => .identical m m₂
   | .identicalR v₁, m => .identical (.val v₁) m
+  | .letIn v m₂, m => .letIn v m m₂
 
 /--
 Whether context item `Ki` handles a return (`returning`) in its hole, rather than propagating it

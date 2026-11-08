@@ -231,6 +231,7 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
       (σ.alloc (if startsNull then .val .null else .uninit))
   | .block (m :: ms) => .next (.seq m (.block ms)) σ
   | .seq (.val _) m => .next m σ
+  | .letIn v (.val w) m₂ => .next (m₂.resolve v σ.fresh) (σ.alloc (.val w))
   | .varAt _ T ℓ =>
     match σ.lookup ℓ with
     | some (.val v) => promotionCheck fuel σ v T e (.next (.val v) σ)
@@ -443,6 +444,7 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .checkPromotion _ m => propagate m σ (.stuck e)
   | .identical (.val _) m => propagate m σ (.stuck e)
   | .identical m _ => propagate m σ (.stuck e)
+  | .letIn _ m _ => propagate m σ (.stuck e)
   | _ => .stuck e
 
 /-
@@ -572,6 +574,8 @@ public def primStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
         else stepIn (.identicalR v₁) (primStep fuel m₂ σ)
       | _ => headStep fuel e σ
     else stepIn (.identicalL m₂) (primStep fuel m₁ σ)
+  | .letIn v m₁ m₂ =>
+    if m₁.toOutcome?.isSome then headStep fuel e σ else stepIn (.letIn v m₂) (primStep fuel m₁ σ)
   | _ => headStep fuel e σ
 termination_by structural e
 
@@ -765,7 +769,7 @@ theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep e 
   cases h with
   | null | bool | int | declare | blockNil | blockDeclare | seq | nullCheckNull | condTrue
   | condFalse | ret | frameReturning | frameVal | loop | labeledVal | brk | ctorFrameReturning
-  | ctorFrameVal =>
+  | ctorFrameVal | letIn =>
     exact .inl (Converges.of_eq fun _ => rfl)
   | call hf hlen =>
     exact .inl (Converges.of_eq fun _ => by
@@ -1209,6 +1213,7 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleException (Ki := .checkPromotion _)
          | exact .bubbleException (Ki := .identicalL _)
          | exact .bubbleException (Ki := .identicalR _)
+         | exact .bubbleException (Ki := .letIn _ _)
          | exact .bubbleReturn (Ki := .nullCheck) rfl
          | exact .bubbleReturn (Ki := .as _) rfl
          | exact .bubbleReturn (Ki := .is _) rfl
@@ -1239,6 +1244,7 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleReturn (Ki := .checkPromotion _) rfl
          | exact .bubbleReturn (Ki := .identicalL _) rfl
          | exact .bubbleReturn (Ki := .identicalR _) rfl
+         | exact .bubbleReturn (Ki := .letIn _ _) rfl
          | exact .bubbleBreak (Ki := .intBinL _ _ _) rfl rfl
          | exact .bubbleBreak (Ki := .intBinR _ _ _) rfl rfl
          | exact .bubbleBreak (Ki := .intNeg _) rfl rfl
@@ -1268,6 +1274,7 @@ theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleBreak (Ki := .checkPromotion _) rfl rfl
          | exact .bubbleBreak (Ki := .identicalL _) rfl rfl
          | exact .bubbleBreak (Ki := .identicalR _) rfl rfl
+         | exact .bubbleBreak (Ki := .letIn _ _) rfl rfl
          | (subst_vars; exact .labeledBreak)
          | (rename_i hne
             exact .bubbleBreak (Ki := .labeled _)
@@ -1418,6 +1425,7 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
   | cond m₁ m₂ m₃ T => simp [primStep, hin (.cond m₂ m₃ T) m₁ rfl]
   | propertyGet m p T => simp [primStep, hin (.propertyGet p T) m rfl]
   | seq m₁ m₂ => simp [primStep, hin (.seq m₂) m₁ rfl]
+  | letIn v m₁ m₂ => simp [primStep, hin (.letIn v m₂) m₁ rfl]
   | variableSetAt x ℓ m => simp [primStep, hin (.variableSetAt x ℓ) m rfl]
   | call f args T =>
     simp only [primStep]

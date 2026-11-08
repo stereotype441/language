@@ -64,6 +64,10 @@ public theorem HeadStep.toOutcome?_eq_none {e e' : LoweredExpr} {σ σ' : State}
     (h : HeadStep e σ e' σ') : e.toOutcome? = none := by
   cases h <;> first | rfl | exact EctxItem.toOutcome?_fill _ _
 
+-- The proof splits on every pair of head-step rule and context item, which takes more than the
+-- default budget of `maxHeartbeats` (Lean's limit on the work a single declaration may take to
+-- elaborate).
+set_option maxHeartbeats 400000 in
 /--
 If `Ki.fill e` takes a head step (`h`), then `e` has completed (`e.toOutcome?.isSome`): each head
 step of an expression with a hole either uses the completed value in the hole, or propagates the
@@ -117,6 +121,9 @@ public theorem HeadStep.isSome_toOutcome?_of_fill {Ki : EctxItem} {e e' : Lowere
     · obtain ⟨-, -, -, hl, -⟩ := hE
       obtain ⟨v, rfl⟩ := LoweredExpr.eq_val_of_map_val_append hl
       exact absurd rfl (hv' v)
+  | letIn =>
+    cases Ki <;> simp only [EctxItem.fill, reduceCtorEq, LoweredExpr.letIn.injEq] at hE
+    exact absurd hE.2.1 (hv' _)
   | _ => cases Ki <;> simp_all [EctxItem.fill, LoweredExpr.toOutcome?]
 
 /--

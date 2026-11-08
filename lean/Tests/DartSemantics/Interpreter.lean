@@ -1273,6 +1273,112 @@ info: stuck at redex: DartLang.LoweredExpr.methodCall
 #eval stuckRedex (Interp.run (P := verify) 100 (.methodCall (.new "A.new" [] tA) "g" [] int)
   State.empty)
 
+/-! ## Let expressions -/
+
+/-- A `final` let variable `t`, of type `int`. -/
+def lt : Variable := { name := "t", type := int, isFinal := true }
+/-- A non-`final` let variable `u`, of type `int`. -/
+def lu : Variable := { name := "u", type := int }
+/-- A `final` let variable `t`, of type `Object?`. -/
+def lq : Variable := { name := "t", type := ObjectQ, isFinal := true }
+/-- A `final` let variable `t`, of type `G2`. -/
+def lg : Variable := { name := "t", type := tG2, isFinal := true }
+
+/-- `e₁ + e₂`, in integer mode `checked`. -/
+def add (e₁ e₂ : LoweredExpr) : LoweredExpr := .intBin .add (some .checked) e₁ e₂
+
+-- `let final t = 1 + 2 in t + t`: the let expression's value is its body's.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 6) -/
+#guard_msgs in
+#eval runClosed verify (.letIn lt (add (.int 1) (.int 2)) (add (.var lt int) (.var lt int)))
+
+-- `let final t = 1 in (let final t = 2 in t) + t`: the inner `t` shadows the outer one in the
+-- inner body only.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 3) -/
+#guard_msgs in
+#eval runClosed verify
+  (.letIn lt (.int 1) (add (.letIn lt (.int 2) (.var lt int)) (.var lt int)))
+
+-- `let final t = 1 in let final t = t + 10 in t`: the inner initializer reads the outer `t`.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 11) -/
+#guard_msgs in
+#eval runClosed verify (.letIn lt (.int 1) (.letIn lt (add (.var lt int) (.int 10)) (.var lt int)))
+
+-- `let u = 1 in (u = u + 5, u)`: a let variable that isn't `final` can be assigned.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 6) -/
+#guard_msgs in
+#eval runClosed verify
+  (.letIn lu (.int 1) (.seq (.variableSet lu (add (.var lu int) (.int 5))) (.var lu int)))
+
+-- `let final t = 1 in t = 2` (which Dart rejects): assigning a `final` let variable gets stuck,
+-- since its cell starts out holding the initializer's value.
+/--
+info: stuck at redex: DartLang.LoweredExpr.variableSetAt
+  { name := "t", type := DartLang.SimpleType.int, isFinal := true }
+  { n := 0 }
+  (DartLang.LoweredExpr.val (DartLang.Value.int 2))
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verify) 100 (.letIn lt (.int 1) (.variableSet lt (.int 2)))
+  State.empty)
+
+-- `{ int s = 0; for (int i = 0; i < 3; i = i + 1) { let u = i in (u = u + 10, s = s + u); }
+-- return s; }`: each iteration's let expression gets a new cell for `u`, holding that iteration's
+-- `i`, so `s` is `10 + 11 + 12`. (This takes more steps than `runClosed` allows.)
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 33) -/
+#guard_msgs in
+#eval summary (Interp.run (P := verify) 1000 (.block [.declare s int false, .variableSet s (.int 0),
+  .declare i int false, .variableSet i (.int 0),
+  .labeled "L" (.loop (.cond (.intBin .lt (some .checked) (.var i int) (.int 3))
+    (.seq (.labeled "C" (.block [.letIn lu (.var i int)
+        (.seq (.variableSet lu (add (.var lu int) (.int 10)))
+          (.variableSet s (add (.var s int) (.var lu int))))]))
+      (.variableSet i (add (.var i int) (.int 1))))
+    (.brk "L") Null)),
+  .ret (.var s int)]) State.empty)
+
+-- `[let final t = null! in 1, { let final t = (return 5) in 1 }, L: { let final t = (break L) in
+-- 1 }]`: an exception, a return or a break out of the initializer propagates out of the let
+-- expression, without running its body.
+/--
+info: [done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError)),
+ done: DartLang.Outcome.returning (DartLang.Value.int 5),
+ done: DartLang.Outcome.normal (DartLang.Value.null)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.letIn lt (.nullCheck .null) (.int 1)),
+  runClosed verify (.letIn lt (.ret (.int 5)) (.int 1)),
+  runClosed verify (.labeled "L" (.letIn lt (.brk "L") (.int 1)))]
+
+-- `[A()?.f(), null?.f()]`, as the CFE lowers `?.`:
+-- `let final t = A() in identical(t, null) ? null : t.f()`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 1),
+ done: DartLang.Outcome.normal (DartLang.Value.null)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.letIn lq (.new "A.new" [] tA) (.cond (.identical (.var lq ObjectQ) .null)
+    .null (.methodCall (.var lq tA) "f" [] int) ObjectQ)),
+  runClosed verify (.letIn lq .null (.cond (.identical (.var lq ObjectQ) .null)
+    .null (.methodCall (.var lq tA) "f" [] int) ObjectQ))]
+
+-- `[null ?? 7, 3 ?? 7]`, as the CFE lowers `??`: `let final t = a in t == null ? 7 : t`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 7),
+ done: DartLang.Outcome.normal (DartLang.Value.int 3)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.letIn lq .null (.cond (.primEq (.var lq ObjectQ) .null) (.int 7)
+    (.var lq int) ObjectQ)),
+  runClosed verify (.letIn lq (.int 3) (.cond (.primEq (.var lq ObjectQ) .null) (.int 7)
+    (.var lq int) ObjectQ))]
+
+-- `(G2()..y = 4).y`, as the CFE lowers a cascade: `let final t = G2() in (t.y = 4, t)`.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 104) -/
+#guard_msgs in
+#eval runClosed verify (.propertyGet (.letIn lg (.new "G2.new" [] tG2)
+  (.seq (.propertySet (.var lg tG2) "y" (.int 4)) (.var lg tG2))) py int)
+
 /-! ## A program that runs out of fuel -/
 
 -- `{ x!; x }`, with parameter `x` as in `runWithX`, given fuel for only one step: the block becomes

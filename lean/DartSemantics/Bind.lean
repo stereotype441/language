@@ -130,6 +130,14 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
   | .superGet m _ _ _ => by simp only [resolve, resolve_comm hne m]
   | .superSet m₁ _ _ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
   | .identical m₁ m₂ => by simp only [resolve, resolve_comm hne m₁, resolve_comm hne m₂]
+  | .letIn v m₁ m₂ => by
+    by_cases hx : v = x
+    · subst hx
+      simp [resolve, hne, resolve_comm hne m₁]
+    · by_cases hy : v = y
+      · subst hy
+        simp [resolve, hx, resolve_comm hne m₁]
+      · simp [resolve, hx, hy, resolve_comm hne m₁, resolve_comm hne m₂]
   | .val _ => rfl
   | .throwing _ => rfl
   | .returning _ => rfl

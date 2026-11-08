@@ -216,6 +216,13 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   /-- Once the first part of a sequence completes normally, its value is discarded. -/
   | seq {v : Value} {m : LoweredExpr} {σ : State} : HeadStep (.seq (.val v) m) σ m σ
   /--
+  Once the initializer of a let expression has evaluated to `w`, the let expression allocates a
+  cell for its variable `v`, holding `w`, and continues with its body, with the references to `v`
+  in it resolved to the new cell (as for a declaration; see `blockDeclare`).
+  -/
+  | letIn {v : Variable (τ := τ)} {w : Value} {m₂ : LoweredExpr} {σ : State} :
+      HeadStep (.letIn v (.val w) m₂) σ (m₂.resolve v σ.fresh) (σ.alloc (.val w))
+  /--
   A reference to a local variable evaluates to the value in its cell, if the value passes the
   promotion check against the variable's (possibly promoted) static type. Reading a variable that
   hasn't been assigned gets stuck.

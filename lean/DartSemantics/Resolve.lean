@@ -73,6 +73,8 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .superGet m name slot T => .superGet (m.resolve x ℓ) name slot T
   | .superSet m name slot m₂ => .superSet (m.resolve x ℓ) name slot (m₂.resolve x ℓ)
   | .identical m₁ m₂ => .identical (m₁.resolve x ℓ) (m₂.resolve x ℓ)
+  -- A let variable named `x` shadows the outer `x` in the body.
+  | .letIn v m₁ m₂ => .letIn v (m₁.resolve x ℓ) (if v = x then m₂ else m₂.resolve x ℓ)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
