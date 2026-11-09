@@ -67,10 +67,11 @@ With promotion checks, `{ x as int; x }` is safe whenever `x` holds a value that
 `Object?`: the second read of `x`, promoted to `int`, passes its promotion check.
 -/
 example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hc : σ.constants = [])
     (h : FactHolds σ bindings (.var x ObjectQ)) :
     adequate .NotStuck ((castThenRead x ObjectQ int).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h
+  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h hc
 
 /--
 With promotion checks, `{ x._f!; x._f }` is safe whenever `x` refers to a `C` whose instance
@@ -78,12 +79,13 @@ variable `_f` holds a value that satisfies `Object?`: the second read of `x._f`,
 `Object`, passes its promotion check.
 -/
 example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hc : σ.constants = [])
     (hx : FactHolds σ bindings (.var x Object))
     (hf : FactHolds σ bindings (.field x ["_f"] ObjectQ)) :
     adequate .NotStuck ((nullCheckThenRead x ObjectQ f ObjectQ).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
   nullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) typeLaws (by decide) σ bindings
-    hb hx hf
+    hb hx hf hc
 
 /-- Another promotable property whose static type is `Object?`. -/
 def g : Property := ⟨"_g", ObjectQ, true⟩
@@ -94,13 +96,14 @@ instance variable `_f` refers to a `C` whose instance variable `_g` holds a valu
 `Object?`: the second read of `x._f._g`, promoted to `Object`, passes its promotion check.
 -/
 example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hc : σ.constants = [])
     (hx : FactHolds σ bindings (.var x Object))
     (hfp : FactHolds σ bindings (.field x ["_f"] Object))
     (hfq : FactHolds σ bindings (.field x ["_f", "_g"] ObjectQ)) :
     adequate .NotStuck ((nestedNullCheckThenRead x ObjectQ f ObjectQ g ObjectQ).bindVariables
       bindings) σ (fun o _ => OutcomeOk Null o) :=
   nestedNullCheckThenRead_safe (GF := DartS SimpleType) (U := Object) (Vp := Object) typeLaws
-    (by decide) (by decide) le_rfl σ bindings hb hx hfp hfq
+    (by decide) (by decide) le_rfl σ bindings hb hx hfp hfq hc
 
 def y : Variable := { name := "y", type := ObjectQ }
 
@@ -110,10 +113,11 @@ satisfy `Object?`: the last read of `x` is demoted to `Object?` by the assignmen
 promotion check.
 -/
 example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hc : σ.constants = [])
     (hx : FactHolds σ bindings (.var x ObjectQ)) (hy : FactHolds σ bindings (.var y ObjectQ)) :
     adequate .NotStuck ((castAssignRead x ObjectQ int y ObjectQ).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  castAssignRead_safe (GF := DartS SimpleType) rfl le_rfl le_rfl σ bindings hb hx hy
+  castAssignRead_safe (GF := DartS SimpleType) rfl le_rfl le_rfl σ bindings hb hx hy hc
 
 /-- A `final` local variable, with type `Object?`. -/
 def z : Variable := { name := "z", type := ObjectQ, isFinal := true }
@@ -123,10 +127,11 @@ With promotion checks, `{ final Object? z; z = y; z }` is safe whenever `y` hold
 satisfies `Object?`: `z` starts out unassigned, so assigning it once doesn't get stuck.
 -/
 example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hc : σ.constants = [])
     (hy : FactHolds σ bindings (.var y ObjectQ)) :
     adequate .NotStuck ((finalInitRead z ObjectQ y ObjectQ).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  finalInitRead_safe (GF := DartS SimpleType) (by simp [y, z]) le_rfl σ bindings hb hy
+  finalInitRead_safe (GF := DartS SimpleType) (by simp [y, z]) le_rfl σ bindings hb hy hc
 
 end Verify
 
@@ -136,10 +141,11 @@ attribute [local instance] trust
 
 /-- Without promotion checks, `{ x as int; x }` is safe too. -/
 example (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
+    (hc : σ.constants = [])
     (h : FactHolds σ bindings (.var x ObjectQ)) :
     adequate .NotStuck ((castThenRead x ObjectQ int).bindVariables bindings) σ
       (fun o _ => OutcomeOk Null o) :=
-  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h
+  castThenRead_safe (GF := DartS SimpleType) le_rfl σ bindings hb h hc
 
 end Trust
 

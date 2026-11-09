@@ -53,18 +53,24 @@ program's execution:
   member (`hm`). The object's header must be in the context.
 - `wp_method_spec H hd hm`: take such a method call using the member's specification `H` (a
   `MemberSpec`).
+- `wp_const ℓ Hl Hc`: take the step of a string constant, introducing its canonical object `ℓ`, a
+  persistent points-to `Hl` for its cell, and `Hc : IsConst τ c ℓ`.
+- `wp_concat cus ℓ H Hf`: take the step of a string concatenation whose parts are all values,
+  given their string forms `cus`, introducing the new string `ℓ`, a persistent points-to `H` for
+  its cell, and `Hf : Fresh τ ℓ`.
 
-`wp_pures` also takes the steps of literals, returns, labeled statements and breaks (and the
-propagation of returns and breaks), the body of a running call (`frame`) or constructor
-(`ctorFrame`) once it has completed, `super(args)` and `this(args)` calls in initializer lists,
-and intrinsic checks, arithmetic, comparisons, equality and `identical` whose answer `rfl` can
-compute. It doesn't run a loop, which it would unroll forever. To reason about a function's body
-separately from the call's outcome, apply `tac_wp_frame` (or `tac_wp_ctorFrame` for a
-constructor's), and similarly `tac_wp_labeled` for a labeled statement.
+`wp_pures` also takes the steps of literals, constants that are the null object, booleans or
+integers, returns, labeled statements and breaks (and the propagation of returns and breaks), the
+body of a running call (`frame`) or constructor (`ctorFrame`) once it has completed, `super(args)`
+and `this(args)` calls in initializer lists, and intrinsic checks, arithmetic, comparisons,
+equality and `identical` whose answer `rfl` can compute. It doesn't run a loop, which it would
+unroll forever. To reason about a function's body separately from the call's outcome, apply
+`tac_wp_frame` (or `tac_wp_ctorFrame` for a constructor's), and similarly `tac_wp_labeled` for a
+labeled statement.
 
 Steps that involve a run-time subtype check (cast expressions and is-expressions), or the state in
-other ways (such as assignments to instance variables, getters and setters, and `super` accesses),
-are taken by applying the laws in `PrimitiveLaws.lean` directly.
+other ways (such as assignments to instance variables, getters and setters, `super` accesses, and
+comparisons of strings), are taken by applying the laws in `PrimitiveLaws.lean` directly.
 
 Each tactic works by applying a lemma whose conclusion is a proof-mode goal `Δ ⊢ WP e {{ Φ }}`
 (where `Δ` is the proof mode's context of Iris hypotheses) for a particular shape of `e`, so that
@@ -182,6 +188,15 @@ public theorem tidy_fill_identicalR (v₁ : Value) (m : LoweredExpr) :
     (EctxItem.identicalR v₁).fill m = .identical (.val v₁) m := rfl
 public theorem tidy_fill_letIn (v : Variable) (m₂ m : LoweredExpr) :
     (EctxItem.letIn v m₂).fill m = .letIn v m m₂ := rfl
+public theorem tidy_fill_concat (vs : List Value) (ms : List LoweredExpr) (m : LoweredExpr) :
+    (EctxItem.concat vs ms).fill m = .concat (vs.map .val ++ m :: ms) := rfl
+public theorem tidy_splitVals_nil : LoweredExpr.splitVals (τ := τ) [] = ([], []) := rfl
+public theorem tidy_splitVals_val (v : Value) (ms : List LoweredExpr) :
+    LoweredExpr.splitVals (.val v :: ms) =
+      (v :: (LoweredExpr.splitVals ms).1, (LoweredExpr.splitVals ms).2) := rfl
+public theorem tidy_splitVals_cons {m : LoweredExpr} (ms : List LoweredExpr)
+    (h : ∀ v, m ≠ .val v) : LoweredExpr.splitVals (m :: ms) = ([], m :: ms) := by
+  cases m <;> first | rfl | exact absurd rfl (h _)
 
 variable [Γ : DartRuntimeTypeRepr τ]
 
@@ -627,6 +642,32 @@ public theorem tac_wp_method_spec {ℓ : Loc} {name k key holder : String} {C : 
   subst h
   exact (show Δ ⊢ _ from H).trans (MemberSpec.wp_methodCall hd hm hlen)
 
+/--
+The proof-mode form of `wp_constant_string`: to prove that a string constant with code units `cu`
+satisfies `Φ` from the hypotheses `Δ`, prove `wp_constant_string`'s premise (`H`).
+-/
+public theorem tac_wp_constant_string {cu : List UInt16}
+    (H : Entails' Δ iprop(▷ (∀ ℓ, ℓ ↦{.discard} (.string cu : Cell) -∗
+        IsConst τ (.string cu) ℓ -∗ Φ (.normal (.obj ℓ))))) :
+    Entails' Δ (WP (LoweredExpr.constant (τ := τ) (.string cu)) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans wp_constant_string
+
+/--
+The proof-mode form of `wp_concat`, for a string concatenation whose parts are all values `vs`
+(`hsplit`): to prove that it satisfies `Φ` from the hypotheses `Δ`, prove `wp_concat`'s premises
+(`H`).
+-/
+public theorem tac_wp_concat {args : List LoweredExpr} {vs : List Value}
+    {cus : List (List UInt16)} (hsplit : LoweredExpr.splitVals args = (vs, []))
+    (H : Entails' Δ iprop(StringParts vs cus ∗
+        ▷ (∀ ℓ, ℓ ↦{.discard} (.string cus.flatten : Cell) -∗ Fresh τ ℓ -∗
+          Φ (.normal (.obj ℓ))))) :
+    Entails' Δ (WP (LoweredExpr.concat args) @ s; E {{ Φ }}) := by
+  have h := LoweredExpr.splitVals_append args
+  rw [hsplit, List.append_nil] at h
+  subst h
+  exact (show Δ ⊢ _ from H).trans wp_concat
+
 end DartSemantics
 
 /--
@@ -789,7 +830,14 @@ macro_rules
         (fun _ _ => rfl) rfl
     | exact DartSemantics.HeadStep.bubbleBreak_args (F := (.superCall (.val _) _ _ · _))
         (mk := (.superCallArgs _ _ _ · · _)) (fun _ _ _ => rfl) (fun _ _ _ => rfl)
-        (fun _ _ => rfl) rfl)
+        (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.constant rfl
+    | exact DartSemantics.HeadStep.bubbleException_args (F := (.concat ·)) (mk := (.concat · ·))
+        (fun _ _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleReturn_args (F := (.concat ·)) (mk := (.concat · ·))
+        (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak_args (F := (.concat ·)) (mk := (.concat · ·))
+        (fun _ _ _ => rfl) (fun _ _ _ => rfl) (fun _ _ => rfl) rfl)
 
 /--
 Tidy the goal after a step: reduce `Outcome.toExpr`, `EctxItem.fill`, `framePost`, `labeledPost`
@@ -821,6 +869,9 @@ macro_rules
       DartSemantics.tidy_fill_superSetL, DartSemantics.tidy_fill_superSetR,
       DartSemantics.tidy_fill_checkPromotion, DartSemantics.tidy_fill_identicalL,
       DartSemantics.tidy_fill_identicalR, DartSemantics.tidy_fill_letIn,
+      DartSemantics.tidy_fill_concat, DartSemantics.tidy_splitVals_nil,
+      DartSemantics.tidy_splitVals_val, DartSemantics.tidy_splitVals_cons, ne_eq, reduceCtorEq,
+      not_false_eq_true, implies_true,
       DartSemantics.ctorFramePost,
       DartSemantics.framePost, DartSemantics.labeledPost,
       DartSemantics.loopInvPost, ite_true, ite_false, ↓reduceIte, List.map_cons, List.map_nil,
@@ -899,7 +950,9 @@ macro_rules
       | refine DartSemantics.tac_wp_bind_args (F := (.methodCall (.val _) _ · _))
           (mk := (.methodCallArgs _ _ · · _)) (fun _ _ _ => rfl) (by rfl) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind_args (F := (.superCall (.val _) _ _ · _))
-          (mk := (.superCallArgs _ _ _ · · _)) (fun _ _ _ => rfl) (by rfl) (by rfl) ?_);
+          (mk := (.superCallArgs _ _ _ · · _)) (fun _ _ _ => rfl) (by rfl) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind_args (F := (.concat ·)) (mk := (.concat · ·))
+          (fun _ _ _ => rfl) (by rfl) (by rfl) ?_);
       dart_wp_tidy))
 
 /--
@@ -1178,3 +1231,51 @@ macro_rules
      isplitr
      · inext
        iexact $h:ident))
+
+/--
+`wp_const ℓ Hl Hc` takes the step of a string constant, introducing the location `ℓ` of its
+canonical object, a persistent points-to `Hl` saying that it's a string with the constant's code
+units (`ℓ ↦{.discard} .string cu`), and `Hc` saying that it's the constant's canonical object
+(`IsConst τ (.string cu) ℓ`).
+-/
+syntax "wp_const " ident ppSpace ident ppSpace ident : tactic
+
+macro_rules
+  | `(tactic| wp_const $l $hl $hc) => `(tactic|
+    (refine DartSemantics.tac_wp_constant_string ?_
+     inext
+     iintro %$l #$hl:ident #$hc:ident
+     dart_wp_tidy))
+
+/--
+Prove `StringParts vs cus`, for parts `vs` and their string forms `cus` written out: a primitive
+part's string form by `rfl`, and a string part's from a persistent points-to for its cell in the
+context.
+-/
+syntax "dart_string_parts" : tactic
+
+macro_rules
+  | `(tactic| dart_string_parts) => `(tactic|
+    (simp only [DartSemantics.StringParts, DartSemantics.StringPart]
+     repeat' (first
+       | itrivial
+       | (ipureintro; rfl)
+       | iassumption
+       | isplitr)))
+
+/--
+`wp_concat cus ℓ H Hf` takes the step of a string concatenation whose parts are all values, whose
+string forms are `cus` (proved by `dart_string_parts`), introducing the location `ℓ` of the new
+string, its persistent points-to `H`, and `Hf` saying that it's newly allocated (`Fresh τ ℓ`).
+-/
+syntax "wp_concat " term:max ppSpace ident ppSpace ident ppSpace ident : tactic
+
+macro_rules
+  | `(tactic| wp_concat $cus $l $h $hf) => `(tactic|
+    (refine DartSemantics.tac_wp_concat (cus := $cus) (by rfl) ?_
+     dart_wp_tidy
+     isplitr
+     · dart_string_parts
+     inext
+     iintro %$l #$h:ident $hf:ident
+     dart_wp_tidy))

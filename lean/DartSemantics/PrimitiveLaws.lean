@@ -28,6 +28,12 @@ Run-time subtype checks and promotion checks need the dynamic type of a value. F
 and booleans it's fixed; for an object it's recorded in the object's own cell, which never changes.
 `HasDynamicType v S` is the persistent knowledge that `v`'s dynamic type is `S`.
 
+Strings are objects too, whose cells never change, so a law about a string needs a persistent
+points-to for its cell (`ℓ ↦{.discard} .string cu`). A string constant evaluates to its canonical
+object (`wp_constant_string`, which provides `IsConst`), and a string concatenation to a new
+string (`wp_concat`, which provides `Fresh`, so that a proof can tell that two new strings are
+different objects).
+
 Each law has the form `P ⊢ WP e @ s; E {{ Φ }}`, which reads like a Hoare triple: to show that `e`
 runs safely and its outcome satisfies the postcondition `Φ`, it suffices to have `P`. `P` usually
 includes `▷` (later) applied to what the step leads to, since each step of the program removes one
@@ -297,6 +303,188 @@ public def PointsToUninit : List Loc → IProp GF
   | [] => iprop(emp)
   | ℓ :: ℓs => iprop(ℓ ↦ (.uninit : Cell) ∗ PointsToUninit ℓs)
 
+omit Γ in
+/--
+What the logic knows about each entry of a table of constants `consts` gives what it knows about
+the entry that `lookup` finds for `c` (`h`): `ConstEntry τ c ℓ`.
+-/
+public theorem ConstEntry.of_lookup {consts : List (ConstValue × Loc)} {c : ConstValue} {ℓ : Loc}
+    (h : consts.lookup c = some ℓ) :
+    ([∗list] p ∈ consts, ConstEntry τ (GF := GF) p.1 p.2) ⊢ ConstEntry τ c ℓ := by
+  induction consts with
+  | nil => simp [List.lookup] at h
+  | cons p consts ih =>
+    obtain ⟨c', ℓ'⟩ := p
+    refine BigSepL.bigSepL_cons.1.trans ?_
+    by_cases hc : c = c'
+    · subst hc
+      simp only [List.lookup, beq_self_eq_true, Option.some.injEq] at h
+      subst h
+      exact sep_elim_left
+    · have hb : (c == c') = false := by simp [hc]
+      simp only [List.lookup, hb] at h
+      exact sep_elim_right.trans (ih h)
+
+omit Γ in
+/--
+Allocating a string's cell adds its header to the object headers: given the headers of `σ`
+(`ObjectHeaders σ`) and a persistent points-to for the new cell (`σ.fresh ↦{.discard} .string cu`),
+the headers of `σ.alloc (.string cu)` hold.
+-/
+public theorem ObjectHeaders.alloc_string {σ : State} {cu : List UInt16} :
+    ObjectHeaders (GF := GF) σ ∗ σ.fresh ↦{.discard} (.string cu : Cell) ⊢
+      ObjectHeaders (σ.alloc (.string cu)) := by
+  simp only [ObjectHeaders, State.toMap_alloc]
+  refine .trans ?_ (BigSepM.bigSepM_insert (by rw [State.get?_toMap, State.lookup_fresh])).2
+  simp only [cellHeader]
+  exact sep_comm.1
+
+omit Γ in
+variable (τ) in
+/--
+`ℓ` is a location that a step allocated, as the logic tracks it: the step's law provides
+`Fresh τ ℓ`, which can't be duplicated, so locations with `Fresh` are all different (`Fresh.ne`).
+It's iris-lean's `metaToken ℓ ⊤`, which the ghost heap provides for each newly allocated cell. (The
+type representation `τ` is explicit, since nothing else determines it.)
+-/
+@[expose]
+public def Fresh (ℓ : Loc) : IProp GF := metaToken (V := Cell) (GF := GF) ℓ ⊤
+
+omit Γ in
+/-- Locations with `Fresh` are different: `Fresh τ ℓ₁ ∗ Fresh τ ℓ₂ ⊢ ⌜ℓ₁ ≠ ℓ₂⌝`. -/
+public theorem Fresh.ne {ℓ₁ ℓ₂ : Loc} : Fresh τ (GF := GF) ℓ₁ ∗ Fresh τ ℓ₂ ⊢ ⌜ℓ₁ ≠ ℓ₂⌝ := by
+  have hne : (⊤ : CoPset) ≠ ∅ := fun h => CoPset.mem_empty (p := 1) (h ▸ CoPset.mem_full)
+  unfold Fresh
+  iintro ⟨H₁, H₂⟩
+  iapply metaToken_ne hne $$ H₁ H₂
+
+omit Γ in
+/--
+Allocating a string, holding code units `cu`, can be mirrored in the ghost state: given the state
+interpretation's ghost heap and object headers for `σ`, a basic update gives them for
+`σ.alloc (.string cu)`, a persistent points-to for the new string's cell, and that it's newly
+allocated (`Fresh τ σ.fresh`).
+-/
+public theorem allocString_ghost (σ : State) (cu : List UInt16) :
+    genHeapInterp σ.toMap ∗ ObjectHeaders (GF := GF) σ ⊢
+      |==> ((genHeapInterp (σ.alloc (.string cu)).toMap ∗ ObjectHeaders (σ.alloc (.string cu))) ∗
+        σ.fresh ↦{.discard} (.string cu : Cell) ∗ Fresh τ σ.fresh) := by
+  iintro ⟨Hh, #Hhdr⟩
+  have hfresh : get? σ.toMap σ.fresh = none := by rw [State.get?_toMap, State.lookup_fresh]
+  imod genHeap_alloc (v := (.string cu : Cell)) hfresh $$ Hh with ⟨Hh, Hl, Hm⟩
+  imod pointsTo_persist $$ Hl with #Hl
+  ihave #Hhdr' := ObjectHeaders.alloc_string (GF := GF) (σ := σ) (cu := cu) $$ [$Hhdr $Hl]
+  imodintro
+  isplitl [Hh]
+  · rw [State.toMap_alloc]
+    iframe Hh
+    iexact Hhdr'
+  · isplitr
+    · iexact Hl
+    · unfold Fresh
+      iexact Hm
+
+omit Γ in
+/--
+The knowledge that `cu` is the string form of value `v`, as a part of a string concatenation (see
+`State.stringPart?`): for an object, a persistent points-to for its cell, which is a string holding
+`cu`; for any other value, that `cu` is its string form (which doesn't depend on the state, so it's
+stated for `State.empty`; it's `False` for a value that has no string form).
+-/
+@[expose]
+public def StringPart (v : Value) (cu : List UInt16) : IProp GF :=
+  match v with
+  | .obj ℓ => iprop(ℓ ↦{.discard} (.string cu : Cell))
+  | v => iprop(⌜(State.empty (τ := τ)).stringPart? v = some cu⌝)
+
+omit Γ in
+/-- `StringPart v cu` is persistent: it's a persistent points-to or a pure fact. -/
+public instance StringPart_persistent (v : Value) (cu : List UInt16) :
+    Persistent (StringPart (GF := GF) v cu) := by
+  cases v <;> simp only [StringPart] <;> infer_instance
+
+omit Γ in
+/--
+`StringPart v cu` for each value `v` in `vs` and the code units `cu` in the same position in
+`cus`. If the lists have different lengths, it's `False`.
+-/
+@[expose]
+public def StringParts : List Value → List (List UInt16) → IProp GF
+  | [], [] => iprop(emp)
+  | v :: vs, cu :: cus => iprop(StringPart v cu ∗ StringParts vs cus)
+  | _, _ => iprop(False)
+
+omit Γ in
+/-- `StringParts vs cus` is persistent: it's a separating conjunction of persistent propositions. -/
+public instance StringParts_persistent (vs : List Value) (cus : List (List UInt16)) :
+    Persistent (StringParts (GF := GF) vs cus) := by
+  induction vs generalizing cus with
+  | nil => cases cus <;> simp only [StringParts] <;> infer_instance
+  | cons v vs ih => cases cus <;> simp only [StringParts] <;> infer_instance
+
+omit Γ in
+/--
+The ghost heap agrees with `StringPart`: given the ghost heap's interpretation of the state
+(`genHeapInterp σ.toMap`), if `cu` is the string form of `v` according to the logic
+(`StringPart v cu`), then it is in the state too (`σ.stringPart? v = some cu`).
+-/
+public theorem StringPart.valid {σ : State} {v : Value} {cu : List UInt16} :
+    genHeapInterp σ.toMap ∗ StringPart (GF := GF) v cu ⊢ |==> ⌜σ.stringPart? v = some cu⌝ := by
+  cases v with
+  | obj ℓ =>
+    simp only [StringPart]
+    iintro ⟨Hσ, Hℓ⟩
+    imod genHeap_valid $$ [$Hσ $Hℓ] with %h
+    imodintro
+    ipureintro
+    rw [State.get?_toMap] at h
+    simp [State.stringPart?, State.string?, h]
+  | _ =>
+    simp only [StringPart]
+    iintro ⟨-, %h⟩
+    imodintro
+    ipureintro
+    exact h
+
+omit Γ in
+/--
+The ghost heap agrees with `StringParts`: given the ghost heap's interpretation of the state
+(`genHeapInterp σ.toMap`), if `cus` are the string forms of `vs` according to the logic
+(`StringParts vs cus`), then they are in the state too (`vs.mapM σ.stringPart? = some cus`).
+-/
+public theorem StringParts.valid {σ : State} {vs : List Value} {cus : List (List UInt16)} :
+    genHeapInterp σ.toMap ∗ StringParts (GF := GF) vs cus ⊢
+      |==> ⌜vs.mapM σ.stringPart? = some cus⌝ := by
+  induction vs generalizing cus with
+  | nil =>
+    cases cus with
+    | nil =>
+      iintro -
+      imodintro
+      ipureintro
+      rfl
+    | cons cu cus =>
+      simp only [StringParts]
+      iintro ⟨-, %h⟩
+      exact h.elim
+  | cons v vs ih =>
+    cases cus with
+    | nil =>
+      simp only [StringParts]
+      iintro ⟨-, %h⟩
+      exact h.elim
+    | cons cu cus =>
+      simp only [StringParts]
+      iintro ⟨Hσ, #Hv, #Hvs⟩
+      ihave %h₁ : ⌜σ.stringPart? v = some cu⌝ $$ [Hσ Hv]
+      · ihave >%h := StringPart.valid $$ [$Hσ $Hv]
+        ipureintro
+        exact h
+      ihave >%h₂ := ih $$ [$Hσ $Hvs]
+      imodintro
+      ipureintro
+      simp [List.mapM_cons, h₁, h₂]
+
 end
 
 /-! ## Laws -/
@@ -369,7 +557,7 @@ public theorem wp_step_of_dynamicType {e e' : LoweredExpr} {v : Value} {S : τ}
   iintro ⟨#Hty, H⟩
   iapply wp_lift_base_step hv
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
   ihave %Hdt : ⌜σ₁.dynamicType v = some S⌝ $$ [Hh Hty]
   · ihave >%Hd := HasDynamicType.valid $$ [$Hh $Hty]
     ipureintro
@@ -385,8 +573,9 @@ public theorem wp_step_of_dynamicType {e e' : LoweredExpr} {v : Value} {S : τ}
   obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs (h σ₁ Hdt)
   imod Hclose
   imodintro
-  isplitl [Hh]
+  isplitl [Hh Hc]
   · iframe Hh
+    iframe Hc
     iexact Hhdr
   isplitl
   · iexact H
@@ -641,7 +830,7 @@ public theorem wp_blockDeclare {v : Variable} {T : τ} {startsNull : Bool} {ms :
   iintro H
   iapply wp_lift_base_step rfl
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
   iapply fupd_mask_intro Std.LawfulSet.empty_subset
   iintro Hclose
   isplit
@@ -659,10 +848,12 @@ public theorem wp_blockDeclare {v : Variable} {T : τ} {startsNull : Bool} {ms :
     cases startsNull <;> rfl
   ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ₁) hc $$ Hhdr
   imodintro
-  isplitl [Hh]
+  isplitl [Hh Hc]
   · rw [State.toMap_alloc]
     iframe Hh
-    iexact Hhdr'
+    iframe Hhdr'
+    rw [State.constants_alloc]
+    iexact Hc
   isplitl
   · iapply H $$ Hl
   · isimp
@@ -682,7 +873,7 @@ public theorem wp_letIn {v : Variable} {w : Value} {m₂ : LoweredExpr} :
   iintro H
   iapply wp_lift_base_step rfl
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
   iapply fupd_mask_intro Std.LawfulSet.empty_subset
   iintro Hclose
   isplit
@@ -697,10 +888,12 @@ public theorem wp_letIn {v : Variable} {w : Value} {m₂ : LoweredExpr} :
   imod genHeap_alloc (v := (.val w : Cell)) hfresh $$ Hh with ⟨Hh, Hl, -⟩
   ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ₁) (c := .val w) rfl $$ Hhdr
   imodintro
-  isplitl [Hh]
+  isplitl [Hh Hc]
   · rw [State.toMap_alloc]
     iframe Hh
-    iexact Hhdr'
+    iframe Hhdr'
+    rw [State.constants_alloc]
+    iexact Hc
   isplitl
   · iapply H $$ Hl
   · isimp
@@ -724,7 +917,7 @@ public theorem wp_varAt {x : Variable} {T S : τ} {ℓ : Loc} {dq : DFrac} {v : 
   iintro ⟨#Hty, >Hl, HΦ⟩
   iapply wp_lift_atomic_base_step_no_fork rfl
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
   ihave %Hlook : ⌜σ₁.lookup ℓ = some (.val v)⌝ $$ [Hh Hl]
   · ihave >%Hv := genHeap_valid $$ [$Hh $Hl]
     ipureintro
@@ -746,8 +939,9 @@ public theorem wp_varAt {x : Variable} {T S : τ} {ℓ : Loc} {dq : DFrac} {v : 
   imodintro
   isplit
   · itrivial
-  isplitl [Hh]
+  isplitl [Hh Hc]
   · iframe Hh
+    iframe Hc
     iexact Hhdr
   iexists .normal v
   isplit
@@ -771,7 +965,7 @@ public theorem wp_variableSetAt {x : Variable} {ℓ : Loc} {c : Cell} {w : Value
   iintro ⟨>Hl, HΦ⟩
   iapply wp_lift_atomic_base_step_no_fork rfl
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
   ihave %Hlook : ⌜σ₁.lookup ℓ = some c⌝ $$ [Hh Hl]
   · ihave >%Hv := genHeap_valid $$ [$Hh $Hl]
     ipureintro
@@ -793,10 +987,12 @@ public theorem wp_variableSetAt {x : Variable} {ℓ : Loc} {c : Cell} {w : Value
   imodintro
   isplit
   · itrivial
-  isplitl [Hh]
+  isplitl [Hh Hc]
   · rw [State.toMap_update Hlook]
     iframe Hh
-    iexact Hhdr'
+    iframe Hhdr'
+    rw [State.constants_update]
+    iexact Hc
   iexists .normal w
   isplit
   · ipureintro
@@ -827,7 +1023,7 @@ public theorem wp_propertyGet_field {ℓ ℓf : Loc} {p : Property} {k iv : Stri
   iintro ⟨#Hobj, #Hty, >Hl, HΦ⟩
   iapply wp_lift_atomic_base_step_no_fork rfl
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
   ihave %Hobjl : ⌜σ₁.lookup ℓ = some (.object k C fs)⌝ $$ [Hh Hobj]
   · ihave >%Hv := genHeap_valid $$ [$Hh $Hobj]
     ipureintro
@@ -854,8 +1050,9 @@ public theorem wp_propertyGet_field {ℓ ℓf : Loc} {p : Property} {k iv : Stri
   imodintro
   isplit
   · itrivial
-  isplitl [Hh]
+  isplitl [Hh Hc]
   · iframe Hh
+    iframe Hc
     iexact Hhdr
   iexists .normal w
   isplit
@@ -988,7 +1185,7 @@ public theorem wp_call {f : String} {d : FunctionDecl (τ := τ)} {vs : List Val
   iintro H
   iapply wp_lift_base_step rfl
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt Hσ
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, Hhdr, Hc⟩
   iapply fupd_mask_intro Std.LawfulSet.empty_subset
   iintro Hclose
   isplit
@@ -999,10 +1196,14 @@ public theorem wp_call {f : String} {d : FunctionDecl (τ := τ)} {vs : List Val
   obtain ⟨hs, -, rfl⟩ := Hstep
   obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs (.call hf hlen)
   imod Hclose
-  imod allocAll_vals σ₁ vs $$ Hσ with ⟨Hσ, Hls⟩
+  imod allocAll_vals σ₁ vs $$ [$Hh $Hhdr] with ⟨Hσ, Hls⟩
   imodintro
-  isplitl [Hσ]
-  · iexact Hσ
+  isplitl [Hσ Hc]
+  · icases Hσ with ⟨Hh, Hhdr⟩
+    iframe Hh
+    iframe Hhdr
+    simp only [State.constants_allocAll]
+    iexact Hc
   isplitl
   · iapply H $$ Hls
   · isimp
@@ -1336,7 +1537,7 @@ public theorem wp_step_alloc {e : LoweredExpr} {vs : List Value} {e' : List Loc 
   iintro H
   iapply wp_lift_base_step hv
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt Hσ
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, Hhdr, Hc⟩
   iapply fupd_mask_intro Std.LawfulSet.empty_subset
   iintro Hclose
   isplit
@@ -1347,10 +1548,14 @@ public theorem wp_step_alloc {e : LoweredExpr} {vs : List Value} {e' : List Loc 
   obtain ⟨hs, -, rfl⟩ := Hstep
   obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs (h σ₁)
   imod Hclose
-  imod allocAll_vals σ₁ vs $$ Hσ with ⟨Hσ, Hls⟩
+  imod allocAll_vals σ₁ vs $$ [$Hh $Hhdr] with ⟨Hσ, Hls⟩
   imodintro
-  isplitl [Hσ]
-  · iexact Hσ
+  isplitl [Hσ Hc]
+  · icases Hσ with ⟨Hh, Hhdr⟩
+    iframe Hh
+    iframe Hhdr
+    simp only [State.constants_allocAll]
+    iexact Hc
   isplitl
   · iapply H $$ Hls
   · isimp
@@ -1371,7 +1576,7 @@ public theorem wp_step_alloc_of_header {e : LoweredExpr} {ℓ : Loc} {k : String
   iintro ⟨#Hobj, H⟩
   iapply wp_lift_base_step hv
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, Hhdr, Hc⟩
   ihave %Hobjl : ⌜σ₁.lookup ℓ = some (.object k C fs)⌝ $$ [Hh Hobj]
   · ihave >%Hv := genHeap_valid $$ [$Hh $Hobj]
     ipureintro
@@ -1388,8 +1593,12 @@ public theorem wp_step_alloc_of_header {e : LoweredExpr} {ℓ : Loc} {k : String
   imod Hclose
   imod allocAll_vals σ₁ vs $$ [$Hh $Hhdr] with ⟨Hσ, Hls⟩
   imodintro
-  isplitl [Hσ]
-  · iexact Hσ
+  isplitl [Hσ Hc]
+  · icases Hσ with ⟨Hh, Hhdr⟩
+    iframe Hh
+    iframe Hhdr
+    simp only [State.constants_allocAll]
+    iexact Hc
   isplitl
   · iapply H $$ Hls
   · isimp
@@ -1420,7 +1629,7 @@ public theorem wp_store_of_header {e e' : LoweredExpr} {ℓ ℓf : Loc} {k : Str
   iintro ⟨#Hobj, >Hl, H⟩
   iapply wp_lift_base_step hv
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
   ihave %Hobjl : ⌜σ₁.lookup ℓ = some (.object k C fs)⌝ $$ [Hh Hobj]
   · ihave >%Hv := genHeap_valid $$ [$Hh $Hobj]
     ipureintro
@@ -1445,10 +1654,12 @@ public theorem wp_store_of_header {e e' : LoweredExpr} {ℓ ℓf : Loc} {k : Str
   ihave #Hhdr' := ObjectHeaders.update (c := (.val w : Cell)) Hlook hc
     rfl $$ Hhdr
   imodintro
-  isplitl [Hh]
+  isplitl [Hh Hc]
   · rw [State.toMap_update Hlook]
     iframe Hh
-    iexact Hhdr'
+    iframe Hhdr'
+    rw [State.constants_update]
+    iexact Hc
   isplitl
   · iapply H $$ Hl
   · isimp
@@ -1475,7 +1686,7 @@ public theorem wp_new {k : String} {d : ConstructorDecl (τ := τ)} {c : ClassDe
   iintro H
   iapply wp_lift_base_step rfl
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt Hσ
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, Hhdr, Hc⟩
   iapply fupd_mask_intro Std.LawfulSet.empty_subset
   iintro Hclose
   isplit
@@ -1486,11 +1697,15 @@ public theorem wp_new {k : String} {d : ConstructorDecl (τ := τ)} {c : ClassDe
   obtain ⟨hs, -, rfl⟩ := Hstep
   obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs (.new hk hc)
   imod Hclose
-  imod allocObject_ghost σ₁ d.cls c.type c.instanceVariables $$ Hσ with
+  imod allocObject_ghost σ₁ d.cls c.type c.instanceVariables $$ [$Hh $Hhdr] with
     ⟨Hσ, %ℓs, #Ho, Hls, %hlen⟩
   imodintro
-  isplitl [Hσ]
-  · iexact Hσ
+  isplitl [Hσ Hc]
+  · icases Hσ with ⟨Hh, Hhdr⟩
+    iframe Hh
+    iframe Hhdr
+    simp only [State.constants_allocObject]
+    iexact Hc
   isplitl
   · iapply H $$ %_ %ℓs %hlen Ho Hls
   · isimp
@@ -1714,7 +1929,7 @@ public theorem wp_superGet_field {ℓ ℓf : Loc} {name sup k iv : String} {T C 
   iintro ⟨#Hobj, #Hty, >Hl, HΦ⟩
   iapply wp_lift_atomic_base_step_no_fork rfl
   isimp [stateInterp]
-  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr⟩
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
   ihave %Hobjl : ⌜σ₁.lookup ℓ = some (.object k C fs)⌝ $$ [Hh Hobj]
   · ihave >%Hv := genHeap_valid $$ [$Hh $Hobj]
     ipureintro
@@ -1741,8 +1956,9 @@ public theorem wp_superGet_field {ℓ ℓf : Loc} {name sup k iv : String} {T C 
   imodintro
   isplit
   · itrivial
-  isplitl [Hh]
+  isplitl [Hh Hc]
   · iframe Hh
+    iframe Hc
     iexact Hhdr
   iexists .normal w
   isplit
@@ -1836,6 +2052,286 @@ public theorem wp_identical {v₁ v₂ : Value} {b : Bool} (h : Value.identical?
     ▷ Φ (.normal (.bool b)) ⊢ WP (LoweredExpr.identical (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
   refine wp_pure_step_val (by rfl) fun _ => ?_
   exact .identical h
+
+/-! ### Strings and constants -/
+
+/--
+A constant whose value is the null object, a boolean or an integer `v` (`h`) evaluates to it: it
+satisfies a postcondition `Φ` that holds, one step later, of completing normally with `v`
+(`▷ Φ (.normal v)`).
+-/
+public theorem wp_constant_prim {c : ConstValue} {v : Value} (h : c.prim? (τ := τ) = some v) :
+    ▷ Φ (.normal v) ⊢ WP (LoweredExpr.constant (τ := τ) c) @ s; E {{ Φ }} := by
+  refine wp_pure_step_val (by rfl) fun _ => ?_
+  exact .constant (by simp [State.constant?, h])
+
+/--
+A string constant, with code units `cu`, evaluates to its canonical object: it satisfies a
+postcondition `Φ` if, one step later (`▷`), for the location `ℓ` of a string holding `cu`
+(`ℓ ↦{.discard} .string cu`) that is the canonical object of the constant
+(`IsConst τ (.string cu) ℓ`), `Φ` holds of completing normally with the object.
+
+So every evaluation of the constant gives the same object (`IsConst.agree`). The first one
+allocates it, which is why `ℓ` is only known one step later.
+-/
+public theorem wp_constant_string {cu : List UInt16} :
+    ▷ (∀ ℓ, ℓ ↦{.discard} (.string cu : Cell) -∗ IsConst τ (.string cu) ℓ -∗
+        Φ (.normal (.obj ℓ))) ⊢
+      WP (LoweredExpr.constant (τ := τ) (.string cu)) @ s; E {{ Φ }} := by
+  iintro HΦ
+  iapply wp_lift_atomic_base_step_no_fork rfl
+  isimp [stateInterp, ConstsInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, %m, Hauth, %hm, #Hents⟩
+  cases hl : σ₁.constants.lookup (.string cu) with
+  | some ℓ =>
+    have hstep : HeadStep (LoweredExpr.constant (τ := τ) (.string cu)) σ₁ (.val (.obj ℓ)) σ₁ :=
+      .constant (by simp [State.constant?, ConstValue.prim?, hl])
+    have hent : ([∗list] p ∈ σ₁.constants, ConstEntry τ (GF := GF) p.1 p.2) ⊢
+        ConstEntry τ (.string cu) ℓ := ConstEntry.of_lookup hl
+    ihave #Hent := hent $$ Hents
+    simp only [ConstEntry]
+    icases Hent with ⟨#Hic, %cu', %heq, #Hl⟩
+    cases heq
+    imodintro
+    isplit
+    · ipureintro
+      exact ⟨[], _, _, [], hstep, rfl, rfl⟩
+    inext
+    iintro %e₂ %σ₂ %eₜ %Hstep _
+    obtain ⟨hs, -, rfl⟩ := Hstep
+    obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
+    imodintro
+    isplit
+    · itrivial
+    isplitl [Hh Hauth]
+    · iframe Hh
+      iframe Hhdr
+      iexists m
+      iframe Hauth
+      isplitr
+      · ipureintro
+        exact hm
+      · iexact Hents
+    iexists .normal (.obj ℓ)
+    isplit
+    · ipureintro
+      rfl
+    · iapply HΦ $$ Hl Hic
+  | none =>
+    have hstep : HeadStep (LoweredExpr.constant (τ := τ) (.string cu)) σ₁ (.val (.obj σ₁.fresh))
+        (σ₁.allocConst (.string cu) (.string cu)) :=
+      .constant (by simp [State.constant?, ConstValue.prim?, hl])
+    imodintro
+    isplit
+    · ipureintro
+      exact ⟨[], _, _, [], hstep, rfl, rfl⟩
+    inext
+    iintro %e₂ %σ₂ %eₜ %Hstep _
+    obtain ⟨hs, -, rfl⟩ := Hstep
+    obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
+    imod allocString_ghost σ₁ cu $$ [$Hh $Hhdr] with ⟨⟨Hh, #Hhdr'⟩, #Hl, -⟩
+    have hk : get? m (ConstValue.string cu).key = none := by rw [hm, hl]
+    imod ghost_map_insert_persist _ σ₁.fresh hk $$ Hauth with ⟨Hauth, #Hfrag⟩
+    ihave #Hic : IsConst τ (.string cu) σ₁.fresh $$ [Hfrag]
+    · simp only [IsConst]
+      iexact Hfrag
+    imodintro
+    isplit
+    · itrivial
+    isplitl [Hh Hauth]
+    · rw [State.toMap_allocConst]
+      iframe Hh
+      isplitr
+      · simp only [ObjectHeaders, State.toMap_allocConst]
+        iexact Hhdr'
+      iexists insert m (ConstValue.string cu).key σ₁.fresh
+      iframe Hauth
+      rw [State.constants_allocConst]
+      isplitr
+      · ipureintro
+        intro c
+        by_cases hc : c = .string cu
+        · subst hc
+          simp [LawfulPartialMap.get?_insert]
+        · have hk' : (ConstValue.string cu).key ≠ c.key := fun e => hc (ConstValue.key_inj e).symm
+          have hb : (c == ConstValue.string cu) = false := by simp [hc]
+          simp [LawfulPartialMap.get?_insert, List.lookup, hk', hb, hm]
+      · iapply BigSepL.bigSepL_cons.2
+        isplitr
+        · simp only [ConstEntry]
+          iframe Hic
+          iexists cu
+          isplitr
+          · ipureintro
+            rfl
+          · iexact Hl
+        · iexact Hents
+    iexists .normal (.obj σ₁.fresh)
+    isplit
+    · ipureintro
+      rfl
+    · iapply HΦ $$ Hl Hic
+
+/--
+A string concatenation whose parts have evaluated to `vs` allocates a new string, holding the
+concatenation of the parts' string forms `cus`: it satisfies a postcondition `Φ` if:
+- `cus` are the string forms of `vs` (`StringParts vs cus`: for each string part, a persistent
+  points-to for its cell); and
+- one step later (`▷`), for the location `ℓ` of a string holding the concatenation
+  (`ℓ ↦{.discard} .string cus.flatten`), which is newly allocated (`Fresh τ ℓ`), `Φ` holds of
+  completing normally with the string.
+
+The new string is a new object, so it's not identical to any other (see `Fresh.ne`).
+-/
+public theorem wp_concat {vs : List Value} {cus : List (List UInt16)} :
+    StringParts vs cus ∗
+        ▷ (∀ ℓ, ℓ ↦{.discard} (.string cus.flatten : Cell) -∗ Fresh τ ℓ -∗
+          Φ (.normal (.obj ℓ))) ⊢
+      WP (LoweredExpr.concat (vs.map .val)) @ s; E {{ Φ }} := by
+  iintro ⟨#Hparts, HΦ⟩
+  iapply wp_lift_atomic_base_step_no_fork (by simp [LoweredExpr.toOutcome?])
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
+  ihave %hcus : ⌜vs.mapM σ₁.stringPart? = some cus⌝ $$ [Hh Hparts]
+  · ihave >%h := StringParts.valid $$ [$Hh $Hparts]
+    ipureintro
+    exact h
+  have hstep : HeadStep (LoweredExpr.concat (vs.map .val)) σ₁ (.val (.obj σ₁.fresh))
+      (σ₁.alloc (.string cus.flatten)) := .concat hcus
+  imodintro
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], hstep, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
+  imod allocString_ghost σ₁ cus.flatten $$ [$Hh $Hhdr] with ⟨⟨Hh, #Hhdr'⟩, #Hl, Hfresh⟩
+  imodintro
+  isplit
+  · itrivial
+  isplitl [Hh Hc]
+  · iframe Hh
+    iframe Hhdr'
+    rw [State.constants_alloc]
+    iexact Hc
+  iexists .normal (.obj σ₁.fresh)
+  isplit
+  · ipureintro
+    rfl
+  · iapply HΦ $$ Hl Hfresh
+
+/--
+`e` satisfies a postcondition `Φ` if the cells at `ℓ₁` and `ℓ₂` are strings holding `cu₁` and
+`cu₂` (`ℓ₁ ↦{.discard} .string cu₁`, `ℓ₂ ↦{.discard} .string cu₂`) and `e'` satisfies `Φ` one step
+later (`▷ WP e' {{ Φ }}`), provided:
+- `e` hasn't completed (`hv`); and
+- in every state where the cells at `ℓ₁` and `ℓ₂` are those strings, `e` takes a head step to `e'`
+  that leaves the state unchanged (`h`).
+
+(Comparisons of two strings take such steps.)
+-/
+public theorem wp_step_of_strings {e e' : LoweredExpr} {ℓ₁ ℓ₂ : Loc} {cu₁ cu₂ : List UInt16}
+    (hv : e.toOutcome? = none)
+    (h : ∀ σ, σ.lookup ℓ₁ = some (.string cu₁) → σ.lookup ℓ₂ = some (.string cu₂) →
+      HeadStep e σ e' σ) :
+    ℓ₁ ↦{.discard} (.string cu₁ : Cell) ∗ ℓ₂ ↦{.discard} (.string cu₂ : Cell) ∗
+        ▷ WP e' @ s; E {{ Φ }} ⊢
+      WP e @ s; E {{ Φ }} := by
+  iintro ⟨#Hl₁, #Hl₂, H⟩
+  iapply wp_lift_base_step hv
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
+  ihave %Hlook₁ : ⌜σ₁.lookup ℓ₁ = some (.string cu₁)⌝ $$ [Hh Hl₁]
+  · ihave >%Hv := genHeap_valid $$ [$Hh $Hl₁]
+    ipureintro
+    rwa [State.get?_toMap] at Hv
+  ihave %Hlook₂ : ⌜σ₁.lookup ℓ₂ = some (.string cu₂)⌝ $$ [Hh Hl₂]
+  · ihave >%Hv := genHeap_valid $$ [$Hh $Hl₂]
+    ipureintro
+    rwa [State.get?_toMap] at Hv
+  have hstep := h σ₁ Hlook₁ Hlook₂
+  iapply fupd_mask_intro Std.LawfulSet.empty_subset
+  iintro Hclose
+  isplit
+  · ipureintro
+    exact ⟨[], e', σ₁, [], hstep, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
+  imod Hclose
+  imodintro
+  isplitl [Hh Hc]
+  · iframe Hh
+    iframe Hc
+    iexact Hhdr
+  isplitl
+  · iexact H
+  · isimp
+    itrivial
+
+/--
+`==` on two strings, holding `cu₁` and `cu₂` (`ℓ₁ ↦{.discard} .string cu₁`,
+`ℓ₂ ↦{.discard} .string cu₂`), compares their code units: it satisfies a postcondition `Φ` that
+holds, one step later, of completing normally with whether they're equal
+(`▷ Φ (.normal (.bool (cu₁ == cu₂)))`).
+-/
+public theorem wp_primEq_string {ℓ₁ ℓ₂ : Loc} {cu₁ cu₂ : List UInt16} :
+    ℓ₁ ↦{.discard} (.string cu₁ : Cell) ∗ ℓ₂ ↦{.discard} (.string cu₂ : Cell) ∗
+        ▷ Φ (.normal (.bool (cu₁ == cu₂))) ⊢
+      WP (LoweredExpr.primEq (τ := τ) (.val (.obj ℓ₁)) (.val (.obj ℓ₂))) @ s; E {{ Φ }} := by
+  iintro ⟨#Hl₁, #Hl₂, HΦ⟩
+  iapply wp_step_of_strings (ℓ₁ := ℓ₁) (ℓ₂ := ℓ₂) (cu₁ := cu₁) (cu₂ := cu₂) rfl
+    (fun σ h₁ h₂ => .primEq (b := cu₁ == cu₂) (by simp [State.primEq?, State.string?, h₁, h₂]))
+  isplitr
+  · iexact Hl₁
+  isplitr
+  · iexact Hl₂
+  inext
+  iapply wp_val
+  iexact HΦ
+
+/--
+An intrinsic equality check of two strings with the same code units `cu`
+(`ℓ₁ ↦{.discard} .string cu`, `ℓ₂ ↦{.discard} .string cu`) completes normally: it satisfies a
+postcondition `Φ` that holds, one step later, of completing normally with the null object
+(`▷ Φ (.normal .null)`).
+-/
+public theorem wp_checkEq_string_pass {ℓ₁ ℓ₂ : Loc} {cu : List UInt16} :
+    ℓ₁ ↦{.discard} (.string cu : Cell) ∗ ℓ₂ ↦{.discard} (.string cu : Cell) ∗
+        ▷ Φ (.normal .null) ⊢
+      WP (LoweredExpr.checkEq (τ := τ) (.val (.obj ℓ₁)) (.val (.obj ℓ₂))) @ s; E {{ Φ }} := by
+  iintro ⟨#Hl₁, #Hl₂, HΦ⟩
+  iapply wp_step_of_strings (ℓ₁ := ℓ₁) (ℓ₂ := ℓ₂) (cu₁ := cu) (cu₂ := cu) rfl
+    (fun σ h₁ h₂ => .checkEqPass (by simp [State.primEq?, State.string?, h₁, h₂]))
+  isplitr
+  · iexact Hl₁
+  isplitr
+  · iexact Hl₂
+  inext
+  iapply wp_val
+  iexact HΦ
+
+/--
+An intrinsic equality check of two strings with different code units `cu₁` and `cu₂` (`h`;
+`ℓ₁ ↦{.discard} .string cu₁`, `ℓ₂ ↦{.discard} .string cu₂`) throws: it satisfies a postcondition
+`Φ` that holds, one step later, of throwing (`▷ Φ (.throwing (.error .expectFailed))`).
+-/
+public theorem wp_checkEq_string_fail {ℓ₁ ℓ₂ : Loc} {cu₁ cu₂ : List UInt16} (h : cu₁ ≠ cu₂) :
+    ℓ₁ ↦{.discard} (.string cu₁ : Cell) ∗ ℓ₂ ↦{.discard} (.string cu₂ : Cell) ∗
+        ▷ Φ (.throwing (.error .expectFailed)) ⊢
+      WP (LoweredExpr.checkEq (τ := τ) (.val (.obj ℓ₁)) (.val (.obj ℓ₂))) @ s; E {{ Φ }} := by
+  iintro ⟨#Hl₁, #Hl₂, HΦ⟩
+  iapply wp_step_of_strings (ℓ₁ := ℓ₁) (ℓ₂ := ℓ₂) (cu₁ := cu₁) (cu₂ := cu₂) rfl
+    (fun σ h₁ h₂ => .checkEqFail (by simp [State.primEq?, State.string?, h₁, h₂, h]))
+  isplitr
+  · iexact Hl₁
+  isplitr
+  · iexact Hl₂
+  inext
+  iapply wp_throwing
+  iexact HΦ
 
 end Laws
 

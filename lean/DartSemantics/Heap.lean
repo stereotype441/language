@@ -103,6 +103,13 @@ public theorem State.toMap_alloc (σ : State) (c : Cell) :
   rw [State.get?_toMap, State.lookup_alloc, LawfulPartialMap.get?_insert, State.get?_toMap]
 
 /--
+Allocating the canonical object of a constant, whose own cell is `cell`, changes the heap as
+allocating `cell` does (`(σ.alloc cell).toMap`).
+-/
+public theorem State.toMap_allocConst (σ : State) (c : ConstValue) (cell : Cell) :
+    (σ.allocConst c cell).toMap = (σ.alloc cell).toMap := rfl
+
+/--
 Updating an allocated cell at `ℓ` (`h`) to `c` is an insertion into the finite-map view of the heap
 (`insert σ.toMap ℓ c`).
 -/

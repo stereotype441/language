@@ -405,15 +405,18 @@ end
 `bindings` (`m.bindVariables bindings`), never gets stuck (`.NotStuck`), and every outcome it
 completes with is consistent with `T` (`OutcomeOk T o`), if:
 - `m` is semantically well typed, with type `T`, in context `Δ` (`h`);
-- the bindings are suitable (`hb`); and
-- every fact in `Δ` holds in `σ` (`hσ`).
+- the bindings are suitable (`hb`);
+- every fact in `Δ` holds in `σ` (`hσ`); and
+- no constant has been evaluated yet in `σ` (`hconst`; it holds by `rfl` for a state written out
+  with no constants).
 -/
 public theorem safety [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF] {Δ : Ctx}
     {m : LoweredExpr} {T : τ} {Δ' : Value → Ctx} (σ : State)
     (bindings : List (Variable × Loc)) (h : ∀ [DartGS τ .hasLC GF], SemTyped GF Δ m T Δ')
-    (hb : BindingsOk σ bindings) (hσ : ∀ f ∈ Δ, FactHolds σ bindings f) :
+    (hb : BindingsOk σ bindings) (hσ : ∀ f ∈ Δ, FactHolds σ bindings f)
+    (hconst : σ.constants = [] := by rfl) :
     adequate .NotStuck (m.bindVariables bindings) σ (fun o _ => OutcomeOk T o) := by
-  refine adequacy (GF := GF) _ σ (OutcomeOk T) ?_
+  refine adequacy (GF := GF) _ σ (OutcomeOk T) ?_ hconst
   intro inst
   have hpost : ∀ o, interpOutcome (GF := GF) bindings T Δ' o ⊢ ⌜OutcomeOk T o⌝ := by
     intro o

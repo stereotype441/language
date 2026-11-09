@@ -284,6 +284,43 @@ public theorem State.lookup_update_ne {σ : State} {ℓ ℓ' : Loc} (hne : ℓ' 
   have hn : ℓ.n ≠ ℓ'.n := fun h => hne (by cases ℓ; cases ℓ'; simp_all)
   simp [State.lookup, State.update, Array.getElem?_setIfInBounds_ne hn]
 
+omit Γ in
+/-- Allocating a cell (`σ.alloc c`) doesn't change the table of constants. -/
+@[simp]
+public theorem State.constants_alloc (σ : State) (c : Cell) :
+    (σ.alloc c).constants = σ.constants := rfl
+
+omit Γ in
+/-- Updating a cell (`σ.update ℓ c`) doesn't change the table of constants. -/
+@[simp]
+public theorem State.constants_update (σ : State) (ℓ : Loc) (c : Cell) :
+    (σ.update ℓ c).constants = σ.constants := rfl
+
+omit Γ in
+/--
+Allocating the canonical object of constant `c` (`σ.allocConst c cell`) records it, at
+`σ.fresh`, in the table of constants.
+-/
+@[simp]
+public theorem State.constants_allocConst (σ : State) (c : ConstValue) (cell : Cell) :
+    (σ.allocConst c cell).constants = (c, σ.fresh) :: σ.constants := rfl
+
+omit Γ in
+/-- Allocating cells (`σ.allocAll cs`) doesn't change the table of constants. -/
+@[simp]
+public theorem State.constants_allocAll (σ : State) (cs : List Cell) :
+    (σ.allocAll cs).2.constants = σ.constants := by
+  induction cs generalizing σ with
+  | nil => rfl
+  | cons c cs ih => exact ih (σ.alloc c)
+
+omit Γ in
+/-- Allocating an object (`σ.allocObject cls T names`) doesn't change the table of constants. -/
+@[simp]
+public theorem State.constants_allocObject (σ : State) (cls : String) (T : τ)
+    (names : List String) : (σ.allocObject cls T names).2.constants = σ.constants :=
+  State.constants_allocAll σ _
+
 /--
 Updating the cell at `ℓ` doesn't change any value's dynamic type, if:
 - the cell holds `c₀` (`h`), which is a variable's cell (`hc₀`); and

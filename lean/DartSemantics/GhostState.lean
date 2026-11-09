@@ -23,6 +23,13 @@ cell, which can be freely duplicated: knowing an object's class and dynamic type
 owning it. The state interpretation holds these for every object in the heap (`ObjectHeaders`), so
 that a proof can always learn the class and dynamic type of an object that a value refers to.
 
+The table of canonical constants (`State.constants`) is mirrored by a *ghost map* (iris-lean's
+`ghost_map`, a finite map in the ghost state). The state interpretation holds its authoritative
+part, which agrees with the table, and a proof can hold persistent fragments of it: `IsConst τ c ℓ`
+says that `ℓ` is the canonical object of constant `c`. Two fragments for the same constant agree
+(`IsConst.agree`), which is how a proof learns that two evaluations of a constant give the same
+object.
+
 The Iris vocabulary used here (ghost state, points-to, persistent propositions, basic updates,
 the state interpretation, weakest preconditions, adequacy) is explained in the README's "Reading
 the Iris parts" section.
@@ -46,13 +53,62 @@ local notation "Outcome" => Outcome (τ := τ)
 local notation "Cell" => Cell (τ := τ)
 local notation "State" => State (τ := τ)
 
+/--
+A key for constant `c` in a finite map (see `ConstMap`): an injective encoding of `c` as a list
+of integers (`ConstValue.key_inj`), a type that the standard library's tree maps can use as keys.
+-/
+@[expose]
+public def _root_.DartLang.ConstValue.key : ConstValue → List Int
+  | .null => [0]
+  | .bool b => [1, if b then 1 else 0]
+  | .int n => [2, n]
+  | .string cu => 3 :: cu.map fun u => (u.toNat : Int)
+
+/-- The constant whose key is `k` (see `ConstValue.key`), if any. -/
+@[expose]
+public def _root_.DartLang.ConstValue.ofKey : List Int → Option ConstValue
+  | [0] => some .null
+  | [1, b] => some (.bool (b == 1))
+  | [2, n] => some (.int n)
+  | 3 :: us => some (.string (us.map fun u => u.toNat.toUInt16))
+  | _ => none
+
+/-- Decoding a constant's key gives the constant back (`ofKey c.key = some c`). -/
+public theorem _root_.DartLang.ConstValue.ofKey_key (c : ConstValue) :
+    ConstValue.ofKey c.key = some c := by
+  cases c with
+  | null => rfl
+  | bool b => cases b <;> rfl
+  | int n => rfl
+  | string cu =>
+    simp only [ConstValue.key, ConstValue.ofKey, List.map_map, Option.some.injEq,
+      ConstValue.string.injEq]
+    conv => rhs; rw [← List.map_id cu]
+    exact List.map_congr_left fun u _ => by simp
+
+/-- Different constants have different keys: `c.key = c'.key` (`h`) only if `c = c'`. -/
+public theorem _root_.DartLang.ConstValue.key_inj {c c' : ConstValue} (h : c.key = c'.key) :
+    c = c' := by
+  have h' := ConstValue.ofKey_key c
+  rw [h, ConstValue.ofKey_key] at h'
+  exact (Option.some.inj h').symm
+
+/--
+Finite maps keyed by constants' keys (`ConstValue.key`), the kind of map that the ghost map of
+canonical constants is built on (see `IsConst`).
+-/
+public abbrev ConstMap := fun V => Std.ExtTreeMap (List Int) V compare
+
 variable (τ) in
 /-- The ghost state that the logic needs before a program starts running. -/
 public class DartGpreS (GF : BundledGFunctors) extends InvGpreS GF where
   /-- The ghost heap, before it is initialized. -/
   heap_pre : genHeapPreS Loc Cell GF LocMap
+  /-- The ghost map of canonical constants, before it is created. -/
+  consts_pre : GhostMapG GF (List Int) Loc ConstMap
 
 attribute [reducible, instance] DartGpreS.heap_pre
+attribute [reducible, instance] DartGpreS.consts_pre
 
 variable (τ) in
 /-- The ghost state of a running program. -/
@@ -61,8 +117,13 @@ public class DartGS (hlc : outParam HasLC) (GF : BundledGFunctors) where
   [invGS : InvGS_gen hlc GF]
   /-- The ghost heap. -/
   heap : genHeapGS Loc Cell GF LocMap
+  /-- The kind of ghost state of the ghost map of canonical constants (see `IsConst`). -/
+  consts : GhostMapG GF (List Int) Loc ConstMap
+  /-- The ghost name of the ghost map of canonical constants. -/
+  constsName : GName
 
 attribute [reducible, instance] DartGS.heap
+attribute [reducible, instance] DartGS.consts
 
 section
 
@@ -98,6 +159,69 @@ public def ObjectHeaders (σ : State) : IProp GF :=
 /-- `ObjectHeaders σ` is persistent: it's a separating conjunction of persistent propositions. -/
 public instance ObjectHeaders_persistent (σ : State) : Persistent (ObjectHeaders (GF := GF) σ) :=
   BigSepM.bigSepM_persistent_inst
+
+omit Γ in
+variable (τ) in
+/--
+`ℓ` is the canonical object of constant `c` (see `LoweredExpr.constant`): every evaluation of `c`
+evaluates to the object at `ℓ`. It's persistent, and a constant has only one canonical object
+(`IsConst.agree`). It's a persistent fragment of a ghost map (iris-lean's `ghost_map`), keyed by
+the constant (`ConstValue.key`), whose authoritative part is in the state interpretation
+(`ConstsInterp`). (The type representation `τ` is explicit, since nothing else determines it.)
+-/
+@[expose]
+public def IsConst (c : ConstValue) (ℓ : Loc) : IProp GF :=
+  DartGS.constsName τ GF ↪◯MAP[c.key]{.discard} ℓ
+
+omit Γ in
+/-- `IsConst τ c ℓ` is persistent. -/
+public instance IsConst_persistent (c : ConstValue) (ℓ : Loc) :
+    Persistent (IsConst τ (GF := GF) c ℓ) := by
+  unfold IsConst
+  infer_instance
+
+omit Γ in
+/--
+A constant has only one canonical object: if `ℓ` and `ℓ'` are both canonical objects of `c`, they
+are the same location (`IsConst τ c ℓ ∗ IsConst τ c ℓ' ⊢ ⌜ℓ = ℓ'⌝`).
+-/
+public theorem IsConst.agree {c : ConstValue} {ℓ ℓ' : Loc} :
+    IsConst τ (GF := GF) c ℓ ∗ IsConst τ c ℓ' ⊢ ⌜ℓ = ℓ'⌝ := by
+  unfold IsConst
+  exact ghost_map_elem_agree _ _ _ _ _ _
+
+omit Γ in
+variable (τ) in
+/--
+What the logic knows about entry `(c, ℓ)` of a table of constants (see `State.constants`): `ℓ` is
+the canonical object of `c` (`IsConst`), and it's a string with `c`'s code units, of which there's
+a persistent points-to. (So far, string constants are the only constants recorded.)
+-/
+@[expose]
+public def ConstEntry (c : ConstValue) (ℓ : Loc) : IProp GF :=
+  iprop(IsConst τ c ℓ ∗ ∃ cu, ⌜c = .string cu⌝ ∗ ℓ ↦{.discard} (.string cu : Cell))
+
+omit Γ in
+/-- `ConstEntry c ℓ` is persistent: it's made of persistent propositions. -/
+public instance ConstEntry_persistent (c : ConstValue) (ℓ : Loc) :
+    Persistent (ConstEntry τ (GF := GF) c ℓ) := by
+  unfold ConstEntry
+  infer_instance
+
+omit Γ in
+variable (τ) in
+/--
+The part of the state interpretation for a table of constants `consts` (see `State.constants`):
+the authoritative part of the ghost map of canonical constants (see `IsConst`), which agrees with
+the table, and what the logic knows about each entry (`ConstEntry`).
+
+It depends only on the table, not on the heap, so the steps that only change the heap preserve it
+without further ado: a string's cell never changes.
+-/
+@[expose]
+public def ConstsInterp (consts : List (ConstValue × Loc)) : IProp GF :=
+  iprop(∃ m : ConstMap Loc, (DartGS.constsName τ GF ↪●MAP m) ∗
+    ⌜∀ c, get? m c.key = consts.lookup c⌝ ∗ [∗list] p ∈ consts, ConstEntry τ p.1 p.2)
 
 /--
 The ownership of the cell `c` at `ℓ` that a program starts out with: a persistent points-to if `c`
@@ -188,9 +312,12 @@ theorem bigSepM_pointsTo_init (m : LocMap Cell) :
   imodintro
   iapply (BiEntails.of_eq BigSepM.bigSepM_sep_eq).1 $$ H
 
-/-- The state interpretation: the ghost heap agrees with the heap of `σ`. -/
+/--
+The state interpretation: the ghost heap agrees with the heap of `σ`, the object headers hold, and
+the ghost map of canonical constants agrees with the table of constants of `σ`.
+-/
 public instance dartStateInterp : StateInterp State Obs GF where
-  stateInterp σ _ _ _ := iprop(genHeapInterp σ.toMap ∗ ObjectHeaders σ)
+  stateInterp σ _ _ _ := iprop(genHeapInterp σ.toMap ∗ ObjectHeaders σ ∗ ConstsInterp τ σ.constants)
 
 variable [SemanticParams τ]
 
@@ -214,8 +341,9 @@ end
 variable (τ) in
 /--
 A concrete bundle of the cameras (the algebraic structures from which Iris builds ghost state) that
-the logic needs: entries `0` to `3` for iris-lean's invariants and later credits, and `4` to `6`
-for the ghost heap. `instDartGpreS_DartS` says where each one is.
+the logic needs: entries `0` to `3` for iris-lean's invariants and later credits, `4` to `6`
+for the ghost heap, and `7` for the ghost map of canonical constants. `instDartGpreS_DartS` says
+where each one is.
 -/
 @[expose]
 public def DartS : BundledGFunctors
@@ -226,12 +354,13 @@ public def DartS : BundledGFunctors
   | 4 => ⟨constOF (HeapView Loc (Agree (DiscreteO Cell)) LocMap), by infer_instance⟩
   | 5 => ⟨constOF (HeapView Loc (Agree (DiscreteO GName)) LocMap), by infer_instance⟩
   | 6 => ⟨constOF MetaUR, by infer_instance⟩
+  | 7 => ⟨constOF (HeapView (List Int) (Agree (DiscreteO Loc)) ConstMap), by infer_instance⟩
   | _ => ⟨constOF Unit, by infer_instance⟩
 
 /--
 `DartS` provides all the ghost state that the logic needs, by giving the index in `DartS` of each
-camera that iris-lean's invariants (`toWsatGpreS`), later credits (`toLcGpreS`) and ghost heap
-(`heap_pre`) use.
+camera that iris-lean's invariants (`toWsatGpreS`), later credits (`toLcGpreS`), ghost heap
+(`heap_pre`) and the ghost map of canonical constants (`consts_pre`) use.
 -/
 public instance instDartGpreS_DartS : DartGpreS τ (DartS τ) where
   toWsatGpreS := by
@@ -249,13 +378,18 @@ public instance instDartGpreS_DartS : DartGpreS τ (DartS τ) where
     · constructor
       exists 5
     · exists 6
+  consts_pre := by
+    constructor
+    exists 7
 
 /--
 **Adequacy** connects the logic to the semantics: running a program `e` from state `σ` never gets
 stuck, even if it runs forever (`.NotStuck`), and if it completes, its outcome satisfies `φ`
 (`fun o _ => φ o`), if, given ownership of the cells of `σ`
 (`[∗map] ℓ ↦ c ∈ σ.toMap, cellOwn ℓ c`), `e` satisfies a weakest precondition whose postcondition is
-the pure property `φ` of its outcome (`WP e {{ o, ⌜φ o⌝ }}`) (`Hwp`).
+the pure property `φ` of its outcome (`WP e {{ o, ⌜φ o⌝ }}`) (`Hwp`). No constant may have been
+evaluated yet in `σ` (`hσ`; it holds by `rfl` for a state written out with no constants, such as
+`State.empty`).
 
 A postcondition that also mentions cells has to be weakened to its pure part first; claims about
 the final heap would need a corollary of iris's strong adequacy theorem.
@@ -263,21 +397,36 @@ the final heap would need a corollary of iris's strong adequacy theorem.
 public theorem adequacy [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     (e : LoweredExpr) (σ : State) (φ : Outcome → Prop)
     (Hwp : ∀ [DartGS τ .hasLC GF],
-      ([∗map] ℓ ↦ c ∈ σ.toMap, cellOwn (GF := GF) ℓ c) ⊢ WP e {{ o, ⌜φ o⌝ }}) :
+      ([∗map] ℓ ↦ c ∈ σ.toMap, cellOwn (GF := GF) ℓ c) ⊢ WP e {{ o, ⌜φ o⌝ }})
+    (hσ : σ.constants = [] := by rfl) :
     adequate .NotStuck e σ (fun o _ => φ o) := by
   refine wp_adequacy (GF := GF) .NotStuck e σ φ ?_
   intro inst κs
   imod genHeap_init (L := Loc) (V := Cell) (H := LocMap) σ.toMap with ⟨%G, Hh, Hpts, -⟩
-  let : DartGS τ .hasLC GF := ⟨G⟩
+  imod ghost_map_alloc_empty (GF := GF) (K := List Int) (V := Loc) (H := ConstMap)
+    with ⟨%γ, Hc⟩
+  let : DartGS τ .hasLC GF := ⟨G, inferInstance, γ⟩
   imod bigSepM_pointsTo_init (GF := GF) σ.toMap $$ Hpts with ⟨Hhdr, Hown⟩
   imodintro
-  iexists (fun σ _ => iprop(genHeapInterp σ.toMap ∗ ObjectHeaders σ))
+  iexists (fun σ _ => iprop(genHeapInterp σ.toMap ∗ ObjectHeaders σ ∗ ConstsInterp τ σ.constants))
   iexists (fun _ => iprop(True))
-  isplitl [Hh Hhdr]
+  isplitl [Hh Hhdr Hc]
   · isplitl [Hh]
     · iexact Hh
+    isplitl [Hhdr]
     · simp only [ObjectHeaders]
       iexact Hhdr
+    · simp only [ConstsInterp]
+      iexists ∅
+      isplitl [Hc]
+      · iexact Hc
+      · isplitr
+        · ipureintro
+          intro c
+          simp_all [LawfulPartialMap.get?_empty]
+        · rw [hσ]
+          iapply BigSepL.bigSepL_nil.2
+          itrivial
   · iapply (@Hwp _) $$ Hown
 
 end DartSemantics

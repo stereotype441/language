@@ -57,13 +57,16 @@ every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Null o`
 - `x` holds a value that satisfies `U` in `σ` (`hσ`).
 
 In particular, the read of `x` promoted to `T` never fails its promotion check.
+
+No constant has been evaluated yet in `σ` (`hconst`).
 -/
 public theorem castThenRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     {x : Variable} {U Tx T : τ} (hU : U ≤ Tx) (σ : State) (bindings : List (Variable × Loc))
-    (hb : BindingsOk σ bindings) (hσ : FactHolds σ bindings (.var x U)) :
+    (hb : BindingsOk σ bindings) (hσ : FactHolds σ bindings (.var x U))
+    (hconst : σ.constants = []) :
     adequate .NotStuck ((castThenRead x Tx T).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (castThenRead_typed hU) hb fun f hf => by
+  safety (GF := GF) (hconst := hconst) σ bindings (castThenRead_typed hU) hb fun f hf => by
     rw [List.mem_singleton.1 hf]
     exact hσ
 
@@ -103,14 +106,17 @@ and every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Nul
   satisfies `W` in `σ` (`hf`).
 
 In particular, the read of `x._f` promoted to `NonNull W` never fails its promotion check.
+
+No constant has been evaluated yet in `σ` (`hconst`).
 -/
 public theorem nullCheckThenRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     (L : TypeLaws τ) {x : Variable} {p : Property} {U Tx W : τ} (hU : U ≤ Tx) (σ : State)
     (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
-    (hx : FactHolds σ bindings (.var x U)) (hf : FactHolds σ bindings (.field x [p.name] W)) :
+    (hx : FactHolds σ bindings (.var x U)) (hf : FactHolds σ bindings (.field x [p.name] W))
+    (hconst : σ.constants = []) :
     adequate .NotStuck ((nullCheckThenRead x Tx p W).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (nullCheckThenRead_typed L hU) hb fun f hf' => by
+  safety (GF := GF) (hconst := hconst) σ bindings (nullCheckThenRead_typed L hU) hb fun f hf' => by
     simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf'
     rcases hf' with rfl | rfl
     · exact hx
@@ -179,16 +185,20 @@ stuck, and every outcome it completes with is consistent with `Null` (`OutcomeOk
 - the instance variable `x._f._g` holds a value that satisfies `Vq` in `σ` (`hfq`).
 
 In particular, the read of `x._f._g` promoted to `NonNull Wq` never fails its promotion check.
+
+No constant has been evaluated yet in `σ` (`hconst`).
 -/
 public theorem nestedNullCheckThenRead_safe [SemanticParams τ] {GF : BundledGFunctors}
     [DartGpreS τ GF] (L : TypeLaws τ) {x : Variable} {p q : Property} {U Tx Vp Wp Vq Wq : τ}
     (hU : U ≤ Tx) (hp : Vp ≤ Wp) (hq : Vq ≤ Wq) (σ : State) (bindings : List (Variable × Loc))
     (hb : BindingsOk σ bindings) (hx : FactHolds σ bindings (.var x U))
     (hfp : FactHolds σ bindings (.field x [p.name] Vp))
-    (hfq : FactHolds σ bindings (.field x [p.name, q.name] Vq)) :
+    (hfq : FactHolds σ bindings (.field x [p.name, q.name] Vq))
+    (hconst : σ.constants = []) :
     adequate .NotStuck ((nestedNullCheckThenRead x Tx p Wp q Wq).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (nestedNullCheckThenRead_typed L hU hp hq) hb fun f hf' => by
+  safety (GF := GF) (hconst := hconst) σ bindings
+    (nestedNullCheckThenRead_typed L hU hp hq) hb fun f hf' => by
     simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf'
     rcases hf' with rfl | rfl | rfl
     · exact hx
@@ -239,14 +249,18 @@ stuck, and every outcome it completes with is consistent with `Null` (`OutcomeOk
 - `y` holds a value that satisfies `U` in `σ` (`hy`).
 
 In particular, the last read of `x`, demoted to `Ty`, never fails its promotion check.
+
+No constant has been evaluated yet in `σ` (`hconst`).
 -/
 public theorem castAssignRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     {x y : Variable} {Ux Tx T U Ty : τ} (hnf : x.isFinal = false) (hUx : Ux ≤ Tx) (hU : U ≤ Ty)
     (σ : State) (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
-    (hx : FactHolds σ bindings (.var x Ux)) (hy : FactHolds σ bindings (.var y U)) :
+    (hx : FactHolds σ bindings (.var x Ux)) (hy : FactHolds σ bindings (.var y U))
+    (hconst : σ.constants = []) :
     adequate .NotStuck ((castAssignRead x Tx T y Ty).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (castAssignRead_typed (T := T) hnf hUx hU) hb fun f hf => by
+  safety (GF := GF) (hconst := hconst) σ bindings
+    (castAssignRead_typed (T := T) hnf hUx hU) hb fun f hf => by
     simp only [List.mem_cons, List.not_mem_nil, _root_.or_false] at hf
     rcases hf with rfl | rfl | rfl
     · exact hx
@@ -296,14 +310,18 @@ and every outcome it completes with is consistent with `Null` (`OutcomeOk Γ.Nul
 
 In particular, if `z` is `final`, the assignment to it doesn't get stuck: `z` hasn't been assigned
 before.
+
+No constant has been evaluated yet in `σ` (`hconst`).
 -/
 public theorem finalInitRead_safe [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ GF]
     {z y : Variable} {T U Ty : τ} (hyz : y ≠ z) (hU : U ≤ Ty) (σ : State)
     (bindings : List (Variable × Loc)) (hb : BindingsOk σ bindings)
-    (hy : FactHolds σ bindings (.var y U)) :
+    (hy : FactHolds σ bindings (.var y U))
+    (hconst : σ.constants = []) :
     adequate .NotStuck ((finalInitRead z T y Ty).bindVariables bindings) σ
       (fun o _ => OutcomeOk Γ.Null o) :=
-  safety (GF := GF) σ bindings (finalInitRead_typed (T := T) hyz hU) hb fun f hf => by
+  safety (GF := GF) (hconst := hconst) σ bindings
+    (finalInitRead_typed (T := T) hyz hU) hb fun f hf => by
     rw [List.mem_singleton.1 hf]
     exact hy
 
