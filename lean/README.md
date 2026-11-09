@@ -264,12 +264,19 @@ What exists so far:
 - The semantics also has let expressions (`letIn`, Kernel's `Let`, which the CFE's lowerings of
   postfix increments, `?.`, `??` and cascades produce), with interpreter support and a
   program-logic law (`wp_letIn`), but no typing rule yet.
+- The semantics also has strings, which are objects in the heap holding UTF-16 code units, with
+  `String` as a type in the type representation: constants (`constant`, canonicalized through a
+  table in the state, so that equal constants are the same object), interpolation and `+`
+  (`concat`, of strings, the null object, booleans and integers), and `==` on strings. These have
+  interpreter support and program-logic laws (with `IsConst` for canonical objects, and `Fresh`
+  for new strings), but no typing rules yet.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, a program with calls proved safe and correct (`CallSpecs`), a
   loop proved correct (`LoopSpecs`), a program with an object and one with an overriding method
-  proved correct (`ObjectSpecs`), a postfix increment proved correct (`LetSpecs`), small programs
-  proved safe with the typing rules (`Corollaries`), and checks that `SimpleType` and `KernelType`
-  obey the laws that the typing rules assume.
+  proved correct (`ObjectSpecs`), a postfix increment proved correct (`LetSpecs`), a function
+  that builds a string proved correct, with `identical` and `==` on strings (`StringSpecs`),
+  small programs proved safe with the typing rules (`Corollaries`), and checks that `SimpleType`
+  and `KernelType` obey the laws that the typing rules assume.
 - The Kernel translator hasn't been started.
 
 ## Documentation conventions

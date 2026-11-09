@@ -9,3 +9,4 @@ import Tests.DartSemantics.LoopSpecs
 import Tests.DartSemantics.ObjectSpecs
 import Tests.DartSemantics.SemanticTyping
 import Tests.DartSemantics.Specs
+import Tests.DartSemantics.StringSpecs
