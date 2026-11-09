@@ -27,6 +27,10 @@ theorem typeLaws : TypeLaws SimpleType where
   le_nonNull {S T} hS hST := by
     have hN : (DartTypeRepr.Null : SimpleType) = Null := rfl
     cases S <;> cases T <;> simp_all [LE.le, isSubtype, DartTypeRepr.NonNull, NonNull]
+  not_null_le_string := by decide
+  not_string_le_bool := by decide
+  not_string_le_int := by decide
+  nonNull_string := rfl
 
 /--
 The classes of the programs tested here: just `class C { final Object? _f; final Object? _g; }`.

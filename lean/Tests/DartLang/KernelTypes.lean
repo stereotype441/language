@@ -23,17 +23,22 @@ theorem typeLaws (H : ClassHierarchy) : TypeLaws (KernelType H) where
     have hN : (DartTypeRepr.Null : KernelType H) = Null := rfl
     have hNN : (DartTypeRepr.NonNull : KernelType H → KernelType H) = NonNull := rfl
     cases S <;> cases T <;> simp_all [isSubtype, isNullable, NonNull]
+  not_null_le_string := by
+    simp [DartTypeRepr.Null, DartTypeRepr.String, isSubtype, isNullable]
+  not_string_le_bool := not_string_le_bool
+  not_string_le_int := not_string_le_int
+  nonNull_string := rfl
 
 /--
 A sample class hierarchy:
 
-- `bool` (`0`) and `int` (`1`), the reserved classes, where `int` extends `num`;
-- `num` (`2`) and `String` (`3`); and
+- `bool` (`0`), `int` (`1`) and `String` (`2`), the reserved classes, where `int` extends `num`;
+- `num` (`3`); and
 - `A` (`4`), `B extends A` (`5`) and `C extends B` (`6`).
 -/
 def sample : ClassHierarchy where
-  names := ["bool", "int", "num", "String", "A", "B", "C"]
-  supers := [[], [2], [], [], [], [4], [5, 4]]
+  names := ["bool", "int", "String", "num", "A", "B", "C"]
+  supers := [[], [3], [], [], [], [4], [5, 4]]
   wf := by decide
 
 local notation "T" => KernelType sample
@@ -41,9 +46,9 @@ local notation "T" => KernelType sample
 /-- `int` in the sample hierarchy. -/
 def int : T := .interface 1 false
 /-- `num` in the sample hierarchy. -/
-def num : T := .interface 2 false
+def num : T := .interface 3 false
 /-- `String` in the sample hierarchy. -/
-def string : T := .interface 3 false
+def string : T := .interface 2 false
 /-- Class `A` in the sample hierarchy. -/
 def A : T := .interface 4 false
 /-- Class `B` in the sample hierarchy. -/

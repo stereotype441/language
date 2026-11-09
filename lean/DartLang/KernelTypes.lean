@@ -21,9 +21,9 @@ translator emits for each program. `KernelType H` is the type representation for
 `H`.
 
 Classes are identified by number, because the Lean kernel compares numbers quickly, and the
-translator proves facts about the table with `decide`, which the kernel evaluates. Two numbers are
-reserved: `boolClass` and `intClass`, so that the special types `bool` and `int` of `DartTypeRepr`
-don't depend on the table.
+translator proves facts about the table with `decide`, which the kernel evaluates. Three numbers
+are reserved: `boolClass`, `intClass` and `stringClass`, so that the special types `bool`, `int`
+and `String` of `DartTypeRepr` don't depend on the table.
 
 A hierarchy only has to describe the classes that can appear in a type of the program, and only
 the superclasses that can themselves appear in a type. Leaving out a superclass that can't (such
@@ -48,6 +48,10 @@ public def boolClass : Nat := 0
 @[expose]
 public def intClass : Nat := 1
 
+/-- The number of class `String` in every class hierarchy. -/
+@[expose]
+public def stringClass : Nat := 2
+
 namespace ClassHierarchy
 
 /--
@@ -59,22 +63,22 @@ public def supersOf (supers : List (List Nat)) (c : Nat) : List Nat :=
   supers.getD c []
 
 /--
-Whether the table `supers` is well formed: every entry lists neither `bool` nor `int` (which can't
-be extended or implemented), and is transitively closed (it lists every superclass of every class
-it lists).
+Whether the table `supers` is well formed: every entry lists none of `bool`, `int` and `String`
+(which can't be extended or implemented), and is transitively closed (it lists every superclass of
+every class it lists).
 -/
 @[expose]
 public def isWellFormed (supers : List (List Nat)) : Bool :=
   supers.all fun cs =>
-    !cs.contains boolClass && !cs.contains intClass &&
+    !cs.contains boolClass && !cs.contains intClass && !cs.contains stringClass &&
       cs.all fun d => (supersOf supers d).all fun e => cs.contains e
 
 end ClassHierarchy
 
 /--
 A class hierarchy: for each class, its name and its proper superclasses (direct or indirect).
-Class `c` is named `names[c]`, and its superclasses are `supersOf supers c`. Classes `boolClass`
-and `intClass` are `bool` and `int`.
+Class `c` is named `names[c]`, and its superclasses are `supersOf supers c`. Classes `boolClass`,
+`intClass` and `stringClass` are `bool`, `int` and `String`.
 -/
 public structure ClassHierarchy where
   /-- The name of each class, for printing types. -/
@@ -112,11 +116,11 @@ public theorem mem_supersOf_trans {c d e : Nat} (hd : d ∈ supersOf H.supers c)
     exact hrow.2 d hd e he
 
 /--
-No class has `bool` as a superclass: if `d` is a superclass of `c` (`hd`), it isn't `bool`
-(`d ≠ boolClass`).
+No class has a reserved class as a superclass: if `d` is a superclass of `c` (`hd`), it isn't
+`bool`, `int` or `String` (`d ≠ boolClass ∧ d ≠ intClass ∧ d ≠ stringClass`).
 -/
-public theorem ne_boolClass_of_mem_supersOf {c d : Nat} (hd : d ∈ supersOf H.supers c) :
-    d ≠ boolClass := by
+public theorem ne_reserved_of_mem_supersOf {c d : Nat} (hd : d ∈ supersOf H.supers c) :
+    d ≠ boolClass ∧ d ≠ intClass ∧ d ≠ stringClass := by
   have hwf := H.wf
   unfold supersOf at hd
   rw [List.getD_eq_getElem?_getD] at hd
@@ -125,9 +129,15 @@ public theorem ne_boolClass_of_mem_supersOf {c d : Nat} (hd : d ∈ supersOf H.s
   | some cs =>
     simp only [hc, Option.getD_some] at hd
     have hrow := List.all_eq_true.mp hwf cs (List.mem_of_getElem? hc)
-    intro heq
-    subst heq
-    simp_all
+    refine ⟨?_, ?_, ?_⟩ <;> intro heq <;> subst heq <;> simp_all
+
+/--
+No class has `bool` as a superclass: if `d` is a superclass of `c` (`hd`), it isn't `bool`
+(`d ≠ boolClass`).
+-/
+public theorem ne_boolClass_of_mem_supersOf {c d : Nat} (hd : d ∈ supersOf H.supers c) :
+    d ≠ boolClass :=
+  (H.ne_reserved_of_mem_supersOf hd).1
 
 /-- `isSubclass` is reflexive (`H.isSubclass c c = true`). -/
 public theorem isSubclass_refl (c : Nat) : H.isSubclass c c = true := by
@@ -158,6 +168,32 @@ public theorem isSubclass_boolClass {c : Nat} (hc : c ≠ boolClass) :
   intro hd
   rw [List.contains_iff_mem] at hd
   exact H.ne_boolClass_of_mem_supersOf hd rfl
+
+/--
+Only `int` itself is a subclass of `int`: if `c` isn't `int` (`hc`), it isn't a subclass of `int`
+(`H.isSubclass c intClass = false`).
+-/
+public theorem isSubclass_intClass {c : Nat} (hc : c ≠ intClass) :
+    H.isSubclass c intClass = false := by
+  simp only [isSubclass, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+  refine ⟨hc, ?_⟩
+  rw [Bool.eq_false_iff]
+  intro hd
+  rw [List.contains_iff_mem] at hd
+  exact (H.ne_reserved_of_mem_supersOf hd).2.1 rfl
+
+/--
+Only `String` itself is a subclass of `String`: if `c` isn't `String` (`hc`), it isn't a subclass
+of `String` (`H.isSubclass c stringClass = false`).
+-/
+public theorem isSubclass_stringClass {c : Nat} (hc : c ≠ stringClass) :
+    H.isSubclass c stringClass = false := by
+  simp only [isSubclass, Bool.or_eq_false_iff, beq_eq_false_iff_ne]
+  refine ⟨hc, ?_⟩
+  rw [Bool.eq_false_iff]
+  intro hd
+  rw [List.contains_iff_mem] at hd
+  exact (H.ne_reserved_of_mem_supersOf hd).2.2 rfl
 
 end ClassHierarchy
 
@@ -312,7 +348,9 @@ where
   /-- `s`, followed by `?` if `nullable`. -/
   suffix (s : String) (nullable : Bool) : String := if nullable then s ++ "?" else s
 
-/-- `KernelType H` is a type representation, with `bool` and `int` the reserved classes. -/
+/--
+`KernelType H` is a type representation, with `bool`, `int` and `String` the reserved classes.
+-/
 public instance instDartTypeRepr : DartTypeRepr (KernelType H) where
   rfl := instLawfulBEq_rfl
   eq_of_beq := instLawfulBEq_eq_of_beq
@@ -341,6 +379,7 @@ public instance instDartTypeRepr : DartTypeRepr (KernelType H) where
   Null := Null
   Object := Object false
   ObjectQ := Object true
+  String := interface stringClass false
   default := Never
 
 namespace instDartTypeRepr
@@ -362,6 +401,24 @@ public theorem not_int_le_bool :
   simp only [instDartTypeRepr.le.iff]
   simp [DartTypeRepr.int, DartTypeRepr.bool, isSubtype,
     H.isSubclass_boolClass (c := intClass) (by decide)]
+
+/--
+`String` isn't a subtype of `bool` (`¬ String ≤ bool`), since no class has `bool` as a superclass.
+-/
+public theorem not_string_le_bool :
+    ¬ (DartTypeRepr.String : KernelType H) ≤ DartTypeRepr.bool := by
+  simp only [instDartTypeRepr.le.iff]
+  simp [DartTypeRepr.String, DartTypeRepr.bool, isSubtype,
+    H.isSubclass_boolClass (c := stringClass) (by decide)]
+
+/--
+`String` isn't a subtype of `int` (`¬ String ≤ int`), since no class has `int` as a superclass.
+-/
+public theorem not_string_le_int :
+    ¬ (DartTypeRepr.String : KernelType H) ≤ DartTypeRepr.int := by
+  simp only [instDartTypeRepr.le.iff]
+  simp [DartTypeRepr.String, DartTypeRepr.int, isSubtype,
+    H.isSubclass_intClass (c := stringClass) (by decide)]
 
 /-- For `KernelType`, subtyping is decidable, so the run-time check always terminates. -/
 public instance instDartRuntimeTypeRepr : DartRuntimeTypeRepr (KernelType H) where

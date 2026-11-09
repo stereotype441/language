@@ -92,6 +92,14 @@ public structure TypeLaws : Prop where
   not_null_le_bool : ¬ Γ.Null ≤ Γ.bool
   /-- A non-nullable subtype of `T` is a subtype of `NonNull T` (for null checks). -/
   le_nonNull {S T : τ} : ¬ Γ.Null ≤ S → S ≤ T → S ≤ Γ.NonNull T
+  /-- `String` isn't nullable, so the null object isn't a string. -/
+  not_null_le_string : ¬ Γ.Null ≤ Γ.String
+  /-- `String` isn't a subtype of `bool`, so a string isn't a boolean. -/
+  not_string_le_bool : ¬ Γ.String ≤ Γ.bool
+  /-- `String` isn't a subtype of `int`, so a string isn't an integer. -/
+  not_string_le_int : ¬ Γ.String ≤ Γ.int
+  /-- `String` is already non-nullable (`NonNull String = String`). -/
+  nonNull_string : Γ.NonNull Γ.String = Γ.String
 
 /--
 What the typing rules need to know about a value whose dynamic type is `S`, besides `S` itself: if

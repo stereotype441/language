@@ -36,6 +36,8 @@ public class DartTypeRepr (τ : Type) extends BEq τ, LawfulBEq τ, Preorder τ,
   Null : τ
   Object : τ
   ObjectQ : τ
+  /-- The type `String`, the dynamic type of every string. -/
+  String : τ
 
 variable {τ : Type} [DartTypeRepr τ]
 

@@ -24,6 +24,8 @@ public inductive SimpleType where
   | Never : SimpleType
   | int : SimpleType
   | bool : SimpleType
+  /-- The type `String`, which (like `int` and `bool`) can't be extended or implemented. -/
+  | String : SimpleType
   | List (elementType : SimpleType) : SimpleType
   | Map (key value : SimpleType) : SimpleType
   /--
@@ -68,6 +70,8 @@ public def isSubtype : SimpleType -> SimpleType -> Bool
   | int,       Object    => true
   | bool,      bool      => true
   | bool,      Object    => true
+  | String,    String    => true
+  | String,    Object    => true
   | List _,    Object    => true
   | List T,    List U    => isSubtype T U
   | Map _ _,   Object    => true
@@ -115,6 +119,7 @@ public def NonNull : SimpleType -> SimpleType
   | Never   => Never
   | int     => int
   | bool    => bool
+  | String  => String
   | List T' => List T'
   | Map K V => Map K V
   | Class n s => Class n s
@@ -147,6 +152,7 @@ public instance instSimpleTypeRepr : DartTypeRepr SimpleType where
   Null := Null
   Object := Object
   ObjectQ := ObjectQ
+  String := String
   default := Never
 
 namespace instSimpleTypeRepr
@@ -184,6 +190,11 @@ public theorem Object.eq :
 @[simp]
 public theorem ObjectQ.eq :
     (inferInstance : DartTypeRepr SimpleType).ObjectQ = ObjectQ := by rfl
+
+/-- The `String` type of the `DartTypeRepr` instance is `SimpleType.String`. -/
+@[simp]
+public theorem String.eq :
+    (inferInstance : DartTypeRepr SimpleType).String = String := by rfl
 
 end instSimpleTypeRepr
 
