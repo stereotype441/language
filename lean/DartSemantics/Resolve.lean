@@ -75,6 +75,8 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .identical m₁ m₂ => .identical (m₁.resolve x ℓ) (m₂.resolve x ℓ)
   -- A let variable named `x` shadows the outer `x` in the body.
   | .letIn v m₁ m₂ => .letIn v (m₁.resolve x ℓ) (if v = x then m₂ else m₂.resolve x ℓ)
+  | .constant c => .constant c
+  | .concat parts => .concat (LoweredExpr.resolveList x ℓ parts)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v

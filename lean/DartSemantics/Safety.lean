@@ -57,7 +57,7 @@ public def OutcomeOk (T : τ) : DartLang.Outcome (τ := τ) → Prop
 public structure BindingsOk (σ : State) (bindings : List (Variable × Loc)) : Prop where
   nodup : (bindings.map (·.1)).Nodup
   nodup_locs : (bindings.map (·.2)).Nodup
-  cells : ∀ b ∈ bindings, ∃ c, σ.lookup b.2 = some c ∧ ∀ k C fs, c ≠ .object k C fs
+  cells : ∀ b ∈ bindings, ∃ c, σ.lookup b.2 = some c ∧ c.isVar = true
 
 /--
 Following property path `path` from value `v` reaches value `w` in state `σ`. For the empty path,
@@ -153,6 +153,11 @@ theorem cellOwn_persist (ℓ : Loc) (c : Cell) :
     iintro H
     imodintro
     iexact H
+  | string cu =>
+    simp only [cellOwn]
+    iintro H
+    imodintro
+    iexact H
   | val v =>
     simp only [cellOwn]
     iintro H
@@ -172,11 +177,11 @@ The ownership of the cells of a heap `m` (`[∗map] ℓ ↦ c ∈ m, cellOwn ℓ
 provided:
 - the variables have cells of their own (`hnd`); and
 - each variable's cell holds what `env` says (`get? m b.2 = some (env b.1)`), which isn't an
-  object's own cell (`∀ k C fs, env b.1 ≠ .object k C fs`) (`hc`).
+  object's own cell (`(env b.1).isVar = true`) (`hc`).
 -/
 theorem cellOwn_split (env : Env) {bindings : List (Variable × Loc)} {m : LocMap Cell}
     (hnd : (bindings.map (·.2)).Nodup)
-    (hc : ∀ b ∈ bindings, get? m b.2 = some (env b.1) ∧ ∀ k C fs, env b.1 ≠ .object k C fs) :
+    (hc : ∀ b ∈ bindings, get? m b.2 = some (env b.1) ∧ (env b.1).isVar = true) :
     ([∗map] ℓ ↦ c ∈ m, cellOwn (GF := GF) ℓ c) ⊢
       interpEnv bindings env ∗ [∗map] ℓ ↦ c ∈ unbound m bindings, cellOwn ℓ c := by
   induction bindings generalizing m with
@@ -188,14 +193,14 @@ theorem cellOwn_split (env : Env) {bindings : List (Variable × Loc)} {m : LocMa
     simp only [List.map_cons, List.nodup_cons] at hnd
     obtain ⟨hm, hobj⟩ := hc (x, ℓ) (List.mem_cons_self ..)
     have hc' : ∀ b ∈ bs, get? (delete m ℓ) b.2 = some (env b.1) ∧
-        ∀ k C fs, env b.1 ≠ .object k C fs := fun b hb => by
+        (env b.1).isVar = true := fun b hb => by
       have hne : ℓ ≠ b.2 := fun h => hnd.1 (List.mem_map.2 ⟨b, hb, h.symm⟩)
       rw [LawfulPartialMap.get?_delete_ne hne]
       exact hc b (List.mem_cons_of_mem _ hb)
     have hown : cellOwn (GF := GF) ℓ (env x) ⊢ interpCell ℓ (env x) := by
       revert hobj
       cases env x with
-      | object k C fs => intro hobj; exact absurd rfl (hobj k C fs)
+      | object | string => intro hobj; simp [Cell.isVar] at hobj
       | _ =>
         intro hobj
         simp only [cellOwn, interpCell]
@@ -228,18 +233,18 @@ theorem pointsTo_of_unbound {σ : State} {bindings : List (Variable × Loc)} {�
 
 omit Γ in
 /--
-An object's own cell, at `ℓ` (`h`), isn't one of the variables' cells (`∀ b ∈ bindings, b.2 ≠ ℓ`),
-if the bindings are suitable (`hb`).
+An object's own cell, at `ℓ` (`h`, which holds `c`, not a variable's cell; `hc`), isn't one of the
+variables' cells (`∀ b ∈ bindings, b.2 ≠ ℓ`), if the bindings are suitable (`hb`).
 -/
 theorem not_bound_of_object {σ : State} {bindings : List (Variable × Loc)}
-    (hb : BindingsOk σ bindings)
-    {ℓ : Loc} {k : String} {C : τ} {fs : List (String × Loc)}
-    (h : σ.lookup ℓ = some (.object k C fs)) :
+    (hb : BindingsOk σ bindings) {ℓ : Loc} {c : Cell} (h : σ.lookup ℓ = some c)
+    (hc : c.isVar = false) :
     ∀ b ∈ bindings, b.2 ≠ ℓ := by
   intro b hmem heq
-  obtain ⟨c, hc, hobj⟩ := hb.cells b hmem
-  rw [heq, h] at hc
-  exact hobj k C fs (Option.some.inj hc).symm
+  obtain ⟨c', hc', hobj⟩ := hb.cells b hmem
+  rw [heq, h] at hc'
+  cases Option.some.inj hc'
+  simp_all
 
 /--
 A value `v` satisfies `T` (`interpVal T v`), given persistent ownership of the cells other than the
@@ -275,7 +280,12 @@ theorem interpVal_of_unbound {σ : State} {bindings : List (Variable × Loc)}
         simp only [Option.some.injEq] at hS
         subst hS
         iapply HasDynamicType.obj
-        iapply pointsTo_of_unbound hℓ (not_bound_of_object hb hℓ) $$ H
+        iapply pointsTo_of_unbound hℓ (not_bound_of_object hb hℓ rfl) $$ H
+      · rename_i cu hℓ
+        simp only [Option.some.injEq] at hS
+        subst hS
+        iapply HasDynamicType.string
+        iapply pointsTo_of_unbound hℓ (not_bound_of_object hb hℓ rfl) $$ H
       · cases hS
     | error e => cases hS
     | cont k => cases hS
@@ -307,7 +317,7 @@ theorem interpFieldPath_of_holds [SemanticParams τ] {σ : State} {bindings : Li
     · ipureintro
       exact ⟨hv, hfs, hd⟩
     isplitr
-    · iapply pointsTo_of_unbound ho (not_bound_of_object hb ho) $$ H
+    · iapply pointsTo_of_unbound ho (not_bound_of_object hb ho rfl) $$ H
     isplitr
     · iapply pointsTo_of_unbound hcf hnb $$ H
     · iapply ih hp $$ H
@@ -417,7 +427,7 @@ public theorem safety [SemanticParams τ] {GF : BundledGFunctors} [DartGpreS τ 
       ipureintro
       trivial
   have hcells : ∀ b ∈ bindings, get? σ.toMap b.2 = some (envOf σ bindings b.1) ∧
-      ∀ k C fs, envOf σ bindings b.1 ≠ .object k C fs := by
+      (envOf σ bindings b.1).isVar = true := by
     intro b hmem
     obtain ⟨c, hc, hobj⟩ := hb.cells b hmem
     have hl : bindings.lookup b.1 = some b.2 := lookup_of_mem hb.nodup hmem

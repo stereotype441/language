@@ -16,7 +16,8 @@ over the finite-map view of the heap (`State.toMap`). Its points-to assertion `�
 the cell at `ℓ` holds `c`, and grants ownership of the cell.
 
 An object's own cell (`Cell.object`) never changes once the object exists: it records the object's
-class, its dynamic type and the locations of its instance variables. So the logic keeps a
+class, its dynamic type and the locations of its instance variables. Neither does a string's cell
+(`Cell.string`), since strings are immutable. So the logic keeps a
 *persistent* points-to `ℓ ↦{DFrac.discard} c` (written `ℓ ↦□ c` in Rocq iris) for each object
 cell, which can be freely duplicated: knowing an object's class and dynamic type doesn't require
 owning it. The state interpretation holds these for every object in the heap (`ObjectHeaders`), so
@@ -69,11 +70,12 @@ variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
 
 /--
 The persistent knowledge that the logic keeps about the cell `c` at `ℓ`: if `c` is an object's own
-cell, a persistent points-to for it; otherwise nothing.
+cell (an instance of a class, or a string), a persistent points-to for it; otherwise nothing.
 -/
 @[expose]
 public def cellHeader (ℓ : Loc) : Cell → IProp GF
   | .object k C fs => ℓ ↦{.discard} (.object k C fs : Cell)
+  | .string cu => ℓ ↦{.discard} (.string cu : Cell)
   | _ => iprop(emp)
 
 /-- `cellHeader ℓ c` is persistent: it's either a persistent points-to or `emp`. -/
@@ -82,7 +84,8 @@ public instance cellHeader_persistent (ℓ : Loc) (c : Cell) :
   cases c <;> simp only [cellHeader] <;> infer_instance
 
 /--
-A persistent points-to for the own cell of every object in the heap of `σ`.
+A persistent points-to for the own cell of every object in the heap of `σ` (instances of classes,
+and strings).
 
 The state interpretation holds these so that a proof can learn the class and dynamic type of an
 object it has no other knowledge of (see `HasDynamicType.of_headers` in `PrimitiveLaws.lean`). The
@@ -103,6 +106,7 @@ is an object's own cell (which never changes), and an ordinary points-to otherwi
 @[expose]
 public def cellOwn (ℓ : Loc) : Cell → IProp GF
   | .object k C fs => ℓ ↦{.discard} (.object k C fs : Cell)
+  | .string cu => ℓ ↦{.discard} (.string cu : Cell)
   | c => ℓ ↦ c
 
 omit Γ in
@@ -114,6 +118,14 @@ theorem pointsTo_init (ℓ : Loc) (c : Cell) :
     ℓ ↦ c ⊢ |==> (cellHeader (GF := GF) ℓ c ∗ cellOwn ℓ c) := by
   cases c with
   | object k C fs =>
+    simp only [cellHeader, cellOwn]
+    iintro H
+    imod pointsTo_persist $$ H with #H
+    imodintro
+    isplitl
+    · iexact H
+    · iexact H
+  | string cu =>
     simp only [cellHeader, cellOwn]
     iintro H
     imod pointsTo_persist $$ H with #H

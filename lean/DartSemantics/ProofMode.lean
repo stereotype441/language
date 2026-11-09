@@ -394,7 +394,7 @@ determines the cell, and then the facts that the cell isn't an object's own cell
 -/
 public theorem tac_wp_store {x : Variable} {ℓ : Loc} {c : Cell} {w : Value}
     (H : Entails' Δ iprop(▷ (ℓ ↦ c) ∗ ▷ ((ℓ ↦ (.val w : Cell)) -∗ Φ (.normal w))))
-    (hc : ∀ k C fs, c ≠ .object k C fs) (hfin : x.isFinal = true → c = .uninit) :
+    (hc : c.isVar = true) (hfin : x.isFinal = true → c = .uninit) :
     Entails' Δ (WP (LoweredExpr.variableSetAt x ℓ (.val w)) @ s; E {{ Φ }}) :=
   (show Δ ⊢ _ from H).trans (wp_variableSetAt hc hfin)
 
@@ -1027,8 +1027,7 @@ macro_rules
     (apply DartSemantics.tac_wp_store
      iframe $h:ident
      rotate_left
-     · intro _ _ _ h
-       cases h
+     · rfl
      first
        | (· intro h
             cases h)

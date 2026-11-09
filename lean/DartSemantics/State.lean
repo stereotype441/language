@@ -19,10 +19,10 @@ local notation "Value" => Value (τ := τ)
 The contents of a heap cell.
 
 A cell is either the storage for a variable (a local variable, or an instance variable of an
-object), or an object's own cell, which records its class and where its instance variables are
-stored. Keeping instance variables in cells of their own means that the program logic can reason
-about each instance variable separately, with the same points-to assertion as for a local
-variable.
+object), or an object's own cell: for an instance of a class, the cell records its class and where
+its instance variables are stored; for a string, it holds the string's contents. Keeping instance
+variables in cells of their own means that the program logic can reason about each instance
+variable separately, with the same points-to assertion as for a local variable.
 
 This type is separate from `Value`: values never refer to cells, only to locations.
 -/
@@ -44,9 +44,25 @@ public inductive Cell where
   `ClassDecl.instanceVariables`) to its cell's location.
   -/
   | object (cls : String) (dynamicType : τ) (fields : List (String × Loc))
+  /--
+  A string, whose UTF-16 code units are `cu` (exactly a Dart string, which can hold unpaired
+  surrogates; see `ConstValue.string`). Its dynamic type is `String`. Strings are immutable: no
+  step changes a string's cell.
+  -/
+  | string (cu : List UInt16)
   deriving Repr, BEq
 
 local notation "Cell" => Cell (τ := τ)
+
+omit Γ in
+/--
+Whether cell `c` is the storage for a variable (holding a value, or uninitialized), rather than an
+object's own cell. Only a variable's cell can be assigned.
+-/
+@[expose]
+public def Cell.isVar : Cell → Bool
+  | .val _ | .uninit => true
+  | .object _ _ _ | .string _ => false
 
 /--
 The state of a running program.
@@ -61,13 +77,19 @@ public structure State where
   interpreter fast (provided the state is used linearly; see `Interp.primStep`).
   -/
   heap : Array Cell
+  /--
+  The canonical object of each constant evaluated so far (see `LoweredExpr.constant`), by its
+  structural description, as a list of pairs (most recent first). Only constants whose values are
+  objects in the heap are recorded.
+  -/
+  constants : List (ConstValue × Loc)
   deriving Repr
 
 local notation "State" => State (τ := τ)
 
 /-- The state of a program that hasn't allocated anything. -/
 @[expose]
-public def State.empty : State := ⟨#[]⟩
+public def State.empty : State := ⟨#[], []⟩
 
 /-- The cell at location `ℓ`, if it has been allocated. -/
 @[expose]
@@ -144,9 +166,86 @@ public def State.dynamicType (σ : State) : Value → Option τ
   | .obj ℓ =>
     match σ.lookup ℓ with
     | some (.object _ T _) => some T
+    | some (.string _) => some Γ.String
     | _ => none
   | .error _ => none
   | .cont _ => none
+
+omit Γ in
+/-- The code units of the string that value `v` refers to, if it refers to a string. -/
+@[expose]
+public def State.string? (σ : State) : Value → Option (List UInt16)
+  | .obj ℓ =>
+    match σ.lookup ℓ with
+    | some (.string cu) => some cu
+    | _ => none
+  | _ => none
+
+omit Γ in
+/--
+Whether two values are equal, for the intrinsic check `LoweredExpr.checkEq` and for equality
+`LoweredExpr.primEq`, if they can be compared without running user code: two strings are equal if
+they have the same code units (`String`'s `==`, which can't be overridden, since `String` can't be
+extended); a string is unequal to the null object, a boolean or an integer; and otherwise, as
+`Value.primEq?` says. Anything else (in particular, an instance of a class, whose `==` runs user
+code) can't be compared (`none`).
+-/
+@[expose]
+public def State.primEq? (σ : State) (v₁ v₂ : Value) : Option Bool :=
+  match σ.string? v₁, σ.string? v₂ with
+  | some cu₁, some cu₂ => some (cu₁ == cu₂)
+  | some _, none =>
+    match v₂ with
+    | .null | .bool _ | .int _ => some false
+    | _ => none
+  | none, some _ =>
+    match v₁ with
+    | .null | .bool _ | .int _ => some false
+    | _ => none
+  | none, none => Value.primEq? v₁ v₂
+
+omit Γ in
+/--
+The string form of value `v`, as a part of a string concatenation (`LoweredExpr.concat`), if it
+has one that doesn't come from user code: a string's code units, `"null"`, `"true"` or `"false"`,
+or an integer's decimal form (with a leading `-` if it's negative).
+-/
+@[expose]
+public def State.stringPart? (σ : State) : Value → Option (List UInt16)
+  | .null => some (DartString.ofString "null")
+  | .bool b => some (DartString.ofString (if b then "true" else "false"))
+  | .int n => some (DartString.ofString (toString n))
+  | v => σ.string? v
+
+omit Γ in
+/--
+Allocate the canonical object of constant `c`, whose own cell is `cell` (for a string constant,
+the string), recording it in the table of constants: the new object is at `σ.fresh`.
+-/
+@[expose]
+public def State.allocConst (σ : State) (c : ConstValue) (cell : Cell) : State :=
+  { σ.alloc cell with constants := (c, σ.fresh) :: σ.constants }
+
+omit Γ in
+/--
+The value of constant `c` in state `σ`, and the state afterwards (see `LoweredExpr.constant`): the
+null object, a boolean or an integer is the value itself (`ConstValue.prim?`), and the state is
+unchanged. Any other constant evaluates to its canonical object: the one that the table of
+constants records for `c`, if any; otherwise (for a string), a new string object, which is recorded
+in the table (`allocConst`). (`none` for a constant that has no value yet, which can't happen for
+the kinds of constant so far.)
+-/
+@[expose]
+public def State.constant? (σ : State) (c : ConstValue) : Option (Value × State) :=
+  match c.prim? with
+  | some v => some (v, σ)
+  | none =>
+    match σ.constants.lookup c with
+    | some ℓ => some (.obj ℓ, σ)
+    | none =>
+      match c with
+      | .string cu => some (.obj σ.fresh, σ.allocConst (.string cu) (.string cu))
+      | _ => none
 
 omit Γ in
 /--
@@ -187,12 +286,11 @@ public theorem State.lookup_update_ne {σ : State} {ℓ ℓ' : Loc} (hne : ℓ' 
 
 /--
 Updating the cell at `ℓ` doesn't change any value's dynamic type, if:
-- the cell holds `c₀` (`h`), which isn't an object's own cell (`hc₀`); and
-- the new contents `c` aren't an object's own cell either (`hc`).
+- the cell holds `c₀` (`h`), which is a variable's cell (`hc₀`); and
+- the new contents `c` are a variable's cell too (`hc`).
 -/
 public theorem State.dynamicType_update {σ : State} {ℓ : Loc} {c₀ c : Cell}
-    (h : σ.lookup ℓ = some c₀) (hc₀ : ∀ k C fs, c₀ ≠ .object k C fs)
-    (hc : ∀ k C fs, c ≠ .object k C fs)
+    (h : σ.lookup ℓ = some c₀) (hc₀ : c₀.isVar = true) (hc : c.isVar = true)
     (v : Value) : (σ.update ℓ c).dynamicType v = σ.dynamicType v := by
   cases v with
   | obj ℓ' =>
@@ -200,24 +298,18 @@ public theorem State.dynamicType_update {σ : State} {ℓ : Loc} {c₀ c : Cell}
     by_cases hℓ : ℓ' = ℓ
     · subst hℓ
       rw [State.lookup_update_self h, h]
-      cases c₀ with
-      | object k C fs => exact absurd rfl (hc₀ k C fs)
-      | _ =>
-        cases c with
-        | object k C fs => exact absurd rfl (hc k C fs)
-        | _ => rfl
+      cases c₀ <;> cases c <;> simp_all [Cell.isVar]
     · rw [State.lookup_update_ne hℓ]
   | _ => rfl
 
 omit Γ in
 /--
 Updating the cell at `ℓ` doesn't change which object any value refers to, if:
-- the cell holds `c₀` (`h`), which isn't an object's own cell (`hc₀`); and
-- the new contents `c` aren't an object's own cell either (`hc`).
+- the cell holds `c₀` (`h`), which is a variable's cell (`hc₀`); and
+- the new contents `c` are a variable's cell too (`hc`).
 -/
 public theorem State.object?_update {σ : State} {ℓ : Loc} {c₀ c : Cell}
-    (h : σ.lookup ℓ = some c₀) (hc₀ : ∀ k C fs, c₀ ≠ .object k C fs)
-    (hc : ∀ k C fs, c ≠ .object k C fs)
+    (h : σ.lookup ℓ = some c₀) (hc₀ : c₀.isVar = true) (hc : c.isVar = true)
     (v : Value) : (σ.update ℓ c).object? v = σ.object? v := by
   cases v with
   | obj ℓ' =>
@@ -225,13 +317,17 @@ public theorem State.object?_update {σ : State} {ℓ : Loc} {c₀ c : Cell}
     by_cases hℓ : ℓ' = ℓ
     · subst hℓ
       rw [State.lookup_update_self h, h]
-      cases c₀ with
-      | object k C fs => exact absurd rfl (hc₀ k C fs)
-      | _ =>
-        cases c with
-        | object k C fs => exact absurd rfl (hc k C fs)
-        | _ => rfl
+      cases c₀ <;> cases c <;> simp_all [Cell.isVar]
     · rw [State.lookup_update_ne hℓ]
   | _ => rfl
+
+omit Γ in
+/--
+Values that `Value.primEq?` can compare (`h`), which are the null object, booleans and integers,
+compare the same way in every state (`σ.primEq? v₁ v₂ = some b`).
+-/
+public theorem State.primEq?_of_value {σ : State} {v₁ v₂ : Value} {b : Bool}
+    (h : Value.primEq? v₁ v₂ = some b) : σ.primEq? v₁ v₂ = some b := by
+  cases v₁ <;> cases v₂ <;> simp_all [Value.primEq?, State.primEq?, State.string?]
 
 end DartSemantics

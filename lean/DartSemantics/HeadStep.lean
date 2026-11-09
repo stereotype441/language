@@ -232,14 +232,14 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
       HeadStep (.varAt x T ℓ) σ (.val v) σ
   /--
   An assignment to a local variable stores the value in the variable's cell, and evaluates to
-  that value. The cell must belong to a local variable (holding a value or uninitialized), not be
-  an object's own cell. If the variable is `final`, the cell must be uninitialized: assigning to a
+  that value. The cell must be a variable's cell (holding a value or uninitialized; `hc`), not an
+  object's own cell. If the variable is `final`, the cell must be uninitialized: assigning to a
   `final` variable that has already been assigned gets stuck. (Dart reports a compile-time error
   for such an assignment, so implementations don't check this at run time; getting stuck makes the
   safety theorem cover flow analysis's definite unassignment check.)
   -/
   | variableSetAt {x : Variable (τ := τ)} {ℓ : Loc} {w : Value} {c : Cell} {σ : State}
-      (hℓ : σ.lookup ℓ = some c) (hc : ∀ k C fs, c ≠ .object k C fs)
+      (hℓ : σ.lookup ℓ = some c) (hc : c.isVar = true)
       (hfin : x.isFinal = true → c = .uninit) :
       HeadStep (.variableSetAt x ℓ (.val w)) σ (.val w) (σ.update ℓ (.val w))
   /-- A null check on the null object is a dynamic type error. -/
@@ -332,13 +332,13 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | checkFail {kind : CheckKind} {v : Value} {σ : State} (h : kind.holds v = false) :
       HeadStep (.check kind (.val v)) σ (.throwing (.error .expectFailed)) σ
   /-- An intrinsic equality check whose operands are equal (`h`) completes normally. -/
-  | checkEqPass {v₁ v₂ : Value} {σ : State} (h : Value.primEq? v₁ v₂ = some true) :
+  | checkEqPass {v₁ v₂ : Value} {σ : State} (h : σ.primEq? v₁ v₂ = some true) :
       HeadStep (.checkEq (.val v₁) (.val v₂)) σ (.val .null) σ
   /--
   An intrinsic equality check whose operands are different (`h`) throws. (One whose operands
   can't be compared gets stuck.)
   -/
-  | checkEqFail {v₁ v₂ : Value} {σ : State} (h : Value.primEq? v₁ v₂ = some false) :
+  | checkEqFail {v₁ v₂ : Value} {σ : State} (h : σ.primEq? v₁ v₂ = some false) :
       HeadStep (.checkEq (.val v₁) (.val v₂)) σ (.throwing (.error .expectFailed)) σ
   /--
   A loop runs its body once, and then the loop again. (So each iteration takes at least one step,
@@ -375,10 +375,11 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | intNeg {mode : IntMode} {n k : Int} {σ : State} (h : mode.arith (-n) = some k) :
       HeadStep (.intNeg (some mode) (.val (.int n))) σ (.val (.int k)) σ
   /--
-  Equality of values `v₁` and `v₂` that can be compared (the null object, booleans and integers)
-  evaluates to whether they're equal (`h`). Comparing any other values gets stuck.
+  Equality of values `v₁` and `v₂` that can be compared without running user code (see
+  `State.primEq?`: the null object, booleans, integers and strings) evaluates to whether they're
+  equal (`h`). Comparing any other values gets stuck.
   -/
-  | primEq {v₁ v₂ : Value} {b : Bool} {σ : State} (h : Value.primEq? v₁ v₂ = some b) :
+  | primEq {v₁ v₂ : Value} {b : Bool} {σ : State} (h : σ.primEq? v₁ v₂ = some b) :
       HeadStep (.primEq (.val v₁) (.val v₂)) σ (.val (.bool b)) σ
   /--
   Once every argument of an instance creation has been evaluated (to `vs`), it looks up the
@@ -421,7 +422,7 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   -/
   | initField {v w : Value} {name k : String} {fs : List (String × Loc)} {ℓf : Loc} {c : Cell}
       {σ : State} (ho : σ.object? v = some (k, fs)) (hf : fs.lookup name = some ℓf)
-      (hℓf : σ.lookup ℓf = some c) (hc : ∀ k C fs, c ≠ .object k C fs) :
+      (hℓf : σ.lookup ℓf = some c) (hc : c.isVar = true) :
       HeadStep (.initField (.val v) name (.val w)) σ (.val .null) (σ.update ℓf (.val w))
   /--
   An assignment to a property whose setter is the implicit setter of an instance variable (the
@@ -431,7 +432,7 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | propertySetField {v w : Value} {name k iv : String} {fs : List (String × Loc)} {ℓf : Loc}
       {c : Cell} {σ : State} (ho : σ.object? v = some (k, fs))
       (hd : P.dispatch k (name ++ "=") = some (.field iv)) (hf : fs.lookup iv = some ℓf)
-      (hℓf : σ.lookup ℓf = some c) (hc : ∀ k C fs, c ≠ .object k C fs) :
+      (hℓf : σ.lookup ℓf = some c) (hc : c.isVar = true) :
       HeadStep (.propertySet (.val v) name (.val w)) σ (.val w) (σ.update ℓf (.val w))
   /--
   When the body of a running constructor returns (by `return;`), the constructor completes
@@ -522,7 +523,7 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | superSetField {v w : Value} {name s k iv : String} {fs : List (String × Loc)} {ℓf : Loc}
       {c : Cell} {σ : State} (hd : P.dispatch s (name ++ "=") = some (.field iv))
       (ho : σ.object? v = some (k, fs)) (hf : fs.lookup iv = some ℓf)
-      (hℓf : σ.lookup ℓf = some c) (hc : ∀ k C fs, c ≠ .object k C fs) :
+      (hℓf : σ.lookup ℓf = some c) (hc : c.isVar = true) :
       HeadStep (.superSet (.val v) name (some s) (.val w)) σ (.val w) (σ.update ℓf (.val w))
   /--
   A super property assignment whose slot has been filled in with `s`, where `s`'s dispatch table
@@ -548,6 +549,21 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   -/
   | identical {v₁ v₂ : Value} {b : Bool} {σ : State} (h : Value.identical? v₁ v₂ = some b) :
       HeadStep (.identical (.val v₁) (.val v₂)) σ (.val (.bool b)) σ
+  /--
+  A constant evaluates to its value, which `State.constant?` gives (`h`): the null object, a
+  boolean or an integer is the value itself; any other constant evaluates to its canonical object,
+  which is allocated (and recorded in the table of constants) by the constant's first evaluation.
+  -/
+  | constant {c : ConstValue} {v : Value} {σ σ' : State} (h : σ.constant? c = some (v, σ')) :
+      HeadStep (.constant c) σ (.val v) σ'
+  /--
+  Once every part of a string concatenation has been evaluated (to `vs`), and each has a string
+  form (`h`; see `State.stringPart?`), the concatenation allocates a new string object holding
+  their concatenation, and evaluates to it. The new object is never a constant's canonical object.
+  -/
+  | concat {vs : List Value} {cus : List (List UInt16)} {σ : State}
+      (h : vs.mapM σ.stringPart? = some cus) :
+      HeadStep (.concat (vs.map .val)) σ (.val (.obj σ.fresh)) (σ.alloc (.string cus.flatten))
   /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.

@@ -120,7 +120,7 @@ def verify : SemanticParams T :=
   ⟨.verify, fun _ => none, fun _ => none, fun _ => none, fun _ => none, fun _ => .wrap64⟩
 
 /-- A state in which `x` (at location 1) refers to an object (at location 0) of class `B`. -/
-def σx : State := ⟨#[.object "B" B [], .val (.obj ⟨0⟩)]⟩
+def σx : State := ⟨#[.object "B" B [], .val (.obj ⟨0⟩)], []⟩
 
 /-- A summary of the result of a run, without the final state or the redex of a stuck run. -/
 def summary : Interp.RunResult (τ := T) → Std.Format

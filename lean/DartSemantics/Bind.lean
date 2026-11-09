@@ -138,6 +138,8 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
       · subst hy
         simp [resolve, hx, resolve_comm hne m₁]
       · simp [resolve, hx, hy, resolve_comm hne m₁, resolve_comm hne m₂]
+  | .constant _ => rfl
+  | .concat parts => by simp only [resolve, resolveList_comm hne parts]
   | .val _ => rfl
   | .throwing _ => rfl
   | .returning _ => rfl

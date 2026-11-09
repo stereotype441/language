@@ -54,14 +54,19 @@ section
 
 variable {hlc : HasLC} {GF : BundledGFunctors} [DartGS τ hlc GF]
 
-/-- The persistent knowledge that the dynamic type of value `v` is `S`. -/
+/--
+The persistent knowledge that the dynamic type of value `v` is `S`. For an object in the heap, it's
+recorded in the object's own cell: for an instance of a class, its dynamic type is in the cell;
+a string's dynamic type is `String`.
+-/
 @[expose]
 public def HasDynamicType (v : Value) (S : τ) : IProp GF :=
   match v with
   | .null => iprop(⌜S = Γ.Null⌝)
   | .bool _ => iprop(⌜S = Γ.bool⌝)
   | .int _ => iprop(⌜S = Γ.int⌝)
-  | .obj ℓ => iprop(∃ k fs, ℓ ↦{.discard} (.object k S fs : Cell))
+  | .obj ℓ => iprop((∃ k fs, ℓ ↦{.discard} (.object k S fs : Cell)) ∨
+      (⌜S = Γ.String⌝ ∗ ∃ cu, ℓ ↦{.discard} (.string cu : Cell)))
   | .error _ => iprop(False)
   | .cont _ => iprop(False)
 
@@ -102,8 +107,24 @@ public theorem HasDynamicType.obj {ℓ : Loc} {k : String} {S : τ} {fs : List (
     ℓ ↦{.discard} (.object k S fs : Cell) ⊢ HasDynamicType (GF := GF) (.obj ℓ : Value) S := by
   simp only [HasDynamicType]
   iintro H
+  ileft
   iexists k, fs
   iexact H
+
+/--
+The dynamic type of a string is `String`: a persistent points-to for the string's cell
+(`ℓ ↦{.discard} (.string cu)`) says that the dynamic type of `.obj ℓ` is `String`.
+-/
+public theorem HasDynamicType.string {ℓ : Loc} {cu : List UInt16} :
+    ℓ ↦{.discard} (.string cu : Cell) ⊢ HasDynamicType (GF := GF) (.obj ℓ : Value) Γ.String := by
+  simp only [HasDynamicType]
+  iintro H
+  iright
+  isplitr
+  · ipureintro
+    trivial
+  · iexists cu
+    iexact H
 
 /--
 The ghost heap agrees with what `HasDynamicType` says: given the ghost heap's interpretation of the
@@ -133,12 +154,17 @@ public theorem HasDynamicType.valid {σ : State} {v : Value} {S : τ} :
     simp [State.dynamicType, h]
   | obj ℓ =>
     simp only [HasDynamicType]
-    iintro ⟨Hσ, %k, %fs, Hℓ⟩
-    imod genHeap_valid $$ [$Hσ $Hℓ] with %h
-    imodintro
-    ipureintro
-    rw [State.get?_toMap] at h
-    simp [State.dynamicType, h]
+    iintro ⟨Hσ, ⟨%k, %fs, Hℓ⟩ | ⟨%hS, %cu, Hℓ⟩⟩
+    · imod genHeap_valid $$ [$Hσ $Hℓ] with %h
+      imodintro
+      ipureintro
+      rw [State.get?_toMap] at h
+      simp [State.dynamicType, h]
+    · imod genHeap_valid $$ [$Hσ $Hℓ] with %h
+      imodintro
+      ipureintro
+      rw [State.get?_toMap] at h
+      simp [State.dynamicType, h, hS]
   | error e =>
     simp only [HasDynamicType]
     iintro ⟨-, %h⟩
@@ -187,30 +213,38 @@ public theorem HasDynamicType.of_headers {σ : State} {v : Value} {S : τ}
           (by rw [State.get?_toMap]; exact hℓ)).trans (by simp only [cellHeader]; exact .rfl)
       simp only [HasDynamicType]
       iintro H
+      ileft
       iexists k, fs
+      iapply hl $$ H
+    · rename_i cu hℓ
+      simp only [Option.some.injEq] at h
+      subst h
+      have hl : ObjectHeaders (GF := GF) σ ⊢ ℓ ↦{.discard} (.string cu : Cell) :=
+        (BigSepM.bigSepM_lookup (Φ := fun ℓ c => cellHeader (GF := GF) ℓ c)
+          (by rw [State.get?_toMap]; exact hℓ)).trans (by simp only [cellHeader]; exact .rfl)
+      iintro H
+      iapply HasDynamicType.string
       iapply hl $$ H
     · cases h
   | error e => cases h
   | cont k => cases h
 
 omit Γ in
-/-- A cell `c` that isn't an object's own cell (`hc`) has no header (`cellHeader ℓ c ⊣⊢ emp`). -/
-theorem cellHeader_of_ne_object {ℓ : Loc} {c : Cell} (hc : ∀ k C fs, c ≠ .object k C fs) :
+/-- A variable's cell `c` (`hc`) has no header (`cellHeader ℓ c ⊣⊢ emp`). -/
+theorem cellHeader_of_isVar {ℓ : Loc} {c : Cell} (hc : c.isVar = true) :
     cellHeader (GF := GF) ℓ c ⊣⊢ emp := by
-  cases c with
-  | object k C fs => exact absurd rfl (hc k C fs)
-  | _ => exact .rfl
+  cases c <;> simp [Cell.isVar] at hc <;> exact .rfl
 
 omit Γ in
 /--
-Allocating a cell `c` that isn't an object's own cell (`hc`) leaves the object headers as they were
+Allocating a variable's cell `c` (`hc`) leaves the object headers as they were
 (`ObjectHeaders σ ⊢ ObjectHeaders (σ.alloc c)`).
 -/
-public theorem ObjectHeaders.alloc {σ : State} {c : Cell} (hc : ∀ k C fs, c ≠ .object k C fs) :
+public theorem ObjectHeaders.alloc {σ : State} {c : Cell} (hc : c.isVar = true) :
     ObjectHeaders (GF := GF) σ ⊢ ObjectHeaders (σ.alloc c) := by
   simp only [ObjectHeaders, State.toMap_alloc]
   refine .trans ?_ (BigSepM.bigSepM_insert (by rw [State.get?_toMap, State.lookup_fresh])).2
-  exact emp_sep.2.trans (sep_mono_left (cellHeader_of_ne_object hc).2)
+  exact emp_sep.2.trans (sep_mono_left (cellHeader_of_isVar hc).2)
 
 omit Γ in
 /--
@@ -231,17 +265,16 @@ omit Γ in
 /--
 Updating the cell at `ℓ` leaves the object headers as they were
 (`ObjectHeaders σ ⊢ ObjectHeaders (σ.update ℓ c)`), if:
-- the cell holds `c₀` (`h`), which isn't an object's own cell (`hc₀`); and
-- the new contents `c` aren't an object's own cell either (`hc`).
+- the cell holds `c₀` (`h`), which is a variable's cell (`hc₀`); and
+- the new contents `c` are a variable's cell too (`hc`).
 -/
 public theorem ObjectHeaders.update {σ : State} {ℓ : Loc} {c₀ c : Cell}
-    (h : σ.lookup ℓ = some c₀) (hc₀ : ∀ k C fs, c₀ ≠ .object k C fs)
-    (hc : ∀ k C fs, c ≠ .object k C fs) :
+    (h : σ.lookup ℓ = some c₀) (hc₀ : c₀.isVar = true) (hc : c.isVar = true) :
     ObjectHeaders (GF := GF) σ ⊢ ObjectHeaders (σ.update ℓ c) := by
   simp only [ObjectHeaders, State.toMap_update h]
   refine (BigSepM.bigSepM_delete (by rw [State.get?_toMap]; exact h)).1.trans ?_
   refine .trans ?_ BigSepM.bigSepM_insert_delete.2
-  exact sep_mono_left ((cellHeader_of_ne_object hc₀).1.trans (cellHeader_of_ne_object hc).2)
+  exact sep_mono_left ((cellHeader_of_isVar hc₀).1.trans (cellHeader_of_isVar hc).2)
 
 /--
 Ownership of the cells at locations `ℓs`, holding the values `vs`, in order: `ℓ ↦ .val v` for the
@@ -622,8 +655,8 @@ public theorem wp_blockDeclare {v : Variable} {T : τ} {startsNull : Bool} {ms :
   have hfresh : get? σ₁.toMap σ₁.fresh = none := by rw [State.get?_toMap, State.lookup_fresh]
   imod genHeap_alloc (v := (if startsNull then .val .null else .uninit : Cell)) hfresh $$ Hh
     with ⟨Hh, Hl, -⟩
-  have hc : ∀ k C fs, (if startsNull then .val .null else .uninit : Cell) ≠ .object k C fs := by
-    cases startsNull <;> nofun
+  have hc : (if startsNull then .val .null else .uninit : Cell).isVar = true := by
+    cases startsNull <;> rfl
   ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ₁) hc $$ Hhdr
   imodintro
   isplitl [Hh]
@@ -662,7 +695,7 @@ public theorem wp_letIn {v : Variable} {w : Value} {m₂ : LoweredExpr} :
   imod Hclose
   have hfresh : get? σ₁.toMap σ₁.fresh = none := by rw [State.get?_toMap, State.lookup_fresh]
   imod genHeap_alloc (v := (.val w : Cell)) hfresh $$ Hh with ⟨Hh, Hl, -⟩
-  ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ₁) (c := .val w) nofun $$ Hhdr
+  ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ₁) (c := .val w) rfl $$ Hhdr
   imodintro
   isplitl [Hh]
   · rw [State.toMap_alloc]
@@ -732,7 +765,7 @@ and evaluates to it. It satisfies a postcondition `Φ` if:
   of the cell, now holding `w` (`▷ (ℓ ↦ (.val w) -∗ …)`).
 -/
 public theorem wp_variableSetAt {x : Variable} {ℓ : Loc} {c : Cell} {w : Value}
-    (hc : ∀ k C fs, c ≠ .object k C fs) (hfin : x.isFinal = true → c = .uninit) :
+    (hc : c.isVar = true) (hfin : x.isFinal = true → c = .uninit) :
     ▷ (ℓ ↦ c) ∗ ▷ ((ℓ ↦ (.val w : Cell)) -∗ Φ (.normal w)) ⊢
       WP (LoweredExpr.variableSetAt x ℓ (.val w)) @ s; E {{ Φ }} := by
   iintro ⟨>Hl, HΦ⟩
@@ -755,7 +788,7 @@ public theorem wp_variableSetAt {x : Variable} {ℓ : Loc} {c : Cell} {w : Value
   obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs hstep
   imod genHeap_update (σ := σ₁.toMap) (l := ℓ) (v₁ := c) (v₂ := (.val w : Cell)) $$ [$Hh $Hl]
     with ⟨Hh, Hl⟩
-  ihave #Hhdr' := ObjectHeaders.update (c := (.val w : Cell)) Hlook hc (fun _ _ _ h => by cases h)
+  ihave #Hhdr' := ObjectHeaders.update (c := (.val w : Cell)) Hlook hc rfl
     $$ Hhdr
   imodintro
   isplit
@@ -862,7 +895,7 @@ public theorem allocAll_vals (σ : State) (vs : List Value) :
     iintro ⟨Hh, #Hhdr⟩
     imod genHeap_alloc (v := (.val v : Cell)) hfresh $$ Hh with ⟨Hh, Hl, -⟩
     ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ) (c := .val v)
-      (fun _ _ _ h => by cases h) $$ Hhdr
+      rfl $$ Hhdr
     imod ih' $$ [$Hh $Hhdr'] with ⟨Hrest, Hls⟩
     imodintro
     isplitl [Hrest]
@@ -1003,7 +1036,7 @@ object (`▷ Φ (.normal .null)`).
 public theorem wp_checkEq_pass {v₁ v₂ : Value} (h : Value.primEq? v₁ v₂ = some true) :
     ▷ Φ (.normal .null) ⊢ WP (LoweredExpr.checkEq (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
   refine wp_pure_step_val (by rfl) fun _ => ?_
-  exact .checkEqPass h
+  exact .checkEqPass (State.primEq?_of_value h)
 
 /--
 An intrinsic equality check whose operands `v₁` and `v₂` are different (`h`) throws: it satisfies
@@ -1014,7 +1047,7 @@ public theorem wp_checkEq_fail {v₁ v₂ : Value} (h : Value.primEq? v₁ v₂ 
     ▷ Φ (.throwing (.error .expectFailed)) ⊢
       WP (LoweredExpr.checkEq (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
   refine wp_pure_step_throwing (by rfl) fun _ => ?_
-  exact .checkEqFail h
+  exact .checkEqFail (State.primEq?_of_value h)
 
 /-! ### Loops, breaks and integer arithmetic -/
 
@@ -1203,7 +1236,7 @@ normally with that boolean (`▷ Φ (.normal (.bool b))`).
 public theorem wp_primEq {v₁ v₂ : Value} {b : Bool} (h : Value.primEq? v₁ v₂ = some b) :
     ▷ Φ (.normal (.bool b)) ⊢ WP (LoweredExpr.primEq (.val v₁) (.val v₂)) @ s; E {{ Φ }} := by
   refine wp_pure_step_val (by rfl) fun _ => ?_
-  exact .primEq h
+  exact .primEq (State.primEq?_of_value h)
 
 /-! ### Objects -/
 
@@ -1237,7 +1270,7 @@ public theorem allocAll_uninit (σ : State) (names : List String) :
     iintro ⟨Hh, #Hhdr⟩
     imod genHeap_alloc (v := (.uninit : Cell)) hfresh $$ Hh with ⟨Hh, Hl, -⟩
     ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ) (c := .uninit)
-      (fun _ _ _ h => by cases h) $$ Hhdr
+      rfl $$ Hhdr
     imod ih' $$ [$Hh $Hhdr'] with ⟨Hrest, Hls⟩
     imodintro
     isplitl [Hrest]
@@ -1378,7 +1411,7 @@ steps.)
 -/
 public theorem wp_store_of_header {e e' : LoweredExpr} {ℓ ℓf : Loc} {k : String} {C : τ}
     {fs : List (String × Loc)} {c : Cell} {w : Value} (hv : e.toOutcome? = none)
-    (hc : ∀ k C fs, c ≠ .object k C fs)
+    (hc : c.isVar = true)
     (h : ∀ σ, σ.lookup ℓ = some (.object k C fs) → σ.lookup ℓf = some c →
       HeadStep e σ e' (σ.update ℓf (.val w))) :
     ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ (ℓf ↦ c) ∗
@@ -1410,7 +1443,7 @@ public theorem wp_store_of_header {e e' : LoweredExpr} {ℓ ℓf : Loc} {k : Str
   imod genHeap_update (σ := σ₁.toMap) (l := ℓf) (v₁ := c) (v₂ := (.val w : Cell)) $$ [$Hh $Hl]
     with ⟨Hh, Hl⟩
   ihave #Hhdr' := ObjectHeaders.update (c := (.val w : Cell)) Hlook hc
-    (fun _ _ _ h => by cases h) $$ Hhdr
+    rfl $$ Hhdr
   imodintro
   isplitl [Hh]
   · rw [State.toMap_update Hlook]
@@ -1534,7 +1567,7 @@ cell. It satisfies a postcondition `Φ` if:
   cell, now holding `w` (`▷ (ℓf ↦ .val w -∗ Φ (.normal .null))`).
 -/
 public theorem wp_initField {ℓ ℓf : Loc} {name k : String} {C : τ} {fs : List (String × Loc)}
-    {c : Cell} {w : Value} (hf : fs.lookup name = some ℓf) (hc : ∀ k C fs, c ≠ .object k C fs) :
+    {c : Cell} {w : Value} (hf : fs.lookup name = some ℓf) (hc : c.isVar = true) :
     ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ (ℓf ↦ c) ∗
         ▷ ((ℓf ↦ (.val w : Cell)) -∗ Φ (.normal .null)) ⊢
       WP (LoweredExpr.initField (.val (.obj ℓ)) name (.val w)) @ s; E {{ Φ }} := by
@@ -1560,7 +1593,7 @@ under the same conditions as `wp_initField`, with `Φ (.normal w)` in place of `
 public theorem wp_propertySet_field {ℓ ℓf : Loc} {name k iv : String} {C : τ}
     {fs : List (String × Loc)} {c : Cell} {w : Value}
     (hd : P.dispatch k (name ++ "=") = some (.field iv)) (hf : fs.lookup iv = some ℓf)
-    (hc : ∀ k C fs, c ≠ .object k C fs) :
+    (hc : c.isVar = true) :
     ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ (ℓf ↦ c) ∗
         ▷ ((ℓf ↦ (.val w : Cell)) -∗ Φ (.normal w)) ⊢
       WP (LoweredExpr.propertySet (.val (.obj ℓ)) name (.val w)) @ s; E {{ Φ }} := by
@@ -1742,7 +1775,7 @@ the object (at `ℓf`; `hf`), as `wp_propertySet_field` does.
 public theorem wp_superSet_field {ℓ ℓf : Loc} {name sup k iv : String} {C : τ}
     {fs : List (String × Loc)} {c : Cell} {w : Value}
     (hd : P.dispatch sup (name ++ "=") = some (.field iv)) (hf : fs.lookup iv = some ℓf)
-    (hc : ∀ k C fs, c ≠ .object k C fs) :
+    (hc : c.isVar = true) :
     ℓ ↦{.discard} (.object k C fs : Cell) ∗ ▷ (ℓf ↦ c) ∗
         ▷ ((ℓf ↦ (.val w : Cell)) -∗ Φ (.normal w)) ⊢
       WP (LoweredExpr.superSet (.val (.obj ℓ)) name (some sup) (.val w)) @ s; E {{ Φ }} := by

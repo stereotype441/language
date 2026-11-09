@@ -107,6 +107,41 @@ public def IntBinOp.isComparison : IntBinOp → Bool
   | .lt | .le | .gt | .ge => true
   | .add | .sub | .mul => false
 
+/--
+The UTF-16 code units of a Lean string: how a Dart string with the same characters is stored (see
+`ConstValue.string`). A character outside the Basic Multilingual Plane becomes a surrogate pair.
+(A Dart string can also hold unpaired surrogates, which a Lean string can't; this is for writing
+strings that don't.)
+-/
+@[expose]
+public def DartString.ofString (s : String) : List UInt16 :=
+  s.toList.flatMap fun c =>
+    let n := c.toNat
+    if n < 0x10000 then [n.toUInt16]
+    else
+      let m := n - 0x10000
+      [(0xD800 + m / 0x400).toUInt16, (0xDC00 + m % 0x400).toUInt16]
+
+/--
+A structural description of a constant value: two evaluations of equal descriptions give the same
+object (see `LoweredExpr.constant`). So far, only the null object, booleans, integers and strings
+can be described; constant lists, maps, sets and instances of classes will describe their
+components as `ConstValue`s too.
+-/
+public inductive ConstValue where
+  /-- The null object. -/
+  | null
+  /-- The boolean `b`. -/
+  | bool (b : Bool)
+  /-- The integer `n`. -/
+  | int (n : Int)
+  /--
+  The string whose UTF-16 code units are `cu`. A Dart string is a sequence of UTF-16 code units,
+  which needn't be valid UTF-16 (it can hold unpaired surrogates).
+  -/
+  | string (cu : List UInt16)
+  deriving Repr, DecidableEq
+
 /-
 `Value`, `LoweredExpr` and `EctxItem` are mutually inductive: a value may hold a captured
 continuation (a list of evaluation context items), and evaluation context items hold the
@@ -368,6 +403,31 @@ public inductive LoweredExpr where
   iterations. The variable can be assigned in `m₂` if it isn't `final`, as for any local variable.
   -/
   | letIn (v : Variable) (m₁ m₂ : LoweredExpr)
+  /--
+  A constant, described structurally by `c` (for example, a string literal, or Kernel's
+  `ConstantExpression` of a string constant). The null object, booleans and integers evaluate to
+  themselves. Any other constant evaluates to its *canonical* object: the first evaluation of a
+  constant described by `c` allocates the object, and records it in the state's table of constants
+  (`State.constants`); every later evaluation of a constant described by `c`, anywhere in the
+  program, evaluates to the same object. So equal constants are identical (`identical`), as Dart
+  requires.
+
+  Only what Kernel presents as a constant is canonicalized: the result of concatenating strings
+  (`concat`) is a new object, even if its contents equal a constant's. (The language specification
+  says that equal "constant strings" are identical without defining the term; see
+  dart-lang/language#4843.)
+  -/
+  | constant (c : ConstValue)
+  /--
+  A string concatenation (Kernel's `StringConcatenation`, for a string interpolation such as
+  `"n = $n"`, and also `a + b` on strings): evaluates `parts`, left to right, converts each value
+  to its string form, and evaluates to a new string object holding their concatenation. A string
+  is itself, `null` is `"null"`, a boolean is `"true"` or `"false"`, and an integer is its decimal
+  form. Any other part gets stuck, since its `toString` would run user code; the translator uses
+  `concat` only when every part's static type is `String`, `Null`, `bool` or `int` (or nullable
+  versions of them).
+  -/
+  | concat (parts : List LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -522,6 +582,11 @@ public inductive EctxItem where
   | identicalR (v₁ : Value)
   /-- `let v = □ in m₂` -/
   | letIn (v : Variable) (m₂ : LoweredExpr)
+  /--
+  `concat(v₁, …, vₙ, □, m₁, …, mₖ)`: a part of a string concatenation, whose parts before the hole
+  have evaluated to `vs`, and whose parts after it, `ms`, are still to be evaluated
+  -/
+  | concat (vs : List Value) (ms : List LoweredExpr)
 
 end
 
@@ -612,6 +677,27 @@ public theorem IntBinOp.eval_checked_of_range {op : IntBinOp} {n₁ n₂ n : Int
     op.eval (τ := τ) .checked n₁ n₂ = some (.int n) := by
   cases op <;> simp only [IntBinOp.eval, IntMode.arith, Option.map_some] at hn ⊢ <;> simp_all
 
+/-- The static type of a constant described by `c`: its dynamic type. -/
+@[expose]
+public def ConstValue.typeOf : ConstValue → τ
+  | .null => Γ.Null
+  | .bool _ => Γ.bool
+  | .int _ => Γ.int
+  | .string _ => Γ.String
+
+omit Γ in
+/--
+The value of a constant described by `c`, if it's a value that isn't in the heap (the null
+object, a boolean or an integer): `none` if the constant's value is an object in the heap, which
+is canonicalized (see `LoweredExpr.constant`).
+-/
+@[expose]
+public def ConstValue.prim? : ConstValue → Option Value
+  | .null => some .null
+  | .bool b => some (.bool b)
+  | .int n => some (.int n)
+  | .string _ => none
+
 /--
 The static type of an expression.
 
@@ -656,6 +742,8 @@ public def LoweredExpr.typeOf :
   | superSet _ _ _ m₂ => m₂.typeOf
   | identical _ _ => Γ.bool
   | letIn _ _ m₂ => m₂.typeOf
+  | constant c => c.typeOf
+  | concat _ => Γ.String
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -716,6 +804,8 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .superSet m name slot m₂ => .superSet (m.withIntMode mode) name slot (m₂.withIntMode mode)
   | .identical m₁ m₂ => .identical (m₁.withIntMode mode) (m₂.withIntMode mode)
   | .letIn v m₁ m₂ => .letIn v (m₁.withIntMode mode) (m₂.withIntMode mode)
+  | .constant c => .constant c
+  | .concat parts => .concat (LoweredExpr.withIntModeList mode parts)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -782,6 +872,8 @@ public def LoweredExpr.withSuperclass (s : Option String) : LoweredExpr → Lowe
   | .superSet m name _ m₂ => .superSet (m.withSuperclass s) name s (m₂.withSuperclass s)
   | .identical m₁ m₂ => .identical (m₁.withSuperclass s) (m₂.withSuperclass s)
   | .letIn v m₁ m₂ => .letIn v (m₁.withSuperclass s) (m₂.withSuperclass s)
+  | .constant c => .constant c
+  | .concat parts => .concat (LoweredExpr.withSuperclassList s parts)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -1010,6 +1102,7 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .identicalL m₂, m => .identical m m₂
   | .identicalR v₁, m => .identical (.val v₁) m
   | .letIn v m₂, m => .letIn v m m₂
+  | .concat vs ms, m => .concat (vs.map .val ++ m :: ms)
 
 /--
 Whether context item `Ki` handles a return (`returning`) in its hole, rather than propagating it
@@ -1233,6 +1326,10 @@ public theorem EctxItem.fill_inj {Ki₁ Ki₂ : EctxItem} {e₁ e₂ : LoweredEx
   case superSetR.superSetL => exact absurd (LoweredExpr.superSet.inj h).1.symm (h₂ _)
   case identicalL.identicalR => exact absurd (LoweredExpr.identical.inj h).1 (h₁ _)
   case identicalR.identicalL => exact absurd (LoweredExpr.identical.inj h).1.symm (h₂ _)
+  case concat.concat vs ms vs' ms' =>
+    simp only [LoweredExpr.concat.injEq] at h
+    obtain ⟨rfl, rfl, rfl⟩ := LoweredExpr.map_val_append_inj h₁ h₂ h
+    exact ⟨rfl, rfl⟩
   all_goals simp_all
 
 /--

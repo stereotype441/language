@@ -281,7 +281,7 @@ value, or uninitialized), not an object's own cell.
 -/
 @[expose, reducible]
 public def interpCell (ℓ : Loc) (c : Cell) : IProp GF :=
-  iprop(⌜∀ k C fs, c ≠ .object k C fs⌝ ∗ ℓ ↦ c)
+  iprop(⌜c.isVar = true⌝ ∗ ℓ ↦ c)
 
 /--
 The interpretation of an environment: exclusive ownership of the cell of each variable in

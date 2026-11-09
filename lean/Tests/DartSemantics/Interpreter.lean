@@ -74,7 +74,8 @@ The top-level functions of the programs tested here:
   integer modes (see `intModeOf`); and
 - `int sumBelow(int n)`, which sums the integers from `0` to `n - 1` with a `for` loop, and
   `int sumSkipping(int n)`, which does the same, but skips `0` and `1` with a `continue` (see
-  `sumLoop`).
+  `sumLoop`); and
+- `String ab() => "ab";` and `String ab2() => "ab";`, which return equal string constants.
 -/
 def functions : String → Option (FunctionDecl (τ := SimpleType))
   | "not" => some ⟨[b],
@@ -118,6 +119,7 @@ def functions : String → Option (FunctionDecl (τ := SimpleType))
   | "sumBelow" => some (sumLoop [addI])
   | "sumSkipping" =>
     some (sumLoop [.cond (.intBin .lt none (.var i int) (.int 2)) (.brk "C") .null Null, addI])
+  | "ab" | "ab2" => some ⟨[], .ret (.constant (.string (DartString.ofString "ab")))⟩
   | _ => none
 
 /-- The integer mode of each function in `functions`: `checked`, except as their names say. -/
@@ -368,7 +370,7 @@ A state for running a program with parameter `x`: `x` (at location 2) refers to 
 location 0) of class `X`, whose instance variable `_f` (at location 1) holds `true`.
 -/
 def σx : State :=
-  ⟨#[.object "X" int [("_f", ⟨1⟩)], .val (.bool true), .val (.obj ⟨0⟩)]⟩
+  ⟨#[.object "X" int [("_f", ⟨1⟩)], .val (.bool true), .val (.obj ⟨0⟩)], []⟩
 
 /-- A summary of the result of a run, without the final state or the redex of a stuck run. -/
 def summary : Interp.RunResult (τ := SimpleType) → Std.Format
@@ -1378,6 +1380,147 @@ info: [done: DartLang.Outcome.normal (DartLang.Value.int 7),
 #guard_msgs in
 #eval runClosed verify (.propertyGet (.letIn lg (.new "G2.new" [] tG2)
   (.seq (.propertySet (.var lg tG2) "y" (.int 4)) (.var lg tG2))) py int)
+
+/-! ## Strings and constants -/
+
+/-- The string constant `str`. -/
+def str (s : String) : LoweredExpr := .constant (.string (DartString.ofString s))
+
+/-- Local variables `s1` and `s2`, of type `Object?`. -/
+def vs1 : Variable := { name := "s1", type := ObjectQ }
+/-- See `vs1`. -/
+def vs2 : Variable := { name := "s2", type := ObjectQ }
+
+-- `[null, true, 3]` as constants evaluate to themselves.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.normal (DartLang.Value.bool true),
+ done: DartLang.Outcome.normal (DartLang.Value.int 3)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.constant .null), runClosed verify (.constant (.bool true)),
+  runClosed verify (.constant (.int 3))]
+
+-- `[identical("ab", "ab"), identical(ab(), ab2())]`: equal string constants are the same object,
+-- even when they're evaluated in different functions.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.bool true),
+ done: DartLang.Outcome.normal (DartLang.Value.bool true)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.identical (str "ab") (str "ab")),
+  runClosed verify
+    (.identical (.call "ab" [] SimpleType.String) (.call "ab2" [] SimpleType.String))]
+
+-- `{ int i = 0; Object? s1; Object? s2; while (i < 2) { s2 = "ab"; if (i == 0) s1 = s2;
+-- i = i + 1; } return identical(s1, s2); }`: each run of a loop's body evaluates the constant to
+-- the same object. (This takes more steps than `runClosed` allows.)
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.bool true) -/
+#guard_msgs in
+#eval summary (Interp.run (P := verify) 1000 (.block [.declare i int false,
+  .variableSet i (.int 0), .declare vs1 ObjectQ true, .declare vs2 ObjectQ true,
+  .labeled "L" (.loop (.cond (.intBin .lt (some .checked) (.var i int) (.int 2))
+    (.labeled "C" (.block [.variableSet vs2 (str "ab"),
+      .cond (.primEq (.var i int) (.int 0)) (.variableSet vs1 (.var vs2 ObjectQ)) .null Null,
+      .variableSet i (add (.var i int) (.int 1))]))
+    (.brk "L") Null)),
+  .ret (.identical (.var vs1 ObjectQ) (.var vs2 ObjectQ))]) State.empty)
+
+-- Interpolation (`concat`) of strings, `null`, `true`, `false`, `0`, a negative integer and the
+-- smallest 64-bit integer, each checked against the expected string with `Expect.equals`
+-- (`checkEq`), which passes (completing normally with `null`).
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.normal (DartLang.Value.null)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.checkEq (.concat [str "a", str "bc"]) (str "abc")),
+  runClosed verify (.checkEq (.concat [.null, str " ", .bool true, str " ", .bool false])
+    (str "null true false")),
+  runClosed verify (.checkEq (.concat [.int 0, str ",", .int (-42)]) (str "0,-42")),
+  runClosed verify (.checkEq (.concat [.int (-2 ^ 63)]) (str "-9223372036854775808"))]
+
+-- `"${"<${1}>"}!"`: a concatenation nested in another.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
+#guard_msgs in
+#eval runClosed verify (.checkEq (.concat [.concat [str "<", .int 1, str ">"], str "!"])
+  (str "<1>!"))
+
+-- Unpaired surrogates: concatenating a string holding just a high surrogate and one holding just a
+-- low surrogate gives a string equal to the surrogate pair, `"😀"` (U+1F600).
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
+#guard_msgs in
+#eval runClosed verify (.checkEq
+  (.concat [.constant (.string [0xD83D]), .constant (.string [0xDE00])]) (str "😀"))
+
+-- `"${A()}"`: interpolating an object whose `toString` would be user code gets stuck.
+/--
+info: stuck at redex: DartLang.LoweredExpr.concat
+  [DartLang.LoweredExpr.val (DartLang.Value.obj { n := 0 })]
+-/
+#guard_msgs (whitespace := lax) in
+#eval stuckRedex (Interp.run (P := verify) 100 (.concat [.new "A.new" [] tA]) State.empty)
+
+-- `["a" is String, 1 is String, "a" as String, 1 as String]`: a string's dynamic type is `String`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.bool true),
+ done: DartLang.Outcome.normal (DartLang.Value.bool false),
+ done: DartLang.Outcome.normal (DartLang.Value.obj { n := 0 }),
+ done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.is (str "a") SimpleType.String),
+  runClosed verify (.is (.int 1) SimpleType.String),
+  runClosed verify (.as (str "a") SimpleType.String),
+  runClosed verify (.as (.int 1) SimpleType.String)]
+
+-- `==` (`primEq`) on strings compares their contents: `["ab" == "a${"b"}", "ab" == "ba",
+-- "a${"b"}" == "a${"b"}"]`; and a string isn't equal to the null object, a boolean or an
+-- integer: `["0" == 0, null == "null", "true" == true]`.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.bool true),
+ done: DartLang.Outcome.normal (DartLang.Value.bool false),
+ done: DartLang.Outcome.normal (DartLang.Value.bool true),
+ done: DartLang.Outcome.normal (DartLang.Value.bool false),
+ done: DartLang.Outcome.normal (DartLang.Value.bool false),
+ done: DartLang.Outcome.normal (DartLang.Value.bool false)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.primEq (str "ab") (.concat [str "a", str "b"])),
+  runClosed verify (.primEq (str "ab") (str "ba")),
+  runClosed verify (.primEq (.concat [str "a", str "b"]) (.concat [str "a", str "b"])),
+  runClosed verify (.primEq (str "0") (.int 0)),
+  runClosed verify (.primEq .null (str "null")),
+  runClosed verify (.primEq (str "true") (.bool true))]
+
+-- `Expect.equals("ab", "ba")` fails.
+/--
+info: done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.expectFailed))
+-/
+#guard_msgs in
+#eval runClosed verify (.checkEq (str "ab") (str "ba"))
+
+-- `identical` on strings is object identity: `[identical("ab", "a${"b"}"),
+-- identical("a${"b"}", "a${"b"}")]`: a concatenation's result is a new object, never a constant.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.bool false),
+ done: DartLang.Outcome.normal (DartLang.Value.bool false)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.identical (str "ab") (.concat [str "a", str "b"])),
+  runClosed verify (.identical (.concat [str "a", str "b"]) (.concat [str "a", str "b"]))]
+
+-- `["a${null!}", { "a${(return 1)}"; }]`: an exception or a return out of a part propagates out of
+-- the concatenation.
+/--
+info: [done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError)),
+ done: DartLang.Outcome.returning (DartLang.Value.int 1)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.concat [str "a", .nullCheck .null]),
+  runClosed verify (.block [.concat [str "a", .ret (.int 1)]])]
 
 /-! ## A program that runs out of fuel -/
 

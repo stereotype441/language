@@ -239,7 +239,7 @@ theorem inc_spec (hinc : P.members "Counter.inc" = some incDecl)
     wp_int_checked
     · exact ⟨hr₁, hr₂⟩
     iapply wp_propertySet_field (c := .val (.int n)) (fs := [("Counter::_n", ℓf)]) (ℓf := ℓf)
-      hset rfl (fun _ _ _ h => by cases h)
+      hset rfl rfl
     isplitr
     · iexact Ho
     isplitl [Hf]
@@ -361,7 +361,7 @@ theorem countTo_spec (hf : P.functions "countTo" = some countToDecl)
   wp_load Ht
   wp_pures
   iapply wp_initField (c := .uninit) (fs := [("Counter::_n", ℓf)]) (ℓf := ℓf) rfl
-    (fun _ _ _ h => by cases h)
+    rfl
   isplitr
   · iexact Ho
   isplitl [Hf]

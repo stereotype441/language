@@ -77,7 +77,7 @@ public theorem wp_var_typed {bindings : List (Variable × Loc)} {env : Env} {Δ 
     ihave He := Hback $$ [Hl]
     · isplitr
       · ipureintro
-        exact fun _ _ _ h => by cases h
+        rfl
       · iexact Hl
     -- (Rewriting with `hl` above also rewrote `HΨ`'s premise, so `rfl` proves it.)
     iapply HΨ $$ %ℓ %v %rfl %henv
@@ -791,7 +791,7 @@ public theorem SemTyped.variableSet {Δb : Ctx} {v : Variable} {m : LoweredExpr}
   ihave He := Hback $$ %(.val w) [Hl]
   · isplitr
     · ipureintro
-      exact fun _ _ _ h => by cases h
+      rfl
     · iexact Hl
   simp only [interpOutcome]
   iexists env'.set v (.val w)
@@ -901,9 +901,9 @@ public theorem SemTyped.block_declare {Δ Δ₂ : Ctx} {v : Variable} {T : τ} {
       (fun _ => Δ₂.forget v ++ Δ.filter (·.variable = v)) := by
   intro bindings hnd env
   obtain ⟨c₀, hc₀⟩ : ∃ c₀ : Cell, (if sN then .val .null else .uninit) = c₀ := ⟨_, rfl⟩
-  have hc₀obj : ∀ k C fs, c₀ ≠ .object k C fs := by
+  have hc₀obj : c₀.isVar = true := by
     rw [← hc₀]
-    cases sN <;> intro _ _ _ h <;> cases h
+    cases sN <;> rfl
   rw [LoweredExpr.bindVariables_block, LoweredExpr.bindBlock_declare]
   iintro ⟨He, #H⟩
   iapply wp_blockDeclare
