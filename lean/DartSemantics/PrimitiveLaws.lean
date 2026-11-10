@@ -2053,6 +2053,48 @@ public theorem wp_identical {v₁ v₂ : Value} {b : Bool} (h : Value.identical?
   refine wp_pure_step_val (by rfl) fun _ => ?_
   exact .identical h
 
+/-! ### Assertions -/
+
+/--
+When assertions aren't checked (`h`), an assertion satisfies a postcondition `Φ` that holds, one
+step later, of completing normally with the null object (`▷ Φ (.normal .null)`).
+-/
+public theorem wp_assert_disabled {c : LoweredExpr} {msg : Option LoweredExpr}
+    (h : P.assertsEnabled = false) :
+    ▷ Φ (.normal .null) ⊢ WP (LoweredExpr.assert c msg) @ s; E {{ Φ }} :=
+  wp_pure_step_val (by rfl) fun _ => .assertDisabled h
+
+/--
+When assertions are checked (`h`), an assertion satisfies a postcondition `Φ` if, one step later,
+the conditional it becomes does: the null object if `c` is `true`, and a failing assertion if
+it's `false` (`▷ WP (.cond c (.val .null) (.assertFail msg) Γ.Null) {{ Φ }}`).
+-/
+public theorem wp_assert_enabled {c : LoweredExpr} {msg : Option LoweredExpr}
+    (h : P.assertsEnabled = true) :
+    ▷ WP (LoweredExpr.cond c (.val .null) (.assertFail msg) Γ.Null) @ s; E {{ Φ }} ⊢
+      WP (LoweredExpr.assert c msg) @ s; E {{ Φ }} :=
+  wp_pure_step (by rfl) fun _ => .assertEnabled h
+
+/--
+A failing assertion with no message satisfies a postcondition `Φ` that holds, one step later, of
+throwing (`▷ Φ (.throwing (.error .assertionFailed))`).
+-/
+public theorem wp_assertFail_none :
+    ▷ Φ (.throwing (.error .assertionFailed)) ⊢
+      WP (LoweredExpr.assertFail (τ := τ) none) @ s; E {{ Φ }} :=
+  wp_pure_step_throwing (by rfl) fun _ => .assertFailNone
+
+/--
+A failing assertion whose message has evaluated to `v` satisfies a postcondition `Φ` that holds,
+one step later, of throwing (`▷ Φ (.throwing (.error .assertionFailed))`). (Before the message has
+evaluated, the failing assertion is an evaluation context item, `EctxItem.assertFail`, so
+`wp_bind_item` applies.)
+-/
+public theorem wp_assertFail_some {v : Value} :
+    ▷ Φ (.throwing (.error .assertionFailed)) ⊢
+      WP (LoweredExpr.assertFail (some (.val v))) @ s; E {{ Φ }} :=
+  wp_pure_step_throwing (by rfl) fun _ => .assertFailSome
+
 /-! ### Strings and constants -/
 
 /--

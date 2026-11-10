@@ -270,6 +270,9 @@ What exists so far:
   (`concat`, of strings, the null object, booleans and integers), and `==` on strings. These have
   interpreter support and program-logic laws (with `IsConst` for canonical objects, and `Fresh`
   for new strings), but no typing rules yet.
+- The semantics also has assertions (`assert`, as a statement or a constructor initializer),
+  checked or not according to a parameter of the semantics (`SemanticParams.assertsEnabled`), with
+  interpreter support and program-logic laws, but no typing rules yet.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, a program with calls proved safe and correct (`CallSpecs`), a
   loop proved correct (`LoopSpecs`), a program with an object and one with an overriding method

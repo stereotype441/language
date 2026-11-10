@@ -63,10 +63,12 @@ program's execution:
 integers, returns, labeled statements and breaks (and the propagation of returns and breaks), the
 body of a running call (`frame`) or constructor (`ctorFrame`) once it has completed, `super(args)`
 and `this(args)` calls in initializer lists, and intrinsic checks, arithmetic, comparisons,
-equality and `identical` whose answer `rfl` can compute. It doesn't run a loop, which it would
-unroll forever. To reason about a function's body separately from the call's outcome, apply
-`tac_wp_frame` (or `tac_wp_ctorFrame` for a constructor's), and similarly `tac_wp_labeled` for a
-labeled statement.
+equality and `identical` whose answer `rfl` can compute. It takes the steps of assertions
+(`assert` and `assertFail`) too, once a hypothesis in the Lean context says whether assertions are
+checked (`P.assertsEnabled = true` or `= false`). It doesn't run a loop, which it would unroll
+forever. To reason about a function's body separately from the call's
+outcome, apply `tac_wp_frame` (or `tac_wp_ctorFrame` for a constructor's), and similarly
+`tac_wp_labeled` for a labeled statement.
 
 Steps that involve a run-time subtype check (cast expressions and is-expressions), or the state in
 other ways (such as assignments to instance variables, getters and setters, `super` accesses, and
@@ -190,6 +192,8 @@ public theorem tidy_fill_letIn (v : Variable) (m₂ m : LoweredExpr) :
     (EctxItem.letIn v m₂).fill m = .letIn v m m₂ := rfl
 public theorem tidy_fill_concat (vs : List Value) (ms : List LoweredExpr) (m : LoweredExpr) :
     (EctxItem.concat vs ms).fill m = .concat (vs.map .val ++ m :: ms) := rfl
+public theorem tidy_fill_assertFail (m : LoweredExpr) :
+    (EctxItem.assertFail (τ := τ)).fill m = .assertFail (some m) := rfl
 public theorem tidy_splitVals_nil : LoweredExpr.splitVals (τ := τ) [] = ([], []) := rfl
 public theorem tidy_splitVals_val (v : Value) (ms : List LoweredExpr) :
     LoweredExpr.splitVals (.val v :: ms) =
@@ -837,7 +841,15 @@ macro_rules
     | exact DartSemantics.HeadStep.bubbleReturn_args (F := (.concat ·)) (mk := (.concat · ·))
         (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
     | exact DartSemantics.HeadStep.bubbleBreak_args (F := (.concat ·)) (mk := (.concat · ·))
-        (fun _ _ _ => rfl) (fun _ _ _ => rfl) (fun _ _ => rfl) rfl)
+        (fun _ _ _ => rfl) (fun _ _ _ => rfl) (fun _ _ => rfl) rfl
+    | exact DartSemantics.HeadStep.assertFailNone
+    | exact DartSemantics.HeadStep.assertFailSome
+    | exact DartSemantics.HeadStep.bubbleException (Ki := .assertFail)
+    | exact DartSemantics.HeadStep.bubbleReturn (Ki := .assertFail) rfl
+    | exact DartSemantics.HeadStep.bubbleBreak (Ki := .assertFail) rfl rfl
+    -- Whether assertions are checked comes from a hypothesis in the Lean context.
+    | exact DartSemantics.HeadStep.assertDisabled ‹_›
+    | exact DartSemantics.HeadStep.assertEnabled ‹_›)
 
 /--
 Tidy the goal after a step: reduce `Outcome.toExpr`, `EctxItem.fill`, `framePost`, `labeledPost`
@@ -869,7 +881,8 @@ macro_rules
       DartSemantics.tidy_fill_superSetL, DartSemantics.tidy_fill_superSetR,
       DartSemantics.tidy_fill_checkPromotion, DartSemantics.tidy_fill_identicalL,
       DartSemantics.tidy_fill_identicalR, DartSemantics.tidy_fill_letIn,
-      DartSemantics.tidy_fill_concat, DartSemantics.tidy_splitVals_nil,
+      DartSemantics.tidy_fill_concat, DartSemantics.tidy_fill_assertFail,
+      DartSemantics.tidy_splitVals_nil,
       DartSemantics.tidy_splitVals_val, DartSemantics.tidy_splitVals_cons, ne_eq, reduceCtorEq,
       not_false_eq_true, implies_true,
       DartSemantics.ctorFramePost,
@@ -943,6 +956,7 @@ macro_rules
       | refine DartSemantics.tac_wp_bind (.identicalL _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.identicalR _) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind (.letIn _ _) (by rfl) ?_
+      | refine DartSemantics.tac_wp_bind .assertFail (by rfl) ?_
       | refine DartSemantics.tac_wp_bind_args (F := (.new _ · _)) (mk := (.new _ · · _))
           (fun _ _ _ => rfl) (by rfl) (by rfl) ?_
       | refine DartSemantics.tac_wp_bind_args (F := (.initCtor (.val _) _ ·))
