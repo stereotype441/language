@@ -173,15 +173,16 @@ public theorem PassesPromotionCheck.of_le {σ : State} {v : Value} {S T : τ}
 `HeadStep e σ e' σ'` says that expression `e`, in state `σ`, takes a head step to `e'`, leaving
 state `σ'`.
 
-Every step is deterministic (`HeadStep.deterministic`). An expression that has completed (`val`
-or `throwing`) takes no step. Any other expression with no step is *stuck*. An expression gets
-stuck only when something that Dart's static checks (including flow analysis) are meant to
-guarantee has failed, such as reading a variable that hasn't been assigned, or a value failing its
-promotion check. Giving such an expression no step makes the failure loud: the interpreter reports
-it, and the safety theorem (that well-typed programs don't get stuck) rules it out, so proving that
-theorem proves the guarantee. Until the semantics covers more of Dart, an expression can also get
-stuck because it uses something that isn't modeled yet: in particular, `unsupported`, the
-translator's placeholder for an unsupported construct, has no head step.
+Every step is deterministic (`HeadStep.deterministic`, proved in `InterpHead.lean` from the
+interpreter). An expression that has completed (`val` or `throwing`) takes no step. Any other
+expression with no step is *stuck*. An expression gets stuck only when something that Dart's
+static checks (including flow analysis) are meant to guarantee has failed, such as reading a
+variable that hasn't been assigned, or a value failing its promotion check. Giving such an
+expression no step makes the failure loud: the interpreter reports it, and the safety theorem
+(that well-typed programs don't get stuck) rules it out, so proving that theorem proves the
+guarantee. Until the semantics covers more of Dart, an expression can also get stuck because it
+uses something that isn't modeled yet: in particular, `unsupported`, the translator's placeholder
+for an unsupported construct, has no head step.
 -/
 public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → Prop where
   /-- The null literal evaluates to the null object. -/
@@ -614,44 +615,5 @@ public theorem HeadStep.fill_propagates {Ki : EctxItem} {m e' : LoweredExpr} {σ
     exact ⟨rfl, rfl⟩
   all_goals cases Ki <;> simp only [EctxItem.fill, reduceCtorEq] at hE
   all_goals simp_all [EctxItem.handlesReturn, EctxItem.handlesBreak]
-
-/--
-The semantics is deterministic: an expression takes at most one head step. If `e`, in state `σ`,
-takes head steps to `e₁` in state `σ₁` (`h₁`) and to `e₂` in state `σ₂` (`h₂`), they're the same
-expression (`e₁ = e₂`) and the same state (`σ₁ = σ₂`).
--/
-public theorem HeadStep.deterministic {e e₁ e₂ : LoweredExpr} {σ σ₁ σ₂ : State}
-    (h₁ : HeadStep e σ e₁ σ₁) (h₂ : HeadStep e σ e₂ σ₂) : e₁ = e₂ ∧ σ₁ = σ₂ := by
-  have h₁' := h₁
-  generalize hE : e = E at h₂
-  -- When either step propagates an abrupt completion out of a context item, `fill_propagates`
-  -- shows that the other step does the same, without a case split on the item.
-  cases h₁
-  case bubbleException | bubbleReturn | bubbleBreak =>
-    subst hE
-    exact And.imp Eq.symm Eq.symm (HeadStep.fill_propagates (fun _ h => by cases h)
-      (fun _ h => by cases h <;> assumption) (fun _ h => by cases h <;> assumption) h₂)
-  all_goals cases h₂
-  all_goals first
-    -- Only a propagation has a context item among its parameters.
-    | (have _ : EctxItem := by assumption
-       rw [hE] at h₁'
-       have R := HeadStep.fill_propagates (fun _ h => by cases h)
-         (fun _ h => by cases h <;> assumption) (fun _ h => by cases h <;> assumption) h₁'
-       -- `rw` also rewrote the expression that `h₁'` steps to if it's the same expression (the
-       -- step of a check that doesn't terminate), so `hE` is needed to undo that.
-       first
-         | exact R
-         | exact ⟨hE.trans R.1, R.2⟩)
-    | skip
-  -- Otherwise neither step propagates, and both are steps of the same expression. (Or one does,
-  -- but the other step's result contains the expression, which defeated the `rw` above; then a
-  -- case split on the item shows that the propagation can't apply.)
-  all_goals
-    (try cases ‹EctxItem›) <;> (try simp only [EctxItem.fill, reduceCtorEq] at hE)
-  all_goals (try simp_all)
-  all_goals first
-    | grind [rtSub_unique]
-    | (cases ‹Bool› <;> grind)
 
 end DartSemantics

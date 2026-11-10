@@ -1,5 +1,6 @@
 module
 public import DartSemantics.HeadStep
+public import DartSemantics.InterpHead
 public import Iris.ProgramLogic.EctxiLanguage
 
 /-!

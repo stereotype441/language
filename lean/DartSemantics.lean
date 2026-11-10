@@ -5,6 +5,7 @@ public import DartSemantics.Compat
 public import DartSemantics.GhostState
 public import DartSemantics.HeadStep
 public import DartSemantics.Heap
+public import DartSemantics.InterpHead
 public import DartSemantics.Interpreter
 public import DartSemantics.Language
 public import DartSemantics.PrimitiveLaws
