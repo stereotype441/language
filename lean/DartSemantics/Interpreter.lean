@@ -177,6 +177,8 @@ public def primStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .letIn v m₁ m₂ =>
     if m₁.toOutcome?.isSome then headStep fuel e σ else stepIn (.letIn v m₂) (primStep fuel m₁ σ)
   | .concat parts => primStepArgs fuel e (fun vs ms => .concat vs ms) [] parts σ
+  | .assertFail (some m) =>
+    if m.toOutcome?.isSome then headStep fuel e σ else stepIn .assertFail (primStep fuel m σ)
   | _ => headStep fuel e σ
 termination_by structural e
 
@@ -459,6 +461,10 @@ theorem primStep_of_headStep {e e' : LoweredExpr} {σ σ' : State} (h : HeadStep
       have hv : (LoweredExpr.val v₁).toOutcome? = some (.normal v₁) := rfl
       simp [primStep, hin (.checkEqR v₁) m₂ rfl, hv]
     | _ => first | (simp [LoweredExpr.toOutcome?] at h₁; done) | rfl
+  | assertFail msg =>
+    cases msg with
+    | none => rfl
+    | some m => simp [primStep, hin .assertFail m rfl]
   | _ => rfl
 
 omit [RtSubChecker τ] in
@@ -486,7 +492,9 @@ state `σ'` (`h`), is a step of the semantics (`(e, σ) -<[]>-> (e', σ', [])`).
 public theorem primStep_sound {fuel : Nat} (e : LoweredExpr) {σ : State} {e' : LoweredExpr}
     {σ' : State} (h : primStep fuel e σ = .next e' σ') : (e, σ) -<[]>-> (e', σ', []) := by
   rw [primStep.eq_def] at h
-  cases e <;> dsimp only at h
+  cases e
+  case' assertFail msg => cases msg
+  all_goals dsimp only at h
   case call f args T =>
     exact primStepArgs_sound (E := (.call f · T)) (fun _ _ _ => rfl) [] args (by simp) h
   case new k args T =>
@@ -712,7 +720,9 @@ public theorem primStep_stuck_redex {fuel : Nat} (e : LoweredExpr) {redex : Lowe
     {σ : State} (h : primStep fuel e σ = .stuck redex) :
     (∃ K, e = fillCtx K redex) ∧ ∀ e' σ', ¬ HeadStep redex σ e' σ' := by
   rw [primStep.eq_def] at h
-  cases e <;> dsimp only at h
+  cases e
+  case' assertFail msg => cases msg
+  all_goals dsimp only at h
   case call f args T =>
     exact primStepArgs_stuck_redex (E := (.call f · T)) (fun _ _ _ => rfl) [] args (by simp) h
   case new k args T =>

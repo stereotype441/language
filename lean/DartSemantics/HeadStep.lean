@@ -116,6 +116,11 @@ public class SemanticParams where
   choose a mode for each function, or quantify over modes.
   -/
   intModeOf : String → IntMode
+  /--
+  Whether assertions are checked (`LoweredExpr.assert`), as with
+  the VM's `--enable-asserts` option. A theorem can assume either value, or quantify over both.
+  -/
+  assertsEnabled : Bool
 
 variable [P : SemanticParams τ]
 
@@ -565,6 +570,30 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | concat {vs : List Value} {cus : List (List UInt16)} {σ : State}
       (h : vs.mapM σ.stringPart? = some cus) :
       HeadStep (.concat (vs.map .val)) σ (.val (.obj σ.fresh)) (σ.alloc (.string cus.flatten))
+  /--
+  When assertions aren't checked (`h`), an assertion completes normally with the null object,
+  evaluating neither its condition nor its message.
+  -/
+  | assertDisabled {c : LoweredExpr} {msg : Option LoweredExpr} {σ : State}
+      (h : P.assertsEnabled = false) :
+      HeadStep (.assert c msg) σ (.val .null) σ
+  /--
+  When assertions are checked (`h`), an assertion becomes a conditional on its condition: the null
+  object if it's `true`, and a failing assertion (`assertFail`) if it's `false`. So a condition
+  that isn't a boolean gets stuck, as in any conditional.
+  -/
+  | assertEnabled {c : LoweredExpr} {msg : Option LoweredExpr} {σ : State}
+      (h : P.assertsEnabled = true) :
+      HeadStep (.assert c msg) σ (.cond c (.val .null) (.assertFail msg) Γ.Null) σ
+  /-- A failing assertion with no message throws. -/
+  | assertFailNone {σ : State} :
+      HeadStep (.assertFail none) σ (.throwing (.error .assertionFailed)) σ
+  /--
+  A failing assertion whose message has been evaluated (to `v`) throws. The message's value isn't
+  kept (see `DynamicError.assertionFailed`).
+  -/
+  | assertFailSome {v : Value} {σ : State} :
+      HeadStep (.assertFail (some (.val v))) σ (.throwing (.error .assertionFailed)) σ
   /--
   An exception propagates outward one evaluation context item per step: whatever was to be done
   with the value of the hole is abandoned.

@@ -77,6 +77,8 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .letIn v m₁ m₂ => .letIn v (m₁.resolve x ℓ) (if v = x then m₂ else m₂.resolve x ℓ)
   | .constant c => .constant c
   | .concat parts => .concat (LoweredExpr.resolveList x ℓ parts)
+  | .assert c msg =>
+    .assert (c.resolve x ℓ) (match msg with | none => none | some m => some (m.resolve x ℓ))
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -89,6 +91,7 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .ctorRun ℓ' k vs => .ctorRun ℓ' k vs
   | .ctorFrame m => .ctorFrame (m.resolve x ℓ)
   | .checkPromotion T m => .checkPromotion T (m.resolve x ℓ)
+  | .assertFail msg => .assertFail (match msg with | none => none | some m => some (m.resolve x ℓ))
 
 /--
 Resolve each reference to variable `x` in the elements `ms` of a block to the cell at `ℓ`, as

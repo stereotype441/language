@@ -208,7 +208,9 @@ The classes of the programs tested here:
 - `class Log { int n; Log() : n = 0; }`, a log of digits (see `logStep`);
 - `class S { int a; S(Log l) : a = logStep(2) { logStep(3); } }`;
 - `class C extends S { int c; C(Log l) : c = logStep(1), super(l) { logStep(4); } }`, so that
-  `C(l)` appends `1234` to `l`, in Dart's order of construction;
+  `C(l)` appends `1234` to `l`, in Dart's order of construction; it has a second constructor,
+  `C.withAssert(Log l) : c = logStep(1), assert((logStep(5), true)), super(l) { logStep(4); }`,
+  whose assertion appends `5` when assertions are checked;
 - `class R { R(Log l) { logStep(1); return; logStep(2); } }`, whose constructor returns early;
 - `class D { int x = 1; D() : x = 2; }`, whose instance variable is initialized twice; and
 - `class U { int x; U() { x; } }`, whose constructor reads `x` before it's initialized (which Dart
@@ -311,13 +313,19 @@ def members : String → Option (MemberDecl (τ := SimpleType))
   | "W.setSup" => some ⟨thisOf tW, [pv], .superSet (.var (thisOf tW) tW) "x" none (.var pv int)⟩
   | _ => none
 
-/-- The constructors of the classes in `classes`, named `<class>.new`. -/
+/--
+The constructors of the classes in `classes`, named `<class>.new` (and `C.withAssert`, a second
+constructor of `C`).
+-/
 def constructors : String → Option (ConstructorDecl (τ := SimpleType))
   | "Log.new" => some ⟨"Log", thisOf tLog, [], [.initField (.var (thisOf tLog) tLog) "n" (.int 0)],
       .block []⟩
   | "S.new" => some ⟨"S", thisOf tS, [l], [.initField (.var (thisOf tS) tS) "a" (logStep 2)],
       logStep 3⟩
   | "C.new" => some ⟨"C", thisOf tC, [l], [.initField (.var (thisOf tC) tC) "c" (logStep 1),
+      .initCtor (.var (thisOf tC) tC) "S.new" [.var l tLog]], logStep 4⟩
+  | "C.withAssert" => some ⟨"C", thisOf tC, [l], [.initField (.var (thisOf tC) tC) "c" (logStep 1),
+      .assert (.seq (logStep 5) (.bool true)) none,
       .initCtor (.var (thisOf tC) tC) "S.new" [.var l tLog]], logStep 4⟩
   | "R.new" => some ⟨"R", thisOf tR, [l], [], .block [logStep 1, .ret .null, logStep 2]⟩
   | "D.new" => some ⟨"D", thisOf tD, [], [.initField (.var (thisOf tD) tD) "x" (.int 1),
@@ -342,15 +350,19 @@ def constructors : String → Option (ConstructorDecl (τ := SimpleType))
       .initCtor (.var (thisOf tW) tW) "V.new" []], .block []⟩
   | _ => none
 
-/-- The semantics with promotion checks. -/
+/-- The semantics with promotion checks, and with assertions not checked. -/
 @[instance_reducible]
 def verify : SemanticParams SimpleType :=
-  ⟨.verify, functions, classes, members, constructors, intModeOf⟩
+  ⟨.verify, functions, classes, members, constructors, intModeOf, false⟩
 
-/-- The semantics without promotion checks. -/
+/-- The semantics without promotion checks, and with assertions not checked. -/
 @[instance_reducible]
 def trust : SemanticParams SimpleType :=
-  ⟨.trust, functions, classes, members, constructors, intModeOf⟩
+  ⟨.trust, functions, classes, members, constructors, intModeOf, false⟩
+
+/-- The semantics with promotion checks, and with assertions checked. -/
+@[instance_reducible]
+def verifyAsserts : SemanticParams SimpleType := { verify with assertsEnabled := true }
 
 /-- A promotable property, backed by an instance variable of the object in `σx`. -/
 def f : Property := ⟨"_f", ObjectQ, true⟩
@@ -1521,6 +1533,91 @@ info: [done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicEr
 #guard_msgs (whitespace := lax) in
 #eval [runClosed verify (.concat [str "a", .nullCheck .null]),
   runClosed verify (.block [.concat [str "a", .ret (.int 1)]])]
+
+/-! ## Assertions
+
+Each test runs with assertions not checked (`verify`) and checked (`verifyAsserts`).
+-/
+
+-- `assert(true)`: completes normally with `null` either way.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.normal (DartLang.Value.null)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.assert (.bool true) none),
+  runClosed verifyAsserts (.assert (.bool true) none)]
+
+-- `assert(false)` and `assert(false, "oops")`: fail only when assertions are checked.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.assertionFailed)),
+ done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.assertionFailed))]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.assert (.bool false) none),
+  runClosed verifyAsserts (.assert (.bool false) none),
+  runClosed verify (.assert (.bool false) (some (str "oops"))),
+  runClosed verifyAsserts (.assert (.bool false) (some (str "oops")))]
+
+-- `assert(true, <unsupported>)`: the message is evaluated only if the assertion fails.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.normal (DartLang.Value.null)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.assert (.bool true) (some (.unsupported "Message" ObjectQ))),
+  runClosed verifyAsserts (.assert (.bool true) (some (.unsupported "Message" ObjectQ)))]
+
+-- `assert(false, <unsupported>)`, with assertions checked: gets stuck at the message.
+/--
+info: stuck at redex: DartLang.LoweredExpr.unsupported "Message" (DartLang.SimpleType.ObjectQ)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verifyAsserts) 100
+  (.assert (.bool false) (some (.unsupported "Message" ObjectQ))) State.empty)
+
+-- `assert(1)`: a condition that isn't a boolean is ignored when assertions aren't checked, and gets
+-- stuck when they are.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.null) -/
+#guard_msgs in
+#eval runClosed verify (.assert (.int 1) none)
+
+/--
+info: stuck at redex: DartLang.LoweredExpr.cond
+  (DartLang.LoweredExpr.val (DartLang.Value.int 1))
+  (DartLang.LoweredExpr.val (DartLang.Value.null))
+  (DartLang.LoweredExpr.assertFail none)
+  (DartLang.SimpleType.Null)
+-/
+#guard_msgs in
+#eval stuckRedex (Interp.run (P := verifyAsserts) 100 (.assert (.int 1) none) State.empty)
+
+-- `[assert(null!), assert(false, null!)]`: an exception out of the condition, or out of the
+-- message, propagates out of the assertion when assertions are checked.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError)),
+ done: DartLang.Outcome.normal (DartLang.Value.null),
+ done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.assert (.nullCheck .null) none),
+  runClosed verifyAsserts (.assert (.nullCheck .null) none),
+  runClosed verify (.assert (.bool false) (some (.nullCheck .null))),
+  runClosed verifyAsserts (.assert (.bool false) (some (.nullCheck .null)))]
+
+-- `{ Log l = Log(); C.withAssert(l); return l.n; }`: the assertion in the initializer list runs
+-- between `c`'s initializer and the superclass constructor, when assertions are checked.
+/--
+info: [done: DartLang.Outcome.returning (DartLang.Value.int 1234),
+ done: DartLang.Outcome.returning (DartLang.Value.int 15234)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [verify, verifyAsserts].map fun P => runClosed P (.block [.declare l tLog false,
+  .variableSet l (.new "Log.new" [] tLog), .new "C.withAssert" [.var l tLog] tC,
+  .ret (.propertyGet (.var l tLog) pn int)])
 
 /-! ## A program that runs out of fuel -/
 

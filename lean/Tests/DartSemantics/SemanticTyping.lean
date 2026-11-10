@@ -44,14 +44,14 @@ def classes : String → Option (ClassDecl (τ := SimpleType))
 /-- The semantics with promotion checks, for a program with no functions, and the classes above. -/
 @[instance_reducible]
 def verify : SemanticParams SimpleType :=
-  ⟨.verify, fun _ => none, classes, fun _ => none, fun _ => none, fun _ => .checked⟩
+  ⟨.verify, fun _ => none, classes, fun _ => none, fun _ => none, fun _ => .checked, false⟩
 
 /--
 The semantics without promotion checks, for a program with no functions, and the classes above.
 -/
 @[instance_reducible]
 def trust : SemanticParams SimpleType :=
-  ⟨.trust, fun _ => none, classes, fun _ => none, fun _ => none, fun _ => .checked⟩
+  ⟨.trust, fun _ => none, classes, fun _ => none, fun _ => none, fun _ => .checked, false⟩
 
 def x : Variable := { name := "x", type := ObjectQ }
 

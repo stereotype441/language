@@ -33,6 +33,12 @@ public inductive DynamicError where
   `ExpectException`; this placeholder stands for it.
   -/
   | expectFailed
+  /--
+  A failed assertion (`LoweredExpr.assert`, when assertions are enabled). In Dart, a failed
+  assertion throws an `AssertionError`, carrying the assertion's message, if any; this placeholder
+  stands for it (the message is evaluated, but its value isn't kept).
+  -/
+  | assertionFailed
   deriving Repr, BEq, DecidableEq
 
 /-- The kinds of intrinsic check (`LoweredExpr.check`) on one value, for `Expect` assertions. -/
@@ -428,6 +434,17 @@ public inductive LoweredExpr where
   versions of them).
   -/
   | concat (parts : List LoweredExpr)
+  /--
+  An assertion, `assert(c)` (`msg` is `none`) or `assert(c, msg)`, as a statement or as an
+  initializer in a constructor's initializer list (Kernel's `AssertStatement` and
+  `AssertInitializer`). Whether assertions are checked is a parameter of the semantics
+  (`SemanticParams.assertsEnabled`). If they aren't, the assertion completes normally with the
+  null object, evaluating neither `c` nor `msg`. If they are, it evaluates `c`, which must be a
+  boolean (anything else gets stuck, as in `cond`): if it's `true`, the assertion completes
+  normally with the null object; if it's `false`, it evaluates `msg`, if there is one, and throws
+  (see `assertFail`).
+  -/
+  | assert (c : LoweredExpr) (msg : Option LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -483,6 +500,11 @@ public inductive LoweredExpr where
   normally with `w`, `checkPromotion` does too, if `w` passes the check.
   -/
   | checkPromotion (T : τ) (m : LoweredExpr)
+  /--
+  A failing assertion, with its message `msg`, if any (see `assert`): evaluates `msg`, discards
+  its value, and throws (`DynamicError.assertionFailed`).
+  -/
+  | assertFail (msg : Option LoweredExpr)
 
 /--
 An evaluation context item: an expression with a hole in the position that evaluates next. See
@@ -587,6 +609,8 @@ public inductive EctxItem where
   have evaluated to `vs`, and whose parts after it, `ms`, are still to be evaluated
   -/
   | concat (vs : List Value) (ms : List LoweredExpr)
+  /-- `assertFail(□)`: the message of a failing assertion -/
+  | assertFail
 
 end
 
@@ -744,6 +768,7 @@ public def LoweredExpr.typeOf :
   | letIn _ _ m₂ => m₂.typeOf
   | constant c => c.typeOf
   | concat _ => Γ.String
+  | assert _ _ => Γ.Null
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -755,6 +780,7 @@ public def LoweredExpr.typeOf :
   | ctorRun _ _ _ => Γ.Null
   | ctorFrame _ => Γ.Null
   | checkPromotion T _ => T
+  | assertFail _ => Γ.Null
 
 mutual
 
@@ -806,6 +832,9 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .letIn v m₁ m₂ => .letIn v (m₁.withIntMode mode) (m₂.withIntMode mode)
   | .constant c => .constant c
   | .concat parts => .concat (LoweredExpr.withIntModeList mode parts)
+  | .assert c msg =>
+    .assert (c.withIntMode mode)
+      (match msg with | none => none | some m => some (m.withIntMode mode))
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -817,6 +846,8 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .ctorRun ℓ k vs => .ctorRun ℓ k vs
   | .ctorFrame m => .ctorFrame (m.withIntMode mode)
   | .checkPromotion T m => .checkPromotion T (m.withIntMode mode)
+  | .assertFail msg =>
+    .assertFail (match msg with | none => none | some m => some (m.withIntMode mode))
 
 /-- Set the integer mode of every integer operator in each of `ms`, as `withIntMode` does. -/
 @[expose]
@@ -874,6 +905,9 @@ public def LoweredExpr.withSuperclass (s : Option String) : LoweredExpr → Lowe
   | .letIn v m₁ m₂ => .letIn v (m₁.withSuperclass s) (m₂.withSuperclass s)
   | .constant c => .constant c
   | .concat parts => .concat (LoweredExpr.withSuperclassList s parts)
+  | .assert c msg =>
+    .assert (c.withSuperclass s)
+      (match msg with | none => none | some m => some (m.withSuperclass s))
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -885,6 +919,8 @@ public def LoweredExpr.withSuperclass (s : Option String) : LoweredExpr → Lowe
   | .ctorRun ℓ k vs => .ctorRun ℓ k vs
   | .ctorFrame m => .ctorFrame (m.withSuperclass s)
   | .checkPromotion T m => .checkPromotion T (m.withSuperclass s)
+  | .assertFail msg =>
+    .assertFail (match msg with | none => none | some m => some (m.withSuperclass s))
 
 /-- Fill every `super` slot in each of `ms` with `s`, as `withSuperclass` does. -/
 @[expose]
@@ -1103,6 +1139,7 @@ public def EctxItem.fill : EctxItem → LoweredExpr → LoweredExpr
   | .identicalR v₁, m => .identical (.val v₁) m
   | .letIn v m₂, m => .letIn v m m₂
   | .concat vs ms, m => .concat (vs.map .val ++ m :: ms)
+  | .assertFail, m => .assertFail (some m)
 
 /--
 Whether context item `Ki` handles a return (`returning`) in its hole, rather than propagating it

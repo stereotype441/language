@@ -117,7 +117,7 @@ don't access its members.)
 -/
 @[instance_reducible]
 def verify : SemanticParams T :=
-  ⟨.verify, fun _ => none, fun _ => none, fun _ => none, fun _ => none, fun _ => .wrap64⟩
+  ⟨.verify, fun _ => none, fun _ => none, fun _ => none, fun _ => none, fun _ => .wrap64, false⟩
 
 /-- A state in which `x` (at location 1) refers to an object (at location 0) of class `B`. -/
 def σx : State := ⟨#[.object "B" B [], .val (.obj ⟨0⟩)], []⟩

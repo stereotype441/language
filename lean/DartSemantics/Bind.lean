@@ -64,6 +64,8 @@ public theorem LoweredExpr.resolve_ne_declare {m : LoweredExpr}
   | variableSet v' m' =>
     simp only [resolve] at h
     split at h <;> simp at h
+  | assert c msg => cases msg <;> simp [resolve] at h
+  | assertFail msg => cases msg <;> simp [resolve] at h
   | _ => simp [resolve] at h
 
 /--
@@ -140,6 +142,8 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
       · simp [resolve, hx, hy, resolve_comm hne m₁, resolve_comm hne m₂]
   | .constant _ => rfl
   | .concat parts => by simp only [resolve, resolveList_comm hne parts]
+  | .assert c none => by simp only [resolve, resolve_comm hne c]
+  | .assert c (some m) => by simp only [resolve, resolve_comm hne c, resolve_comm hne m]
   | .val _ => rfl
   | .throwing _ => rfl
   | .returning _ => rfl
@@ -151,6 +155,8 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
   | .ctorRun _ _ _ => rfl
   | .ctorFrame m => by simp only [resolve, resolve_comm hne m]
   | .checkPromotion _ m => by simp only [resolve, resolve_comm hne m]
+  | .assertFail none => rfl
+  | .assertFail (some m) => by simp only [resolve, resolve_comm hne m]
 
 /-- Resolving two different variables (`hne`) in a block gives the same result in either order. -/
 public theorem LoweredExpr.resolveBlock_comm {x y : Variable} {ℓ ℓ' : Loc} (hne : x ≠ y) :

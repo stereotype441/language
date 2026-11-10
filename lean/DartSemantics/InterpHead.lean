@@ -240,6 +240,12 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     | some (v, σ') => .next (.val v) σ'
     | none => .stuck e
   | .concat parts => headStepArgs e parts σ (concatStep e · σ)
+  | .assert c msg =>
+    match P.assertsEnabled with
+    | true => .next (.cond c (.val .null) (.assertFail msg) Γ.Null) σ
+    | false => .next (.val .null) σ
+  | .assertFail none => .next (.throwing (.error .assertionFailed)) σ
+  | .assertFail (some (.val _)) => .next (.throwing (.error .assertionFailed)) σ
   | .varAt _ T ℓ =>
     match σ.lookup ℓ with
     | some (.val v) => promotionCheck fuel σ v T e (.next (.val v) σ)
@@ -452,6 +458,7 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
   | .identical (.val _) m => propagate m σ (.stuck e)
   | .identical m _ => propagate m σ (.stuck e)
   | .letIn _ m _ => propagate m σ (.stuck e)
+  | .assertFail (some m) => propagate m σ (.stuck e)
   | _ => .stuck e
 
 
@@ -592,8 +599,10 @@ public theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : Head
   cases h with
   | null | bool | int | declare | blockNil | blockDeclare | seq | nullCheckNull | condTrue
   | condFalse | ret | frameReturning | frameVal | loop | labeledVal | brk | ctorFrameReturning
-  | ctorFrameVal | letIn =>
+  | ctorFrameVal | letIn | assertFailNone | assertFailSome =>
     exact .inl (Converges.of_eq fun _ => rfl)
+  | assertDisabled h | assertEnabled h =>
+    exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, h])
   | call hf hlen =>
     exact .inl (Converges.of_eq fun _ => by
       simp [headStep.eq_def, headStepArgs, callStep, hf, hlen])
@@ -1078,6 +1087,7 @@ public theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleException (Ki := .identicalL _)
          | exact .bubbleException (Ki := .identicalR _)
          | exact .bubbleException (Ki := .letIn _ _)
+         | exact .bubbleException (Ki := .assertFail)
          | exact .bubbleReturn (Ki := .nullCheck) rfl
          | exact .bubbleReturn (Ki := .as _) rfl
          | exact .bubbleReturn (Ki := .is _) rfl
@@ -1109,6 +1119,7 @@ public theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleReturn (Ki := .identicalL _) rfl
          | exact .bubbleReturn (Ki := .identicalR _) rfl
          | exact .bubbleReturn (Ki := .letIn _ _) rfl
+         | exact .bubbleReturn (Ki := .assertFail) rfl
          | exact .bubbleBreak (Ki := .intBinL _ _ _) rfl rfl
          | exact .bubbleBreak (Ki := .intBinR _ _ _) rfl rfl
          | exact .bubbleBreak (Ki := .intNeg _) rfl rfl
@@ -1139,6 +1150,7 @@ public theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | exact .bubbleBreak (Ki := .identicalL _) rfl rfl
          | exact .bubbleBreak (Ki := .identicalR _) rfl rfl
          | exact .bubbleBreak (Ki := .letIn _ _) rfl rfl
+         | exact .bubbleBreak (Ki := .assertFail) rfl rfl
          | (subst_vars; exact .labeledBreak)
          | (rename_i hne
             exact .bubbleBreak (Ki := .labeled _)
