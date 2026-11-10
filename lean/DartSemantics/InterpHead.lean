@@ -233,6 +233,11 @@ public def headStep (fuel : Nat) (e : LoweredExpr) (σ : State) : StepResult :=
     .next (.block (LoweredExpr.resolveBlock v σ.fresh ms))
       (σ.alloc (if startsNull then .val .null else .uninit))
   | .block (m :: ms) => .next (.seq m (.block ms)) σ
+  | .blockExpr [] m => .next m σ
+  | .blockExpr (.declare v _ startsNull :: ms) m =>
+    .next ((LoweredExpr.blockExpr ms m).resolve v σ.fresh)
+      (σ.alloc (if startsNull then .val .null else .uninit))
+  | .blockExpr (m₁ :: ms) m => .next (.seq m₁ (.blockExpr ms m)) σ
   | .seq (.val _) m => .next m σ
   | .letIn v (.val w) m₂ => .next (m₂.resolve v σ.fresh) (σ.alloc (.val w))
   | .constant c =>
@@ -599,8 +604,12 @@ public theorem headStep_complete {e e' : LoweredExpr} {σ σ' : State} (h : Head
   cases h with
   | null | bool | int | declare | blockNil | blockDeclare | seq | nullCheckNull | condTrue
   | condFalse | ret | frameReturning | frameVal | loop | labeledVal | brk | ctorFrameReturning
-  | ctorFrameVal | letIn | assertFailNone | assertFailSome =>
+  | ctorFrameVal | letIn | assertFailNone | assertFailSome | blockExprNil | blockExprDeclare =>
     exact .inl (Converges.of_eq fun _ => rfl)
+  | @blockExprCons m₁ ms m σ h =>
+    cases m₁
+    case declare v T startsNull => exact absurd rfl (h v T startsNull)
+    all_goals exact .inl (Converges.of_eq fun _ => rfl)
   | assertDisabled h | assertEnabled h =>
     exact .inl (Converges.of_eq fun _ => by simp [headStep.eq_def, h])
   | call hf hlen =>
@@ -1053,7 +1062,9 @@ public theorem headStep_sound {fuel : Nat} {e e' : LoweredExpr} {σ σ' : State}
          | (rename_i hb
             first
               | (subst hb; exact .blockDeclare)
-              | (simp only [Bool.not_eq_true] at hb; subst hb; exact .blockDeclare))
+              | (simp only [Bool.not_eq_true] at hb; subst hb; exact .blockDeclare)
+              | (subst hb; exact .blockExprDeclare)
+              | (simp only [Bool.not_eq_true] at hb; subst hb; exact .blockExprDeclare))
          | exact .bubbleException (Ki := .nullCheck)
          | exact .bubbleException (Ki := .as _)
          | exact .bubbleException (Ki := .is _)

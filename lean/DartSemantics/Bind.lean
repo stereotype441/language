@@ -79,6 +79,37 @@ public theorem LoweredExpr.resolveBlock_cons_of_ne {m : LoweredExpr}
   | declare v T sN => exact absurd rfl (hm v T sN)
   | _ => rfl
 
+/--
+An element of a block that isn't a declaration (`hm`) declares no variable: whether the block
+declares `x` depends only on the rest of it.
+-/
+public theorem LoweredExpr.declaresVar_cons_of_ne {m : LoweredExpr}
+    (hm : ∀ v T sN, m ≠ .declare v T sN) (x : Variable) (ms : List LoweredExpr) :
+    declaresVar x (m :: ms) = declaresVar x ms := by
+  cases m
+  case declare v T sN => exact absurd rfl (hm v T sN)
+  all_goals rfl
+
+/--
+Resolving a variable in the elements of a block doesn't change which variables they declare
+(`declaresVar y (resolveBlock x ℓ ms) = declaresVar y ms`).
+-/
+public theorem LoweredExpr.declaresVar_resolveBlock (x y : Variable) (ℓ : Loc) :
+    ∀ ms : List LoweredExpr, declaresVar y (resolveBlock x ℓ ms) = declaresVar y ms
+  | [] => rfl
+  | m :: ms => by
+    by_cases hm : ∃ v T sN, m = .declare v T sN
+    · obtain ⟨v, T, sN, rfl⟩ := hm
+      by_cases hx : v = x
+      · subst hx
+        simp [resolveBlock]
+      · have ih := declaresVar_resolveBlock x y ℓ ms
+        simp only [declaresVar] at ih ⊢
+        simp [resolveBlock, hx, ih]
+    · have hm' : ∀ v T sN, m ≠ .declare v T sN := fun v T sN h => hm ⟨v, T, sN, h⟩
+      rw [resolveBlock_cons_of_ne hm', declaresVar_cons_of_ne (resolve_ne_declare hm' x ℓ),
+        declaresVar_cons_of_ne hm', declaresVar_resolveBlock x y ℓ ms]
+
 mutual
 
 /-- Resolving two different variables (`hne`) gives the same result in either order. -/
@@ -144,6 +175,10 @@ public theorem LoweredExpr.resolve_comm {x y : Variable} {ℓ ℓ' : Loc} (hne :
   | .concat parts => by simp only [resolve, resolveList_comm hne parts]
   | .assert c none => by simp only [resolve, resolve_comm hne c]
   | .assert c (some m) => by simp only [resolve, resolve_comm hne c, resolve_comm hne m]
+  | .blockExpr ms m => by
+    simp only [resolve, resolveBlock_comm hne ms, declaresVar_resolveBlock]
+    by_cases hx : declaresVar x ms <;> by_cases hy : declaresVar y ms <;>
+      simp [hx, hy, resolve_comm hne m]
   | .val _ => rfl
   | .throwing _ => rfl
   | .returning _ => rfl

@@ -1619,6 +1619,72 @@ info: [done: DartLang.Outcome.returning (DartLang.Value.int 1234),
   .variableSet l (.new "Log.new" [] tLog), .new "C.withAssert" [.var l tLog] tC,
   .ret (.propertyGet (.var l tLog) pn int)])
 
+/-! ## Blocks with a value -/
+
+/-- A `final` local variable `j`, of type `int`. -/
+def fj : Variable := { name := "j", type := int, isFinal := true }
+
+/-- A local variable `t`, of type `V` (for a cascade). -/
+def tv : Variable := { name := "t", type := tV }
+
+-- `[{ } => 1, { int i; i = 2; } => i]`: a block with a value evaluates its statements and then its
+-- value, in which the statements' declarations are in scope.
+/--
+info: [done: DartLang.Outcome.normal (DartLang.Value.int 1),
+ done: DartLang.Outcome.normal (DartLang.Value.int 2)]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.blockExpr [] (.int 1)),
+  runClosed verify (.blockExpr [.declare i int false, .variableSet i (.int 2)] (.var i int))]
+
+-- `{ int i = 1; return ({ int i; i = 10; } => i) + i; }`: a declaration in the statements shadows
+-- the outer variable in the value, and the outer variable is unaffected afterwards.
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 11) -/
+#guard_msgs in
+#eval runClosed verify (.block [.declare i int false, .variableSet i (.int 1),
+  .ret (add (.blockExpr [.declare i int false, .variableSet i (.int 10)] (.var i int))
+    (.var i int))])
+
+-- `{ int i; } => ({ i = 3; } => i)`: nested blocks with a value.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 3) -/
+#guard_msgs in
+#eval runClosed verify
+  (.blockExpr [.declare i int false] (.blockExpr [.variableSet i (.int 3)] (.var i int)))
+
+-- `[{ null!; } => 1, { } => null!]`: an exception out of a statement, or out of the value,
+-- propagates out of the block with a value.
+/--
+info: [done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError)),
+ done: DartLang.Outcome.throwing (DartLang.Value.error (DartLang.DynamicError.typeError))]
+-/
+#guard_msgs (whitespace := lax) in
+#eval [runClosed verify (.blockExpr [.nullCheck .null] (.int 1)),
+  runClosed verify (.blockExpr [] (.nullCheck .null))]
+
+-- `{ int i = 0; while (i < 2) { i = ({ final int j; j = i; } => j) + 1; } return i; }`: each run
+-- of the loop's body gets a new cell for `j`, so assigning the `final` variable again doesn't get
+-- stuck.
+/-- info: done: DartLang.Outcome.returning (DartLang.Value.int 2) -/
+#guard_msgs in
+#eval summary (Interp.run (P := verify) 1000 (.block [.declare i int false,
+  .variableSet i (.int 0),
+  .labeled "L" (.loop (.cond (.intBin .lt (some .checked) (.var i int) (.int 2))
+    (.labeled "C" (.block [.variableSet i
+      (add (.blockExpr [.declare fj int false, .variableSet fj (.var i int)] (.var fj int))
+        (.int 1))]))
+    (.brk "L") Null)),
+  .ret (.var i int)]) State.empty)
+
+-- `(V()..x = 5..readX()).x`, in the CFE's form for a cascade:
+-- `(let t = V() in { t.x = 5; t.readX(); } => t).x`.
+/-- info: done: DartLang.Outcome.normal (DartLang.Value.int 5) -/
+#guard_msgs in
+#eval runClosed verify (.propertyGet
+  (.letIn tv (.new "V.new" [] tV) (.blockExpr
+    [.propertySet (.var tv tV) "x" (.int 5), .methodCall (.var tv tV) "readX" [] int]
+    (.var tv tV)))
+  px int)
+
 /-! ## A program that runs out of fuel -/
 
 -- `{ x!; x }`, with parameter `x` as in `runWithX`, given fuel for only one step: the block becomes

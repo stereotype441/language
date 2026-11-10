@@ -219,6 +219,25 @@ public inductive HeadStep : LoweredExpr → State → LoweredExpr → State → 
   | blockCons {m : LoweredExpr} {ms : List LoweredExpr} {σ : State}
       (h : ∀ v T startsNull, m ≠ .declare v T startsNull) :
       HeadStep (.block (m :: ms)) σ (.seq m (.block ms)) σ
+  /-- A block with a value whose statements have all run evaluates its value `m`. -/
+  | blockExprNil {m : LoweredExpr} {σ : State} : HeadStep (.blockExpr [] m) σ m σ
+  /--
+  A block with a value whose statements start with a declaration of local variable `v` allocates
+  a cell for `v`, as `blockDeclare` does, and resolves the references to `v` in the rest of the
+  statements and in the value to it.
+  -/
+  | blockExprDeclare {v : Variable (τ := τ)} {T : τ} {startsNull : Bool} {ms : List LoweredExpr}
+      {m : LoweredExpr} {σ : State} :
+      HeadStep (.blockExpr (.declare v T startsNull :: ms) m) σ
+        ((LoweredExpr.blockExpr ms m).resolve v σ.fresh)
+        (σ.alloc (if startsNull then .val .null else .uninit))
+  /--
+  A block with a value whose statements start with anything else runs it, and then the rest of the
+  block with a value.
+  -/
+  | blockExprCons {m₁ : LoweredExpr} {ms : List LoweredExpr} {m : LoweredExpr} {σ : State}
+      (h : ∀ v T startsNull, m₁ ≠ .declare v T startsNull) :
+      HeadStep (.blockExpr (m₁ :: ms) m) σ (.seq m₁ (.blockExpr ms m)) σ
   /-- Once the first part of a sequence completes normally, its value is discarded. -/
   | seq {v : Value} {m : LoweredExpr} {σ : State} : HeadStep (.seq (.val v) m) σ m σ
   /--

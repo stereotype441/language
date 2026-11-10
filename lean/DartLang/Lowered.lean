@@ -445,6 +445,13 @@ public inductive LoweredExpr where
   (see `assertFail`).
   -/
   | assert (c : LoweredExpr) (msg : Option LoweredExpr)
+  /--
+  A block with a value (Kernel's `BlockExpression`): runs `stmts` in order, as a block does, and
+  then evaluates `m`, whose value and static type are the block's. A declaration among `stmts`
+  scopes over the rest of `stmts` and over `m`. (The CFE lowers a cascade `e..m()..x = 1` to
+  `let t = e in { t.m(); t.x = 1; } => t`.)
+  -/
+  | blockExpr (stmts : List LoweredExpr) (m : LoweredExpr)
   /-
   The remaining constructors are *run-time-only* forms: flow analysis never produces them. They
   appear only as a program runs.
@@ -769,6 +776,7 @@ public def LoweredExpr.typeOf :
   | constant c => c.typeOf
   | concat _ => Γ.String
   | assert _ _ => Γ.Null
+  | blockExpr _ m => m.typeOf
   | val v => v.typeOf
   | throwing _ => Γ.ObjectQ
   | returning _ => Γ.ObjectQ
@@ -835,6 +843,7 @@ public def LoweredExpr.withIntMode (mode : IntMode) : LoweredExpr → LoweredExp
   | .assert c msg =>
     .assert (c.withIntMode mode)
       (match msg with | none => none | some m => some (m.withIntMode mode))
+  | .blockExpr stmts m => .blockExpr (LoweredExpr.withIntModeList mode stmts) (m.withIntMode mode)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
@@ -908,6 +917,8 @@ public def LoweredExpr.withSuperclass (s : Option String) : LoweredExpr → Lowe
   | .assert c msg =>
     .assert (c.withSuperclass s)
       (match msg with | none => none | some m => some (m.withSuperclass s))
+  | .blockExpr stmts m =>
+    .blockExpr (LoweredExpr.withSuperclassList s stmts) (m.withSuperclass s)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v

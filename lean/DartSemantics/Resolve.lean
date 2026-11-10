@@ -23,6 +23,16 @@ variable {τ : Type} [DartTypeRepr τ]
 local notation "Variable" => Variable (τ := τ)
 local notation "LoweredExpr" => LoweredExpr (τ := τ)
 
+/--
+Whether one of the elements `ms` of a block (not counting nested blocks) declares variable `x`,
+which shadows an outer `x` for the rest of the block (see `LoweredExpr.resolveBlock`).
+-/
+@[expose]
+public def LoweredExpr.declaresVar (x : Variable) (ms : List LoweredExpr) : Bool :=
+  ms.any fun
+    | .declare v _ _ => v == x
+    | _ => false
+
 mutual
 
 /--
@@ -79,6 +89,10 @@ public def LoweredExpr.resolve (x : Variable) (ℓ : Loc) : LoweredExpr → Lowe
   | .concat parts => .concat (LoweredExpr.resolveList x ℓ parts)
   | .assert c msg =>
     .assert (c.resolve x ℓ) (match msg with | none => none | some m => some (m.resolve x ℓ))
+  -- A declaration of `x` among the statements shadows the outer `x` in the value too.
+  | .blockExpr ms m =>
+    .blockExpr (LoweredExpr.resolveBlock x ℓ ms)
+      (if LoweredExpr.declaresVar x ms then m else m.resolve x ℓ)
   | .val v => .val v
   | .throwing v => .throwing v
   | .returning v => .returning v
