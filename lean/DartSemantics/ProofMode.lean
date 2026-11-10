@@ -21,8 +21,8 @@ program's execution:
 - `wp_pures`: repeat the three above until none applies. The goal is then either a postcondition,
   or a weakest precondition of an expression whose next step involves the state (or a run-time
   subtype check), wrapped in the evaluation context it came from.
-- `wp_alloc ℓ H`: take the step of a declaration at the start of a block, introducing the new cell
-  `ℓ` and its points-to `H`.
+- `wp_alloc ℓ H`: take the step of a declaration at the start of a block (or of the statements of a
+  block with a value), introducing the new cell `ℓ` and its points-to `H`.
 - `wp_let ℓ H`: take the step of a let expression whose initializer has evaluated, introducing the
   new cell `ℓ` of its variable and its points-to `H`.
 - `wp_load H`: take the step of reading a variable or an instance variable, using the points-to
@@ -353,6 +353,17 @@ public theorem tac_wp_blockDeclare {v : Variable} {T : τ} {startsNull : Bool}
         WP (LoweredExpr.block (LoweredExpr.resolveBlock v ℓ ms)) @ s; E {{ Φ }}))) :
     Entails' Δ (WP (LoweredExpr.block (.declare v T startsNull :: ms)) @ s; E {{ Φ }}) :=
   (show Δ ⊢ _ from H).trans wp_blockDeclare
+
+/--
+The proof-mode form of `wp_blockExpr_declare`: to prove that a block with a value whose statements
+start with a declaration of `v` satisfies `Φ` from the hypotheses `Δ`, prove its premise (`H`).
+-/
+public theorem tac_wp_blockExpr_declare {v : Variable} {T : τ} {startsNull : Bool}
+    {ms : List LoweredExpr} {m : LoweredExpr}
+    (H : Entails' Δ iprop(▷ (∀ ℓ, ℓ ↦ (if startsNull then .val .null else .uninit : Cell) -∗
+        WP ((LoweredExpr.blockExpr ms m).resolve v ℓ) @ s; E {{ Φ }}))) :
+    Entails' Δ (WP (LoweredExpr.blockExpr (.declare v T startsNull :: ms) m) @ s; E {{ Φ }}) :=
+  (show Δ ⊢ _ from H).trans wp_blockExpr_declare
 
 /--
 The proof-mode form of `wp_letIn`: to prove that a let expression whose initializer has evaluated
@@ -689,6 +700,8 @@ macro_rules
     | exact DartSemantics.HeadStep.declare
     | exact DartSemantics.HeadStep.blockNil
     | (refine DartSemantics.HeadStep.blockCons ?_; intro _ _ _ h; cases h)
+    | exact DartSemantics.HeadStep.blockExprNil
+    | (refine DartSemantics.HeadStep.blockExprCons ?_; intro _ _ _ h; cases h)
     | exact DartSemantics.HeadStep.seq
     | exact DartSemantics.HeadStep.nullCheckNull
     | (refine DartSemantics.HeadStep.nullCheck ?_; intro h; cases h)
@@ -980,18 +993,23 @@ macro_rules
     `(tactic| (dart_wp_tidy; repeat (first | wp_value | wp_pure | wp_bind)))
 
 /--
-`wp_alloc ℓ H` takes the step of a declaration at the start of a block, introducing the new cell
-`ℓ` and its points-to `H`, and resolves the declared variable in the rest of the block.
+`wp_alloc ℓ H` takes the step of a declaration at the start of a block (or of the statements of a
+block with a value), introducing the new cell `ℓ` and its points-to `H`, and resolves the declared
+variable in the rest of the block (and in the value, unless a later statement redeclares it).
 -/
 syntax "wp_alloc " ident ppSpace ident : tactic
 
 macro_rules
   | `(tactic| wp_alloc $l $h) => `(tactic|
-    (refine DartSemantics.tac_wp_blockDeclare ?_
+    ((first
+       | refine DartSemantics.tac_wp_blockDeclare ?_
+       | refine DartSemantics.tac_wp_blockExpr_declare ?_)
      inext
      iintro %$l $h:ident
      simp (config := { decide := true }) only [DartLang.LoweredExpr.resolveBlock,
-       DartLang.LoweredExpr.resolve, ite_true, ite_false, Bool.false_eq_true, ↓reduceIte]))
+       DartLang.LoweredExpr.resolve, DartLang.LoweredExpr.declaresVar, List.any_cons,
+       List.any_nil, Bool.or_false, Bool.false_or, ite_true, ite_false, Bool.false_eq_true,
+       ↓reduceIte]))
 
 /--
 `wp_let ℓ H` takes the step of a let expression whose initializer has evaluated, introducing the

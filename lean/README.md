@@ -273,6 +273,9 @@ What exists so far:
 - The semantics also has assertions (`assert`, as a statement or a constructor initializer),
   checked or not according to a parameter of the semantics (`SemanticParams.assertsEnabled`), with
   interpreter support and program-logic laws, but no typing rules yet.
+- The semantics also has blocks with a value (`blockExpr`, Kernel's `BlockExpression`, which the
+  CFE's lowering of cascades produces), with interpreter support and program-logic laws, but no
+  typing rule yet.
 - `Tests` has tests of the run-time subtype check and of the interpreter, specs of small programs
   proved with the program logic, a program with calls proved safe and correct (`CallSpecs`), a
   loop proved correct (`LoopSpecs`), a program with an object and one with an overriding method

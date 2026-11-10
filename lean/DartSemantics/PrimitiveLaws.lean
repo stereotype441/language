@@ -860,6 +860,69 @@ public theorem wp_blockDeclare {v : Variable} {T : τ} {startsNull : Bool} {ms :
     itrivial
 
 /--
+A block with a value whose statements have all run evaluates its value `m`: it satisfies a
+postcondition `Φ` if `m` does, one step later (`▷ WP m {{ Φ }}`).
+-/
+public theorem wp_blockExpr_nil {m : LoweredExpr} :
+    ▷ WP m @ s; E {{ Φ }} ⊢ WP (LoweredExpr.blockExpr [] m) @ s; E {{ Φ }} :=
+  wp_pure_step (by rfl) fun _ => .blockExprNil
+
+/--
+A block with a value whose statements start with anything other than a declaration (`h`) runs it,
+then the rest: it satisfies a postcondition `Φ` if the sequence of the two does, one step later
+(`▷ WP (LoweredExpr.seq m₁ (.blockExpr ms m)) {{ Φ }}`).
+-/
+public theorem wp_blockExpr_cons {m₁ : LoweredExpr} {ms : List LoweredExpr} {m : LoweredExpr}
+    (h : ∀ v T startsNull, m₁ ≠ .declare v T startsNull) :
+    ▷ WP (LoweredExpr.seq m₁ (.blockExpr ms m)) @ s; E {{ Φ }} ⊢
+      WP (LoweredExpr.blockExpr (m₁ :: ms) m) @ s; E {{ Φ }} :=
+  wp_pure_step (by rfl) fun _ => .blockExprCons h
+
+/--
+A block with a value whose statements start with a declaration of `v` allocates a cell for `v`, as
+a block does (see `wp_blockDeclare`): it satisfies a postcondition `Φ` if, one step later (`▷`),
+for every location `ℓ`, given the ownership of a cell at `ℓ` holding the initial contents, the rest
+of the block with a value, with `v` resolved to `ℓ` in its statements and its value, satisfies `Φ`
+(`WP ((LoweredExpr.blockExpr ms m).resolve v ℓ) {{ Φ }}`).
+-/
+public theorem wp_blockExpr_declare {v : Variable} {T : τ} {startsNull : Bool}
+    {ms : List LoweredExpr} {m : LoweredExpr} :
+    ▷ (∀ ℓ, ℓ ↦ (if startsNull then .val .null else .uninit : Cell) -∗
+        WP ((LoweredExpr.blockExpr ms m).resolve v ℓ) @ s; E {{ Φ }}) ⊢
+      WP (LoweredExpr.blockExpr (.declare v T startsNull :: ms) m) @ s; E {{ Φ }} := by
+  iintro H
+  iapply wp_lift_base_step rfl
+  isimp [stateInterp]
+  iintro %σ₁ %ns %obs %obs' %nt ⟨Hh, #Hhdr, Hc⟩
+  iapply fupd_mask_intro Std.LawfulSet.empty_subset
+  iintro Hclose
+  isplit
+  · ipureintro
+    exact ⟨[], _, _, [], .blockExprDeclare, rfl, rfl⟩
+  inext
+  iintro %e₂ %σ₂ %eₜ %Hstep _
+  obtain ⟨hs, -, rfl⟩ := Hstep
+  obtain ⟨rfl, rfl⟩ := HeadStep.deterministic hs .blockExprDeclare
+  imod Hclose
+  have hfresh : get? σ₁.toMap σ₁.fresh = none := by rw [State.get?_toMap, State.lookup_fresh]
+  imod genHeap_alloc (v := (if startsNull then .val .null else .uninit : Cell)) hfresh $$ Hh
+    with ⟨Hh, Hl, -⟩
+  have hc : (if startsNull then .val .null else .uninit : Cell).isVar = true := by
+    cases startsNull <;> rfl
+  ihave #Hhdr' := ObjectHeaders.alloc (GF := GF) (σ := σ₁) hc $$ Hhdr
+  imodintro
+  isplitl [Hh Hc]
+  · rw [State.toMap_alloc]
+    iframe Hh
+    iframe Hhdr'
+    rw [State.constants_alloc]
+    iexact Hc
+  isplitl
+  · iapply H $$ Hl
+  · isimp
+    itrivial
+
+/--
 A let expression whose initializer has evaluated to `w` allocates a cell for its variable `v`,
 holding `w`, and continues with its body `m₂`, with `v` resolved to the cell: it satisfies a
 postcondition `Φ` if, one step later (`▷`), for every location `ℓ`, given the ownership of a cell
