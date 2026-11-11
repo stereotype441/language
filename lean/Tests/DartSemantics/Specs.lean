@@ -64,13 +64,12 @@ example : ⊢@{IProp GF} WP (LoweredExpr.check (τ := SimpleType) .isNull (.bool
 /--
 The body `{ return 1; 2; }` of a running call (`frame`) makes the call complete normally with `1`:
 the return propagates out of the block, and `wp_frame` turns it into completing normally.
+`wp_pures` steps into the body, and back out of the call once the body has completed.
 -/
 example : ⊢@{IProp GF} WP (LoweredExpr.frame (τ := SimpleType) (.block [.ret (.int 1), .int 2])
     int) {{ o, ⌜o = DartLang.Outcome.normal (.int 1)⌝ }} := by
   iintro
-  refine DartSemantics.tac_wp_frame ?_
   wp_pures
-  inext
   ipureintro
   trivial
 
@@ -131,7 +130,7 @@ def b : Variable := { name := "b", type := bool }
 
 /--
 `{ bool b = true; while (b) { b = false; } }` completes normally. The loop is proved with the loop
-invariant rule (`tac_wp_loop_inv`): the invariant is that `b` holds some boolean.
+invariant rule (the `wp_loop_inv` tactic): the invariant is that `b` holds some boolean.
 -/
 example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
     [.declare b bool false, .variableSet b (.bool true),
@@ -142,7 +141,7 @@ example : ⊢@{IProp GF} WP (LoweredExpr.block (τ := SimpleType)
   wp_pures
   wp_store Hl
   wp_pures
-  refine DartSemantics.tac_wp_loop_inv iprop(∃ v, ℓ ↦ (.val (.bool v) : Cell)) ?_ ?_
+  wp_loop_inv iprop(∃ v, ℓ ↦ (.val (.bool v) : Cell))
   · iexists true
     iexact Hl
   · iintro ⟨%v, Hl⟩

@@ -107,7 +107,8 @@ theorem f_spec (hf : P.functions "f" = some fDecl) (hmode : P.intModeOf "f" = .c
       -- Binding `x` resolves only `x`: `y` and `t` are different variables.
       simp only [y_ne_x, t_ne_x, ite_false]
       icases Hls with ⟨Hx, -⟩
-      refine DartSemantics.tac_wp_frame (τ := SimpleType) ?_
+      -- Step into the body of the call.
+      wp_pures
       -- `var y = …;`
       wp_alloc ℓy Hy
       simp only [t_ne_y, ite_false]

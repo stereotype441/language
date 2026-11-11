@@ -18,9 +18,10 @@ program's execution:
 - `wp_pure`: take one head step that doesn't depend on, or change, the state.
 - `wp_bind`: focus on the subexpression in evaluation position, if it hasn't completed, by binding
   over one evaluation context item.
-- `wp_pures`: repeat the three above until none applies. The goal is then either a postcondition,
-  or a weakest precondition of an expression whose next step involves the state (or a run-time
-  subtype check), wrapped in the evaluation context it came from.
+- `wp_pures`: repeat the three above, stepping into the body of a running call, constructor or
+  labeled statement (`dart_wp_enter`), until none applies. The goal is then either a
+  postcondition, or a weakest precondition of an expression whose next step involves the state
+  (or a run-time subtype check), wrapped in the evaluation context it came from.
 - `wp_alloc ℓ H`: take the step of a declaration at the start of a block (or of the statements of a
   block with a value), introducing the new cell `ℓ` and its points-to `H`.
 - `wp_let ℓ H`: take the step of a let expression whose initializer has evaluated, introducing the
@@ -44,7 +45,9 @@ program's execution:
   can't be computed by `rfl` (because its operands aren't concrete numbers), leaving the side
   condition that the result is in 64-bit range as a goal.
 - `wp_loop_step`: unroll one iteration of a loop. Usually the loop invariant rule is more
-  convenient: apply `tac_wp_loop_inv`.
+  convenient: `wp_loop_inv I`.
+- `wp_loop_inv I`: apply the loop invariant rule to a loop, with invariant `I`, leaving the goals
+  that `I` holds before the loop, and that one iteration of the body preserves it.
 - `wp_new hk hc`: take the step of an instance creation whose arguments are all values, given the
   tables' declarations of the constructor (`hk`) and its class (`hc`), introducing the new object.
   `wp_ctor_run hk` then takes the step of running the constructor.
@@ -66,9 +69,10 @@ and `this(args)` calls in initializer lists, and intrinsic checks, arithmetic, c
 equality and `identical` whose answer `rfl` can compute. It takes the steps of assertions
 (`assert` and `assertFail`) too, once a hypothesis in the Lean context says whether assertions are
 checked (`P.assertsEnabled = true` or `= false`). It doesn't run a loop, which it would unroll
-forever. To reason about a function's body separately from the call's
-outcome, apply `tac_wp_frame` (or `tac_wp_ctorFrame` for a constructor's), and similarly
-`tac_wp_labeled` for a labeled statement.
+forever. It reasons about the body of a running call (`frame`) or constructor (`ctorFrame`), or of
+a labeled statement, separately from the outcome of the call, constructor or labeled statement: it
+steps into the body (`tac_wp_frame`, `tac_wp_ctorFrame` and `tac_wp_labeled`), and once the body
+has completed, takes the step out of it.
 
 Steps that involve a run-time subtype check (cast expressions and is-expressions), or the state in
 other ways (such as assignments to instance variables, getters and setters, `super` accesses, and
@@ -688,7 +692,7 @@ end DartSemantics
 /--
 Take a head step that doesn't depend on, or change, the state (for `wp_pure`). Running a loop
 (`HeadStep.loop`) isn't one of them: `wp_pures` would unroll it forever. Use the loop invariant rule
-(`tac_wp_loop_inv`), or `wp_loop_step` to unroll one iteration.
+(`wp_loop_inv`), or `wp_loop_step` to unroll one iteration.
 -/
 syntax "dart_pure_head_step" : tactic
 
@@ -983,14 +987,35 @@ macro_rules
       dart_wp_tidy))
 
 /--
-Take every step that doesn't involve the state: repeat `wp_value`, `wp_pure` and `wp_bind` until
-none applies.
+Step into the body of a running call (`frame`), the initializers and body of a running constructor
+(`ctorFrame`), or the body of a labeled statement (`labeled`), which hasn't completed: the goal
+becomes a weakest precondition of the body, whose postcondition is that the goal's postcondition
+holds, one step later, of the outcome of the call, constructor or labeled statement
+(`tac_wp_frame`, `tac_wp_ctorFrame` and `tac_wp_labeled`, with `framePost`, `ctorFramePost` and
+`labeledPost` unfolded). `apply`, unlike `refine`, elaborates the lemma before unifying its
+conclusion with the goal, so the type representation `τ` is inferred from the goal.
+-/
+syntax "dart_wp_enter" : tactic
+
+macro_rules
+  | `(tactic| dart_wp_enter) => `(tactic|
+    ((first
+      | apply DartSemantics.tac_wp_frame
+      | apply DartSemantics.tac_wp_ctorFrame
+      | apply DartSemantics.tac_wp_labeled); dart_wp_tidy))
+
+/--
+Take every step that doesn't involve the state: repeat `wp_value`, `wp_pure`, `dart_wp_enter` and
+`wp_bind` until none applies. When a body that `dart_wp_enter` stepped into completes, the goal is
+the postcondition one step later (`▷`); `inext` then removes the `▷`, so that the steps after the
+call, constructor or labeled statement can be taken too.
 -/
 syntax "wp_pures" : tactic
 
 macro_rules
-  | `(tactic| wp_pures) =>
-    `(tactic| (dart_wp_tidy; repeat (first | wp_value | wp_pure | wp_bind)))
+  | `(tactic| wp_pures) => `(tactic|
+    (dart_wp_tidy
+     repeat (first | wp_value | wp_pure | dart_wp_enter | wp_bind | inext)))
 
 /--
 `wp_alloc ℓ H` takes the step of a declaration at the start of a block (or of the statements of a
@@ -1161,6 +1186,19 @@ macro_rules
   | `(tactic| wp_loop_step) => `(tactic|
     (refine DartSemantics.tac_wp_pure rfl (fun _ => DartSemantics.HeadStep.loop) ?_
      inext))
+
+/--
+`wp_loop_inv I` applies the loop invariant rule (`tac_wp_loop_inv`) to a loop, with invariant `I`.
+It leaves two goals: that the hypotheses give `I` (the invariant holds before the loop), and that
+`I` makes the loop's body satisfy the postcondition that gives `I` back when the body completes
+normally, and the loop's postcondition otherwise (one iteration preserves the invariant), with
+`loopInvPost` unfolded.
+-/
+syntax "wp_loop_inv " term : tactic
+
+macro_rules
+  | `(tactic| wp_loop_inv $I) => `(tactic|
+    ((apply DartSemantics.tac_wp_loop_inv $I) <;> dart_wp_tidy))
 
 /--
 `wp_int_checked` takes the step of an arithmetic operator on integers in mode `checked` whose

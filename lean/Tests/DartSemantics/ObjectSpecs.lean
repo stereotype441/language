@@ -338,7 +338,8 @@ theorem countTo_spec (hf : P.functions "countTo" = some countToDecl)
   dart_bind_params
   -- Binding `k` resolves only `k`: the local variables are different variables.
   simp only [c_ne_k, i_ne_k, ite_false]
-  refine DartSemantics.tac_wp_frame (τ := SimpleType) ?_
+  -- Step into the body of the call.
+  wp_pures
   -- `var c = Counter();`: allocate the object, whose instance variable `_n` starts out
   -- uninitialized, and run the constructor, which initializes `_n` to `0`.
   wp_alloc ℓc Hc
@@ -378,11 +379,11 @@ theorem countTo_spec (hf : P.functions "countTo" = some countToDecl)
   wp_store Hi
   wp_pures
   -- The loop, with its invariant: `i` and `c._n` hold the same `i₀`, with `0 ≤ i₀ ≤ k`.
-  refine DartSemantics.tac_wp_loop_inv (τ := SimpleType) iprop(∃ i₀ : Int,
+  wp_loop_inv iprop(∃ i₀ : Int,
       ℓi ↦ (.val (.int i₀) : Cell) ∗ ℓf ↦ (.val (.int i₀) : Cell) ∗
       ℓc ↦ (.val (.obj ℓ) : Cell) ∗ ℓk ↦ (.val (.int k₀) : Cell) ∗
       ℓ ↦{.discard} (.object "Counter" tCounter [("Counter::_n", ℓf)] : Cell) ∗
-      ⌜0 ≤ i₀ ∧ i₀ ≤ k₀⌝) ?_ ?_
+      ⌜0 ≤ i₀ ∧ i₀ ≤ k₀⌝)
   · -- The invariant holds before the loop: `i` and `c._n` are `0`.
     iexists 0
     iframe Hi
@@ -426,7 +427,6 @@ theorem countTo_spec (hf : P.functions "countTo" = some countToDecl)
       wp_store Hi
       wp_pures
       -- The invariant holds again.
-      inext
       iexists i₀ + 1
       iframe Hi
       iframe Hf
@@ -504,7 +504,6 @@ theorem g_spec (hg : P.functions "g" = some gDecl) (hcls : P.classes "B" = some 
   subst hℓs
   simp only [gDecl]
   dart_bind_params
-  refine DartSemantics.tac_wp_frame (τ := SimpleType) ?_
   -- `return a.f();`: reading `a` passes its promotion check, since `B` is a subtype of `A`; then
   -- `f` dispatches to `B`'s `f`.
   wp_pures

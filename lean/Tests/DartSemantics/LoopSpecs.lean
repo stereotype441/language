@@ -21,10 +21,10 @@ int sumTo(int n) {
 
 Its specification (`sumTo_spec`): in integer mode `checked`, called with an `n` such that
 `0 ≤ n ≤ 2³¹`, `sumTo(n)` returns `n * (n + 1) / 2`. The loop is proved with the loop invariant
-rule (`tac_wp_loop_inv`), using the invariant `0 ≤ i ≤ n` and `s = i * (i + 1) / 2`. Each of the
-loop's additions has a side condition, that its result is in 64-bit range, since in mode `checked`
-an addition that overflows would get stuck; that's where the bound on `n` is needed. Finally,
-adequacy turns the specification into an ordinary Lean theorem about running `sumTo(10)`
+rule (the `wp_loop_inv` tactic), using the invariant `0 ≤ i ≤ n` and `s = i * (i + 1) / 2`. Each
+of the loop's additions has a side condition, that its result is in 64-bit range, since in mode
+`checked` an addition that overflows would get stuck; that's where the bound on `n` is needed.
+Finally, adequacy turns the specification into an ordinary Lean theorem about running `sumTo(10)`
 (`sumTo_ten`).
 -/
 
@@ -144,7 +144,8 @@ theorem sumTo_spec (hf : P.functions "sumTo" = some sumToDecl)
       -- Binding `n` resolves only `n`: the local variables are different variables.
       simp only [s_ne_n, i_ne_n, ite_false]
       icases Hls with ⟨Hn, -⟩
-      refine DartSemantics.tac_wp_frame (τ := SimpleType) ?_
+      -- Step into the body of the call.
+      wp_pures
       -- `var s = 0; var i = 0;`
       wp_alloc ℓs Hs
       simp only [i_ne_s, ite_false]
@@ -156,10 +157,10 @@ theorem sumTo_spec (hf : P.functions "sumTo" = some sumToDecl)
       wp_store Hi
       wp_pures
       -- The loop, with its invariant.
-      refine DartSemantics.tac_wp_loop_inv (τ := SimpleType) iprop(∃ i₀ s₀ : Int,
+      wp_loop_inv iprop(∃ i₀ s₀ : Int,
           ℓi ↦ (.val (.int i₀) : Cell) ∗
           ℓs ↦ (.val (.int s₀) : Cell) ∗ ℓn ↦ (.val (.int n₀) : Cell) ∗
-          ⌜0 ≤ i₀ ∧ i₀ ≤ n₀ ∧ s₀ = i₀ * (i₀ + 1) / 2⌝) ?_ ?_
+          ⌜0 ≤ i₀ ∧ i₀ ≤ n₀ ∧ s₀ = i₀ * (i₀ + 1) / 2⌝)
       · -- The invariant holds before the loop: `i` and `s` are `0`.
         iexists 0, 0
         iframe Hi
@@ -194,7 +195,6 @@ theorem sumTo_spec (hf : P.functions "sumTo" = some sumToDecl)
           wp_store Hs
           wp_pures
           -- The invariant holds again.
-          inext
           iexists i₀ + 1, i₀ * (i₀ + 1) / 2 + (i₀ + 1)
           iframe Hi
           iframe Hs
