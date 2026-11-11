@@ -1,5 +1,6 @@
 module
 public import DartLang.Lowered
+public import DartLang.PrettyPrint
 
 /-!
 # The run-time state
@@ -51,6 +52,10 @@ public inductive Cell where
   -/
   | string (cu : List UInt16)
   deriving Repr, BEq
+
+-- Display `Cell`'s constructors in leading-dot form, such as `.val (.int 0)` (see
+-- `DartLang.PrettyPrint`).
+pp_dot_ctors Cell
 
 local notation "Cell" => Cell (τ := τ)
 
